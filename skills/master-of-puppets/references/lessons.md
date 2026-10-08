@@ -50,5 +50,7 @@ explains why.
   refused. Ask the holder first, then report to the user.
 - **Over-strict gate.** "Abort on any swap-out increase" aborted runs on
   harmless noise. Use a threshold over two samples.
-- **Hook mistaken for an unleased build.** A git pre-commit hook ran the
-  formatter and linter and looked like an unleased build. Hooks need no lease.
+- **Heavy hooks ran unleased.** A pre-commit hook ran the formatter and linter
+  outside any lease and competed with a granted build. Fix (user rule): a
+  commit or push whose hooks run lint, format, typecheck, a build or tests
+  needs a short BUILD lease; never skip hooks with `--no-verify`.

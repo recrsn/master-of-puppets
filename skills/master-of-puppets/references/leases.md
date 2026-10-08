@@ -13,7 +13,8 @@ Classes are a machine-wide registry; any shared action can be one. The
 default registry has two:
 
 - **BUILD**: builds (including setup scripts that build), typecheck, lint,
-  format runs, tests and codegen. 10 GiB, 20 min.
+  format runs, tests and codegen, and any commit or push whose git hooks run
+  them. 10 GiB, 20 min.
 - **E2E**: starting local servers or stacks, and interacting with them. 8 GiB,
   45 min; settles BUILD for 60 s.
 
@@ -28,9 +29,13 @@ class. `config remove-class <NAME>` is refused while the class has holders or
 queue entries. Add classes only on the user's word, then tell the other
 coordinators and your members.
 
-**No lease**: a plain dependency install, git hooks (never skip them), source
-edits, reading code, browser-only work against remote sites, unless a class
-covers it.
+**Git hooks** run as part of the command that triggers them. A commit or push
+whose hooks run lint, format, typecheck, a build or tests is a BUILD run:
+request a short BUILD lease that names the commit or push. Never skip hooks
+with `--no-verify`. Hooks that run none of these need no lease.
+
+**No lease**: a plain dependency install, light git hooks, source edits,
+reading code, browser-only work against remote sites, unless a class covers it.
 
 Maximum length: `maxMinutesEffective` per class from `lease.py config show`. Every release records the run minutes;
 in learn mode the limit adapts to p90 of the last 10 runs + 25%, capped by

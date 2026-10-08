@@ -9,8 +9,10 @@ database, a device). Leases are optional and machine-wide. Default registry:
 Each class has a description, defaultGiB (0 = not memory-bound; then only maxSlots
 limits it), maxMinutes and settle {OTHER: seconds} (after a grant of this class,
 OTHER waits that long; E2E settles BUILD for 60 s by default). Names are upper-case.
-No lease: a plain dependency install, git hooks, source edits, reading code,
-browser-only work against remote sites (unless a class covers it).
+A commit or push whose git hooks run lint, format, typecheck, a build or tests is a
+BUILD run (never skip hooks with --no-verify). No lease: a plain dependency install,
+light git hooks, source edits, reading code, browser-only work against remote sites
+(unless a class covers it).
 Use it or return it: a lease covers only running the granted commands. No edits or
 repairs while holding one. When a check fails, release at once with the failure,
 repair without a lease, then join the queue again at the back.
