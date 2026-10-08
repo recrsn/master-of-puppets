@@ -62,7 +62,7 @@ LEASES ON — <slug> grants the lease classes for you: <CLASS — description, o
 | Active PR | `ACTIVE — #<n>. Goal: MERGED. Next: <one step>.` |
 | Paused PR | `PAUSE — #<n> waits for #<m>. No merges from main, no fixes, Auto-fix off on #<n>.` |
 | Bottom merged | `ACTIVE — #<n>: #<m> merged (<sha>). I retargeted #<n> to main. Merge origin/main into your branch, resolve, push.` |
-| Status round | `STATUS? — phase, PR state, blockers, anything the user decided.` |
+| Heartbeat round | `STATUS? — phase, PR state, blockers, anything the user decided.` |
 | Not a member | `Run /puppet to join a coordinator first.` |
 | Lease queued | `LEASE QUEUED — <id> (<min> min, ~<GiB> GiB), <CLASS> position <n>. Ahead: <who>. ETA ~<time>.` |
 | Head, host busy | `LEASE QUEUED — <id> is at the head, but the host is swapping (<numbers>). I grant when two samples are calm.` |

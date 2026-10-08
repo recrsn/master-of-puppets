@@ -10,7 +10,7 @@ Codex) on one machine.
 One or more coordinator sessions take PR stacks to merged. Coordinators:
 
 - watch inboxes, lease expiry and PR state with Monitors, and run a status
-  round on a schedule;
+  heartbeat round on a schedule that checks on members who forget to report;
 - move each stack bottom-up: one active PR, retarget to the base branch after
   the PR below merges, auto-merge, confirm the merge SHA;
 - record members, tasks and decisions in a shared roster and ledger;

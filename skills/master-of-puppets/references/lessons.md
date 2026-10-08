@@ -45,7 +45,7 @@ explains why.
   memory reading does not predict a build's peak. Fix: admission by measured
   per-class peaks against a memory budget, plus the swap check.
 - **Missed expiry.** No one released an expired lease and the queue stalled
-  for 15 minutes. Fix: the expiry Monitor and a check in every status round.
+  for 15 minutes. Fix: the expiry Monitor and a check in every heartbeat round.
 - **Kill request.** Asking the user to kill a stopped member's processes was
   refused. Ask the holder first, then report to the user.
 - **Over-strict gate.** "Abort on any swap-out increase" aborted runs on

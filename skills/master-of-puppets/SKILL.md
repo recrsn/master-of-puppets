@@ -1,13 +1,13 @@
 ---
 name: master-of-puppets
-description: Coordinate local agent sessions (Claude and Codex) and take their PR stacks to MERGED. Coordinators each own a focus (a stack), watch with Monitors, run status rounds on a schedule, move each stack bottom-up (active PR, retarget to main, auto-merge, confirm the merge SHA), and share one roster, ledger and live SSE dashboard with CPU, memory, swap and disk. Sessions join as members with the separate /puppet skill; the coordinator enrolls and updates every member and every task its members start. Optional machine-wide leases for any shared action (default classes BUILD and E2E; add others such as one browser window or a test database) with adaptive, memory-based capacity. This skill is for the coordinator role only; a session that should join a coordinator uses /puppet. Use it whenever the user says "master of puppets", "coordinate", "be the coordinator", "drive/babysit/land these PRs", "take the stack to merge", "who is blocked", or asks for a status dashboard across sessions; also when sessions share one machine and the user mentions leases, queues, swapping, builds colliding or who builds next.
+description: Coordinate local agent sessions (Claude and Codex) and take their PR stacks to MERGED. Coordinators each own a focus (a stack), watch with Monitors, run a scheduled heartbeat round that checks on every member, move each stack bottom-up (active PR, retarget to main, auto-merge, confirm the merge SHA), and share one roster, ledger and live SSE dashboard with CPU, memory, swap and disk. Sessions join as members with the separate /puppet skill; the coordinator enrolls and updates every member and every task its members start. Optional machine-wide leases for any shared action (default classes BUILD and E2E; add others such as one browser window or a test database) with adaptive, memory-based capacity. This skill is for the coordinator role only; a session that should join a coordinator uses /puppet. Use it whenever the user says "master of puppets", "coordinate", "be the coordinator", "drive/babysit/land these PRs", "take the stack to merge", "who is blocked", or asks for a status dashboard across sessions; also when sessions share one machine and the user mentions leases, queues, swapping, builds colliding or who builds next.
 ---
 
 # Master of puppets
 
 Coordinators drive the work of many sessions to completion. Their main job is
 to take PR stacks to MERGED, through Monitors (events arrive by themselves), a
-scheduled status round, and short directions to members. A coordinator does
+scheduled heartbeat round that also checks on members, and short directions to members. A coordinator does
 not write product code.
 
 - **Several coordinators** may run at once, Claude or Codex. Each has a unique
@@ -74,10 +74,13 @@ session id is `$CLAUDE_CODE_SESSION_ID`. What members send and do is in the
 4. Write `prs-<slug>.txt` in the state dir (`owner/repo#<n>` per line). Arm
    Monitors: `lease.py watch inbox --me <slug>` and `lease.py watch prs --me <slug>`;
    add `lease.py watch expiry` when leases are on. Re-arm each one that ends.
-5. Schedule the status round: `CronCreate`, session-only, about every 15
-   minutes; inside `/loop` dynamic mode use `ScheduleWakeup`. This is the
-   coordinator's heartbeat. It also checks on every member, because members
-   forget to send updates. Without it, members and peers see you as gone.
+5. Schedule the heartbeat round (required): `CronCreate`, session-only, every
+   15 minutes, prompt "master-of-puppets heartbeat round for <slug>: follow
+   the Heartbeat round steps". Inside `/loop` dynamic mode, use
+   `ScheduleWakeup` instead. The round sends your heartbeat and checks on
+   every member, because members forget to send updates. Keep it running
+   while you coordinate, and create it again after a context reset. Without
+   it, members and peers see you as gone, and silent members go unnoticed.
 6. Run `python3 -I <skill>/scripts/server.py` in the background (a no-op when
    one runs) and give the user `http://localhost:4720/`.
 7. Tell the other coordinators: `lease.py say --from <slug> --message "<slug> coordinates <focus>, PRs ..."`.
@@ -141,7 +144,9 @@ of main into a branch, conflict fix and review reply. Do not bind members' PRs
 with Auto-fix in your session: that makes you write the fixes. Never act on a
 PR another coordinator owns; message it.
 
-## Status round
+## Heartbeat round (scheduled)
+
+Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
 
 1. `lease.py heartbeat --name <slug>` (add `--focus`/`--pr` when they change);
    read `roster`, `lease.py status --brief` and new ledger entries.
