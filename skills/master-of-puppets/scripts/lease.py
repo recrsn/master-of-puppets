@@ -91,7 +91,12 @@ Memory (the skill's own memory; coordinators write it, everyone reads it)
        not in the skill text.
 
 Messaging and waiters (anyone)
-  say --from NAME --message TEXT [--to C]      no --to reaches every coordinator
+  say --from NAME --message TEXT [--to NAME] [--no-direct]
+       appends to inbox.jsonl, then delivers directly: a Claude session through its inbox
+       socket (protocol: github.com/PeterSR/claude-code-socket-transport, reverse-engineered,
+       not an Anthropic interface), a Codex thread through `codex queue`. --to names a
+       coordinator or member; without it, every live coordinator. A receiver that bypasses
+       permission prompts holds a socket message for the user's approval.
   await-grant CLASS --id ID [--timeout-min N] [--appear-timeout S]
        prints GRANTED or NOT-GRANTED <reason>. Exit 0 granted (the only grant);
        3 left the queue without a grant; 5 timeout while still queued; 6 never queued
@@ -112,7 +117,10 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
+import tempfile
+import uuid
 import sys
 import time
 
@@ -436,6 +444,88 @@ def say(sender, message, to=None):
         rec["to"] = to
     with open(INBOX, "a") as f:
         f.write(json.dumps(rec) + "\n")
+
+
+def claude_socket(session_id):
+    """Inbox socket of a live Claude Code session, via `claude agents --json` (pid) and the
+    socket directories Claude Code uses. None when the session is not running."""
+    try:
+        agents = json.loads(subprocess.run(["claude", "agents", "--json"], capture_output=True, text=True, timeout=20).stdout)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    pid = next((a.get("pid") for a in agents if a.get("sessionId") == session_id), None)
+    if not pid:
+        return None
+    bases = [os.environ.get("XDG_RUNTIME_DIR"), os.environ.get("CLAUDE_CODE_TMPDIR"), "/tmp", tempfile.gettempdir()]
+    paths = [os.path.join(b, "cc-socks", f"{pid}.sock") for b in bases if b] + [f"/tmp/cc-socks-{os.getuid()}/{pid}.sock"]
+    return next((p for p in paths if os.path.exists(p)), None)
+
+
+def send_claude(session_id, text):
+    """Write one user frame to the session's inbox socket. Protocol (reverse-engineered, not
+    an Anthropic interface): https://github.com/PeterSR/claude-code-socket-transport#the-protocol
+    Auth: only when posting to this process's own session (its exported socket and
+    CLAUDE_CODE_MESSAGING_TOKEN). Another session's key file is never read: the receiver
+    applies its normal inbound controls, so a session that bypasses permission prompts
+    holds the message for the user's approval. session_id must be the receiver's current
+    id; a /clear mints a new one, so the member must send JOIN again after it."""
+    path = claude_socket(session_id)
+    if not path:
+        return "claude: session not running (inbox only)"
+    frame = {"msgV": 1, "msg_id": str(uuid.uuid4()), "type": "user",
+             "message": {"role": "user", "content": text}, "priority": "next", "session_id": session_id}
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(5)
+            sock.connect(path)
+            own = os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET")
+            token = os.environ.get("CLAUDE_CODE_MESSAGING_TOKEN")
+            if own and token and os.path.realpath(own) == os.path.realpath(path):
+                sock.sendall((json.dumps({"type": "auth", "token": token}) + "\n").encode())
+            sock.sendall((json.dumps(frame) + "\n").encode())
+            sock.shutdown(socket.SHUT_WR)
+    except OSError as exc:
+        return f"claude: socket {path} failed: {exc} (inbox only)"
+    return f"claude: written to {path} (the receiver may hold it for approval)"
+
+
+def send_codex(thread_id, text):
+    r = subprocess.run(["codex", "queue", "--thread", thread_id, "--message", text], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        return f"codex: queue failed: {(r.stderr or r.stdout).strip()[:200]} (inbox only)"
+    return f"codex: queued to thread {thread_id}"
+
+
+def say_cmd(args):
+    """Append to inbox.jsonl (the record every coordinator watches), then deliver directly:
+    Claude sessions through their inbox socket, Codex threads through `codex queue`."""
+    say(args.sender, args.message, args.to)
+    print("inbox: appended")
+    if args.no_direct:
+        return 0
+    roster = load_roster()
+    targets = []
+    if args.to:
+        c = roster["coordinators"].get(args.to)
+        if c:
+            targets.append((args.to, c.get("tool"), c.get("sessionId")))
+        for coord, members in roster["members"].items():
+            for m in members:
+                if m["name"] == args.to and m.get("sessionId"):
+                    targets.append((args.to, m.get("tool", "claude"), m["sessionId"]))
+        if not targets:
+            print(f"direct: no roster entry with a session id for {args.to} (inbox only)")
+    else:
+        targets = [(n, c.get("tool"), c.get("sessionId")) for n, c in roster["coordinators"].items() if n != args.sender and live(c)]
+    text = f"[{args.sender} via lease.py say] {args.message}"
+    for name, tool, sid in targets:
+        if not sid:
+            print(f"{name}: no session id (inbox only)")
+        elif tool == "codex":
+            print(f"{name}: {send_codex(sid, text)}")
+        else:
+            print(f"{name}: {send_claude(sid, text)}")
+    return 0
 
 
 def note(by, text, pr=None):
@@ -1115,7 +1205,8 @@ def main():
     m = sub.add_parser("say")
     m.add_argument("--from", dest="sender", required=True)
     m.add_argument("--message", required=True)
-    m.add_argument("--to")
+    m.add_argument("--to", help="coordinator or member name; omit to reach every live coordinator")
+    m.add_argument("--no-direct", action="store_true", help="append to inbox.jsonl only")
     me = sub.add_parser("memory")
     mesub = me.add_subparsers(dest="mcmd", required=True)
     ma = mesub.add_parser("add")
@@ -1205,9 +1296,7 @@ def main():
             p.error(f"unknown lease class {name}; known: {', '.join(class_names())} (add one with config set-class)")
 
     if args.cmd == "say":
-        say(args.sender, args.message, args.to)
-        print("delivered to inbox.jsonl")
-        return 0
+        return say_cmd(args)
     if args.cmd == "note":
         note(args.by, args.text, args.pr)
         return 0

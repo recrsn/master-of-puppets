@@ -37,7 +37,10 @@ Routes:
 - Claude coordinator: `SendMessage` to its session name from `ListAgents`
   (or its session id).
 - Codex coordinator, or when `SendMessage` is not available:
-  `lease.py say --from <name> --to <coord> --message "<text>"`.
+  `lease.py say --from <name> --to <coord> --message "<text>"`. It records
+  the message in the shared inbox and delivers it directly (Claude: inbox
+  socket; Codex: `codex queue`).
+- After `/clear`, your session id changes: send JOIN again.
 
 Wait for WELCOME. It tells you whether leases are on and gives the rules,
 including the project rules from the coordinator's memory. You can read them
