@@ -15,12 +15,12 @@ not write product code.
   one ledger, the lease queues and one dashboard, and agree cross-stack
   questions (merge order, shared files) by message.
 - **The coordinator records; members report.** Members send messages and
-  release their own leases. The
-  coordinator records every enrollment, member and task update in the roster
-  and on the dashboard.
+  release their own leases. The coordinator records every enrollment, member
+  and task update in the roster and on the dashboard.
 - **Enrollment is voluntary, except for children.** A session joins by running
-  `/puppet` (the member skill). Every task that a coordinator or one of its
-  members starts is enrolled by the coordinator before it starts.
+  `/puppet` (the member skill). Every independent session that a coordinator
+  or member starts is enrolled before dispatch; subagents stay part of their
+  parent's enrollment.
 - **Leases are optional** and machine-wide. Classes are any shared action:
   BUILD and E2E by default, others added with `config set-class`. Turn leases
   on only on the user's word, for example when heavy jobs overlap and the host
@@ -141,13 +141,14 @@ Codex `send_message_to_thread` or a supported direct CLI route. Reserve
    paused on that PR until it is active.
    PRs in different stacks that touch the same files go one at a time; agree
    the order with the other coordinator and `note` it.
-2. **Make the active PR mergeable.** Owner: local E2E evidence, PR bound with
-   Claude `ccd_pr` with Auto-fix on, or Codex `attach_artifact` and owner-led
-   blocker repair (`references/agents.md`). Coordinator: `gh pr ready <n>` if
-   draft, then enable
+2. **Make the active PR mergeable.** Owner: publish passing evidence for the
+   applicable checks (`references/rules.md`), bind the PR with Claude `ccd_pr`
+   with Auto-fix on, or Codex `attach_artifact` and owner-led blocker repair
+   (`references/agents.md`). Coordinator: confirm that evidence and the
+   configured base branch, then `gh pr ready <n>` if draft and enable
    auto-merge with the project's merge method (`gh pr merge <n> --auto --<mergeMethod>`;
    for `auto`, no method flag).
-   GitHub refuses auto-merge while the base is another PR branch. A new DB
+   Do not enable auto-merge while the base is another PR branch. A new DB
    migration needs the user's fresh go-ahead before auto-merge.
 3. **React to `watch prs` events.** `merge=DIRTY`: the owner merges
    `origin/main` into the branch (never rebase) and resolves. Failing checks or
@@ -185,9 +186,10 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
 5. Check on members; do not wait for them to report.
    `lease.py member stale --coordinator <slug> --minutes 30` lists members with
    no recorded update. For each one: read its PRs in the latest `watch prs`
-   lines and record what you see (`member update --latest`), then send
-   `STATUS?`. Record each reply with `member update`. A member silent for two
-   rounds while its PR is blocked: tell the user, with its deep link. Pending
+   lines and record observations with `note`, then send `STATUS?`. Do not
+   refresh member state from watcher observations: `member update` resets its
+   freshness timestamp. Record each actual reply with `member update`.
+   A member silent for two rounds while its PR is blocked: tell the user, with its deep link. Pending
    enrollments older than 30 minutes: ask the starter, then `member remove`.
 6. Report meaningful changes or decisions to the user: decisions first, then
    the table. A Codex heartbeat stays quiet when nothing actionable changed.

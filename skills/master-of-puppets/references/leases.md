@@ -111,8 +111,10 @@ it. No coordinator jumps the queue.
 
 ## Rules members get wrong
 
-- **Use it or return it.** A lease covers only the granted commands. No edits
-  or repairs while holding it. On a failure: release at once with the raw
+- **Use it or return it.** A lease covers the granted commands and cleanup
+  of resources they started. Stop owned E2E servers before release, including
+  on failure, and report cleanup failures. No edits or repairs while holding
+  it. On failure: clean up owned resources, release promptly with the raw
   failure, repair without a lease, queue again at the back.
 - **Expired is not free.** An expired lease still holds its memory. Ask its
   holder. If the holder is gone, check for its processes and ask the user

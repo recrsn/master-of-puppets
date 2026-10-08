@@ -72,9 +72,10 @@ Command output alone does not wake the agent. On resume, check watcher and
 server liveness before starting replacements, and recover unread messages
 from the durable inbox/ledger: an inbox watcher starts at the end of the file.
 
-For a Codex member, attach its PR and keep handling valid hosted review/CI
-blockers in that chat, using an authorized heartbeat if later turns are
-needed. On PAUSE, stop repair work for that PR and pause its repair heartbeat.
+For a Codex member, attach its PR and handle valid hosted review/CI
+blockers in that chat only while ACTIVE, using an authorized heartbeat if
+later turns are needed. On PAUSE, stop repair work for that PR and pause its
+repair heartbeat.
 Never claim Auto-fix is enabled merely because a PR is attached.
 
 ## New Codex sessions and permissions

@@ -1,8 +1,10 @@
 # Rules
 
-These rules override convenience. When the user changes one, update the shared
-files (`pr-rules.md`, the `lease.py` docstring) with the other coordinators,
-`note` the change, and forward it to every member.
+These rules apply within the user's authorized scope; explicit user instructions
+take precedence. Record machine or project changes in `lease.py memory` and
+`pr-rules.md` when used, `note` them, and forward them to members and peers.
+Change the skill or helper only when the user requests a generic rule change;
+do not put project-specific rules in the skill or `lease.py` docstring.
 
 ## Coordinator conduct
 
@@ -28,15 +30,20 @@ member to cross those limits.
 
 ## PR rules
 
-1. When the task's local E2E passes, open the PR and mark it ready. `isDraft`
-   must be false. Publish the exact evidence.
+1. Run the smallest checks covering the changed behavior and affected
+   boundaries, including local E2E when applicable or explicitly required.
+   Preserve required CI, security, data-integrity and release checks. Reuse
+   passing evidence for unchanged code; expand checks for concrete risk or
+   failures. Once applicable checks pass, open the PR and mark it ready
+   (`isDraft` false). Publish exact evidence and any material gaps. Never run
+   or require CodeRabbit local review; hosted reviews remain separate.
 2. UI PRs carry screenshot evidence attached on the PR page (description or an
    evidence comment), never committed to the repository, gists or branches.
    Capture screenshots outside the repository. The upload needs the user's
    approval in that session if its permission prompt asks.
 3. The PR description follows the repository's template: problem and result,
-   source SHA, focused checks, real E2E scenarios, evidence, gaps. Keep mock,
-   type and unit results separate from real E2E.
+   source SHA, focused checks, applicable real E2E scenarios, evidence, gaps.
+   Keep mock, type and unit results separate from real E2E.
 4. Normal auto-merge only. No bypass and no admin merge.
 5. Verify each review finding against the source. Fix valid ones, explain
    skipped ones, resolve threads only after the fix is pushed.
@@ -53,14 +60,16 @@ member to cross those limits.
 11. The owner reports the merge SHA; the coordinator confirms it with `gh` and
     owns the merge order.
 12. Claude members: after opening a PR, bind it with `ccd_pr` and turn on
-    Auto-fix. Do not poll CI yourself.
+    Auto-fix only while ACTIVE. Keep it off while PAUSE applies; do not poll
+    CI yourself.
     Codex members: attach the PR with `mcp__codex_app__attach_artifact` when
-    available, and handle valid hosted review/CI blockers in the owner chat.
+    available, and handle valid hosted review/CI blockers in the owner chat
+    only while ACTIVE. PAUSE takes precedence over these repair instructions.
     Use the coordinator's watcher events or an authorized repair heartbeat
     for later work; PR attachment does not enable Auto-fix. See `agents.md`.
 13. Stacks: one active PR per stack, bottom first. Merge each PR into main on
     its own; never merge a stacked PR into its parent. After the bottom merges,
     retarget the next to main and merge main into it. Paused PRs keep Claude
-    Auto-fix off and Codex repair heartbeats paused. GitHub does not allow
-    auto-merge on a PR whose base is another PR branch.
+    Auto-fix off and Codex repair heartbeats paused. Enable auto-merge only
+    after the PR targets the configured base branch and passes readiness gates.
 14. After the merge, stop owned services, release leases and report receipts.

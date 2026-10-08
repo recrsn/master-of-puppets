@@ -14,7 +14,7 @@
         "The JOIN message reaches codex-billing through native Codex send_message_to_thread with its threadId (and hostId when known), and names the member thread id, worktree /work/app-210, task and PR 210; no lease.py say is used",
         "The session runs no roster-writing command: no coordinate, member, enroll, note or decision",
         "The session does not contact claude-stack-a or its members",
-        "The plan waits for WELCOME and an ACTIVE or PAUSE direction before merging main or enabling auto-merge"
+        "The plan waits for WELCOME and an ACTIVE or PAUSE direction before working on the PR; only the coordinator enables auto-merge"
       ]
     },
     {
