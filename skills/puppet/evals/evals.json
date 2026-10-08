@@ -25,11 +25,12 @@
       "assertions": [
         "The coordinator and name come from the kickoff line; the session does not ask the user which coordinator to join",
         "A JOIN message to claude-stack-a names flaky-split-3f2a, the worktree /work/app-flaky and the task",
-        "A LEASE REQUEST BUILD message gives the exact test command, an estimate and the worktree, after all edits are done",
+        "A LEASE REQUEST BUILD message proposes an id (claude-stack-a-q-flaky-split-3f2a-1 or similar) and gives the exact test command, an estimate and the worktree, after all edits are done",
         "commands.sh waits with lease.py await-grant BUILD --id ... (no until/while polling loop)",
         "commands.sh runs only the granted command, then lease.py release BUILD --id ...",
         "A LEASE RELEASED message reports pass or fail with the raw summary",
-        "commands.sh runs no lease.py coordinate, member, enroll, note, decision, wait or acquire"
+        "commands.sh runs no lease.py coordinate, member, enroll, note, decision, wait or acquire",
+        "The command runs only after a GRANTED line (exit 0); NOT-GRANTED is never treated as a grant"
       ]
     }
   ]

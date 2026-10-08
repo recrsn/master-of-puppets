@@ -30,10 +30,10 @@ WELCOME — <slug> coordinates <focus>. You are a member for <task> (PRs <list>)
 LEASES ON — <slug> grants the lease classes for you: <CLASS — description, one per line>.
 1. Before an action a class covers (BUILD: builds, typecheck, lint/format, tests, codegen;
    E2E: starting local servers/stacks; others as listed above):
-   LEASE REQUEST <CLASS> — <exact commands> — <estimate min> — <est GiB if known> — <worktree>
-2. Start only after LEASE GRANTED. To wait, run
-   python3 -I <state dir>/lease.py await-grant <CLASS> --id <id>
-   (it exits when granted, or as soon as the entry leaves the queue). No polling loops.
+   LEASE REQUEST <CLASS> — id <slug>-q-<name>-<n> — <exact commands> — <estimate min> — <est GiB if known> — <worktree>
+2. Start waiting at once: python3 -I <state dir>/lease.py await-grant <CLASS> --id <id>
+   Run only on a GRANTED line (exit 0). NOT-GRANTED (exit 3 left the queue, 6 never
+   queued): do not run, ask me. Exit 5 (timeout, still queued): wait again. No polling loops.
    Run only the granted commands.
 3. Use it or return it: no edits or repairs while holding a lease. On failure, release
    at once, reply with the raw failure, repair, and request again (back of the queue).

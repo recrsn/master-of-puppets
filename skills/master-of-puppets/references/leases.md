@@ -75,7 +75,8 @@ The memory budget predicts; the host check observes. Both must pass.
 
 ## Granting
 
-1. Record the request: `lease.py wait <CLASS> --coordinator <slug> --holder "<task> <what>" --id <slug>-q-<task><n> --minutes <est> --commands "<exact commands>" --worktree <path> [--gib <n>]`.
+1. Record the request under the id the member proposed (it is already waiting
+   on it, for up to 10 minutes): `lease.py wait <CLASS> --coordinator <slug> --holder "<task> <what>" --id <member's id> --minutes <est> --commands "<exact commands>" --worktree <path> [--gib <n>]`.
    To change an entry later, pass only `--id` and the fields that change.
    Start `--holder` with the task id (the dashboard matches on it). Reply
    LEASE QUEUED with the position.
