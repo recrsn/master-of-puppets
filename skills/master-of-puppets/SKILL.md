@@ -96,7 +96,8 @@ session id is `$CLAUDE_CODE_SESSION_ID`. What members send and do is in the
   `lease.py enroll --coordinator <slug> --task "<one line>" [--by <member>] [--pr <n>]`.
   The printed kickoff line tells the new session to run `/puppet` and join you
   under its enrolled name. Put it first in the prompt of every task you start,
-  or send it back to the member that asked. This covers every route that starts a session: `spawn_task` chips,
+  or send it back to the member that asked. Tasks your members start get one
+  the same way, through their ENROLL REQUEST, at any depth. This covers every route that starts a session: `spawn_task` chips,
   new Codex threads (`codex exec`, `codex "<prompt>"`), `claude -p`, cloud
   handoffs and scheduled tasks. Subagents (the Agent tool) are part of their
   parent and are not enrolled. Nothing enforces this; check each
