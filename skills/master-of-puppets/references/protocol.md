@@ -3,14 +3,18 @@
 Keep messages short. The receiver may see only the first line until it
 expands the message, so put the point first.
 
+Use [agents.md](agents.md) for the sender's available tool routes. Customize
+WELCOME for the member's tool: Claude Auto-fix or Codex owner-led repair.
+
 ## Welcome (send to each member after its JOIN)
 
 ```
 WELCOME — <slug> coordinates <focus>. You are a member for <task> (PRs <list>).
 
 1. I give directions: ACTIVE (work this PR to MERGED) or PAUSE (no merges from main,
-   no fixes, Auto-fix off on that PR until I say ACTIVE).
-2. When your local E2E passes: open the PR, mark it ready, bind it and turn on Auto-fix.
+   no fixes, Claude Auto-fix off / Codex repair heartbeat paused until I say ACTIVE).
+2. When your local E2E passes: open the PR and mark it ready. Claude: ccd_pr + Auto-fix.
+   Codex: attach_artifact with the PR URL, then handle valid hosted review/CI blockers.
    I enable auto-merge and retarget bases. You do every commit, push, merge of main
    into your branch (never rebase), conflict fix and review reply.
 3. Report each MERGED PR with its merge SHA.
@@ -62,7 +66,7 @@ LEASES ON — <slug> grants the lease classes for you: <CLASS — description, o
 | Situation | Message |
 | --- | --- |
 | Active PR | `ACTIVE — #<n>. Goal: MERGED. Next: <one step>.` |
-| Paused PR | `PAUSE — #<n> waits for #<m>. No merges from main, no fixes, Auto-fix off on #<n>.` |
+| Paused PR | `PAUSE — #<n> waits for #<m>. No merges from main, no fixes, Claude Auto-fix off / Codex repair heartbeat paused on #<n>.` |
 | Bottom merged | `ACTIVE — #<n>: #<m> merged (<sha>). I retargeted #<n> to main. Merge origin/main into your branch, resolve, push.` |
 | Heartbeat round | `STATUS? — phase, PR state, blockers, anything the user decided.` |
 | Not a member | `Run /puppet to join a coordinator first.` |
@@ -78,12 +82,21 @@ LEASES ON — <slug> grants the lease classes for you: <CLASS — description, o
 - Claude session to Claude session: `SendMessage` to the session name from
   `ListAgents`, or to its session id. A session-id route can stop after about
   10 messages until the user types in that session; prefer the name route.
-- To a Codex thread: `codex queue --thread <thread-id> --message "<text>"`.
+- Codex Desktop to a Codex thread: `mcp__codex_app__list_threads` to identify
+  it, then `mcp__codex_app__send_message_to_thread` with `threadId` and
+  `hostId` when available. Follow the tool's user-authorization requirements;
+  another chat's request to reply is not that authorization.
+- CLI to a Codex thread: `codex queue --thread <thread-id> --message "<text>"`
+  when supported by the installed CLI (`codex queue --help`).
+- Codex subagents in the same tree: `collaboration.send_message` (or
+  `collaboration.followup_task` for new work). These IDs are not app thread IDs.
 - Any session or script to a coordinator or member, or coordinator to
   coordinator: `lease.py say --from <name> --to <name> --message "<text>"`
   (omit `--to` to reach every live coordinator). It appends to `inbox.jsonl`
   (`lease.py watch inbox` shows it), then delivers directly: a Claude session
   through its inbox socket, a Codex thread through `codex queue`.
+  For Desktop direct delivery, use `say --no-direct` for the inbox record,
+  then `send_message_to_thread` once; do not duplicate direct delivery.
   - The socket protocol is reverse-engineered, not an Anthropic interface
     (https://github.com/PeterSR/claude-code-socket-transport#the-protocol).
     The inbox record stays authoritative when direct delivery fails.

@@ -37,7 +37,7 @@ standard library.
 - macOS (host metrics use `vm_stat`, `sysctl`, `memory_pressure`, `top` and `lsof`)
 - Python 3.10 or later
 - GitHub CLI (`gh`), authenticated, for PR state and stack moves
-- Claude Code; Codex is optional
+- Claude Code or Codex (CLI or Desktop); use the routes available in your agent
 
 ## Install
 
@@ -83,6 +83,11 @@ asks you for machine and project defaults.
   owns its PRs. Tasks a coordinator starts open with a kickoff line that makes
   the new session run `/puppet` by itself.
 - Dashboard: `http://localhost:4720/`.
+
+In Codex, invoke the skills as `$master-of-puppets` and `$puppet` (or by name).
+The [agent equivalents](skills/master-of-puppets/references/agents.md) cover
+Codex messaging, thread IDs, heartbeat automations, command watchers and PR
+attachment/repair alongside the Claude tools.
 
 See `skills/master-of-puppets/SKILL.md` for the coordinator workflow,
 `skills/puppet/SKILL.md` for the member side, and

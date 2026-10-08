@@ -54,9 +54,13 @@ member to cross those limits.
     owns the merge order.
 12. Claude members: after opening a PR, bind it with `ccd_pr` and turn on
     Auto-fix. Do not poll CI yourself.
+    Codex members: attach the PR with `mcp__codex_app__attach_artifact` when
+    available, and handle valid hosted review/CI blockers in the owner chat.
+    Use the coordinator's watcher events or an authorized repair heartbeat
+    for later work; PR attachment does not enable Auto-fix. See `agents.md`.
 13. Stacks: one active PR per stack, bottom first. Merge each PR into main on
     its own; never merge a stacked PR into its parent. After the bottom merges,
-    retarget the next to main and merge main into it. Paused PRs keep Auto-fix
-    off. GitHub does not allow auto-merge on a PR whose base is another PR
-    branch.
+    retarget the next to main and merge main into it. Paused PRs keep Claude
+    Auto-fix off and Codex repair heartbeats paused. GitHub does not allow
+    auto-merge on a PR whose base is another PR branch.
 14. After the merge, stop owned services, release leases and report receipts.
