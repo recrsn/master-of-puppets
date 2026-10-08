@@ -100,6 +100,10 @@ do is in the `puppet` skill; `references/protocol.md` lists the coordinator side
 
 ## Members and tasks (coordinator only)
 
+Use native direct messaging for member communication: Claude `SendMessage`,
+Codex `send_message_to_thread` or a supported direct CLI route. Reserve
+`lease.py say` for messages between coordinators (`references/protocol.md`).
+
 - **JOIN** arrives: `lease.py member add --coordinator <slug> --name <name> --tool <t> --session-id <id> --worktree <p> --task "<task>" --pr <n> --repo <owner/repo> --session <deep link>`,
   then send WELCOME (`references/protocol.md`).
 - **UPDATE, STATUS reply or MERGED**: `lease.py member update --coordinator <slug> --name <name> --phase "<phase>" --kind ok|work|warn|done --latest "<newest fact>" [--pr ...]`.

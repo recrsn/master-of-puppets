@@ -79,21 +79,26 @@ LEASES ON — <slug> grants the lease classes for you: <CLASS — description, o
 
 ## Routes
 
+Members and their coordinator communicate directly in both directions for
+every protocol message. Only messages between coordinators use `lease.py say`.
+The coordinator records member updates in the roster/dashboard and decisions
+in the ledger; member messages need no shared inbox copy.
+
 - Claude session to Claude session: `SendMessage` to the session name from
   `ListAgents`, or to its session id. A session-id route can stop after about
   10 messages until the user types in that session; prefer the name route.
 - Codex Desktop to a Codex thread: `mcp__codex_app__list_threads` to identify
   it, then `mcp__codex_app__send_message_to_thread` with `threadId` and
   `hostId` when available, and the protocol text in `prompt`. Prefer this native
-  inter-thread route for every puppet-to-master message as well as authorized
-  master replies and peer messages. Follow the tool's user-authorization requirements;
+  inter-thread route for every puppet-to-master message and authorized master
+  replies. Follow the tool's user-authorization requirements;
   another chat's request to reply is not that authorization.
 - CLI to a Codex thread: `codex queue --thread <thread-id> --message "<text>"`
   when supported by the installed CLI (`codex queue --help`).
 - Codex subagents in the same tree: `collaboration.send_message` (or
   `collaboration.followup_task` for new work). These IDs are not app thread IDs.
-- Any session or script to a coordinator or member, or coordinator to
-  coordinator: `lease.py say --from <name> --to <name> --message "<text>"`
+- Coordinator to coordinator only:
+  `lease.py say --from <name> --to <name> --message "<text>"`
   (omit `--to` to reach every live coordinator). It appends to `inbox.jsonl`
   (`lease.py watch inbox` shows it), then delivers directly: a Claude session
   through its inbox socket, a Codex thread through `codex queue`.
@@ -107,6 +112,8 @@ LEASES ON — <slug> grants the lease classes for you: <CLASS — description, o
     drops it after `dialogExpiry`. The user decides whether to set
     `crossSessionInbound` to `accept` for that session; never change it yourself.
   - The socket frame names the receiver's current session id. `/clear` mints a
-    new one, so a member that clears must send JOIN again.
+    new one, so a coordinator that clears must refresh its roster session ID.
+- If no supported direct route to a member or its coordinator is available,
+  report the delivery gap. Do not use `say` as a member-message fallback.
 - Deep links for the dashboard: Claude `claude://claude.ai/epitaxy/<sessionId>`,
   Codex `codex://threads/<threadId>`.
