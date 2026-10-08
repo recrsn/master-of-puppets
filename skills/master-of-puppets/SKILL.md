@@ -66,7 +66,10 @@ session id is `$CLAUDE_CODE_SESSION_ID`. What members send and do is in the
 2. Claim: `lease.py coordinate --name <slug> --tool claude --session-id "$CLAUDE_CODE_SESSION_ID" --focus "<stack in a few words>" --pr <n> [...]`.
    Exit 3 means the name or a PR belongs to a live coordinator: join it with `/puppet`, or
    agree a split with it by message.
-3. Read the newest `ledger.jsonl` entries and the other coordinators' focus.
+3. Read the skill's memory: `lease.py memory list --project-root "$PWD"`
+   (machine rules, then this project's). Apply them, and put the project
+   rules in every WELCOME. Read the newest `ledger.jsonl` entries and the
+   other coordinators' focus.
    Record decisions with `lease.py note --by <slug> --text "..." [--pr <n>]`:
    joins, ACTIVE/PAUSE, stack moves, merge SHAs, user decisions. After a
    context reset, `roster`, the ledger and your dashboard file are how you
@@ -162,6 +165,23 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    rounds while its PR is blocked: tell the user, with its deep link. Pending
    enrollments older than 30 minutes: ask the starter, then `member remove`.
 6. Post a short message to the user: decisions first, then the table.
+
+## Memory
+
+The skill keeps its own memory in the state dir, apart from any agent's
+memory: rules, lessons and notes, per machine or per project (all worktrees of
+a repository share one). Project-specific rules belong there, never in the
+skill text. Examples: "in this repo, a commit whose hooks run lint needs a
+BUILD lease", "this repo merges through a merge queue".
+
+- When the user states a rule or lesson for this project or machine (directly,
+  or relayed as USER SYNC), record it:
+  `lease.py memory add --by <slug> --kind rule|lesson|note --text "..." [--project-root <path>]`.
+  Omit `--project-root` for a machine-wide entry. Tell your members and the
+  other coordinators, and `note` it.
+- Remove a rule the user withdraws: `lease.py memory remove --id <id> [--project-root <path>]`.
+- A rule that should hold in every project is a change to the skill itself,
+  not a memory entry.
 
 ## Messages
 
