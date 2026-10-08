@@ -71,11 +71,17 @@ prompts are answered by the user in your session, never by a relay.
 
 ## 5. Leases (only when WELCOME says leases are on)
 
-1. Finish all edits first. Then request:
-   `LEASE REQUEST <CLASS> — <exact commands> — <estimate min> — <est GiB if known> — <worktree>`.
+1. Finish all edits first. Pick an id, `<coord>-q-<name>-<n>` (n counts your
+   requests), and request:
+   `LEASE REQUEST <CLASS> — id <id> — <exact commands> — <estimate min> — <est GiB if known> — <worktree>`.
    The classes and their scope are in WELCOME (BUILD and E2E by default).
-2. Wait with `lease.py await-grant <CLASS> --id <id>`. It exits 0 when granted
-   and 3 as soon as your entry leaves the queue. Never write polling loops.
+2. Start waiting at once: `lease.py await-grant <CLASS> --id <id>`. It allows
+   the coordinator up to 10 minutes to queue your id. It prints one line:
+   - `GRANTED` (exit 0): the only signal to run.
+   - `NOT-GRANTED ... left the queue` (exit 3), `... never queued` (exit 6):
+     do not run; ask your coordinator.
+   - `NOT-GRANTED ... timeout` (exit 5): still queued; run `await-grant` again.
+   Never write polling loops.
 3. Run only the granted commands. Use it or return it: no edits or repairs
    while holding a lease. On a failure, release at once and report the raw
    failure; repair; request again.

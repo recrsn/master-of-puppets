@@ -83,8 +83,11 @@ Roster and members (coordinators write; members only send messages)
 
 Messaging and waiters (anyone)
   say --from NAME --message TEXT [--to C]      no --to reaches every coordinator
-  await-grant CLASS --id ID [--timeout-min N]
-       exit 0 granted, 3 as soon as ID is neither queued nor held, 5 on timeout
+  await-grant CLASS --id ID [--timeout-min N] [--appear-timeout S]
+       prints GRANTED or NOT-GRANTED <reason>. Exit 0 granted (the only grant);
+       3 left the queue without a grant; 5 timeout while still queued; 6 never queued
+       within --appear-timeout (default 600 s), so a member may start before the
+       coordinator queues the ID it proposed
   calm-wait [--settle S] [--retry S]           one CALM line when the host is calm
   watch inbox --me C | watch expiry | watch prs --me C [--interval S]   Monitor sources
   install                                     copy this file into the state dir if absent
@@ -674,21 +677,30 @@ def brief(state):
 
 
 def await_grant(args):
-    """Poll without the lock. Ends when granted, when the entry is gone, or on timeout."""
-    deadline = time.time() + args.timeout_min * 60
+    """Poll without the lock. A member may start before the coordinator queues the
+    entry, so the ID gets --appear-timeout to show up before it is judged. Prints
+    one line, GRANTED or NOT-GRANTED <reason>; only exit 0 means granted."""
+    start = time.time()
+    seen = False
     while True:
         state = load()
         if any(h["id"] == args.id for h in state[args.cls]):
-            print(f"granted {args.cls} {args.id}")
+            print(f"GRANTED {args.cls} {args.id}")
             return 0
         entry = next((q for q in state["queue"][args.cls] if q["id"] == args.id), None)
-        if entry is None:
-            print(f"{args.id} is neither queued nor holding {args.cls}; stop waiting")
+        waited = time.time() - start
+        if entry is not None:
+            seen = True
+        elif seen:
+            print(f"NOT-GRANTED {args.cls} {args.id}: left the queue without a grant; ask your coordinator")
             return 3
-        if time.time() >= deadline:
+        elif waited >= args.appear_timeout:
+            print(f"NOT-GRANTED {args.cls} {args.id}: never queued within {args.appear_timeout:g} s; check the id with your coordinator")
+            return 6
+        if waited >= args.timeout_min * 60:
             ready = [q["id"] for q in state["queue"][args.cls] if not q.get("hold")]
-            pos = ready.index(args.id) + 1 if args.id in ready else "on hold"
-            print(f"timeout after {args.timeout_min} min; {args.id} is at position {pos}")
+            pos = ready.index(args.id) + 1 if args.id in ready else "on hold" if entry else "not queued"
+            print(f"NOT-GRANTED {args.cls} {args.id}: timeout after {args.timeout_min:g} min; position {pos}; still queued, wait again")
             return 5
         time.sleep(args.interval)
 
@@ -962,6 +974,7 @@ def main():
     ag.add_argument("cls", metavar="CLASS")
     ag.add_argument("--id", required=True)
     ag.add_argument("--timeout-min", type=float, default=30)
+    ag.add_argument("--appear-timeout", type=float, default=600, help="seconds the ID may take to be queued")
     ag.add_argument("--interval", type=float, default=10)
     dc = sub.add_parser("decision")
     dsub = dc.add_subparsers(dest="dcmd", required=True)
