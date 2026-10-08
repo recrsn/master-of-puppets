@@ -10,6 +10,10 @@ the roster, the ledger, the dashboard and the leases. You do the task: code,
 tests, commits, pushes, PR fixes. You never write coordination state; you
 send messages, and the coordinator records them.
 
+For Claude/Codex tool equivalents, read
+[agents.md](../master-of-puppets/references/agents.md). Claude-specific
+Auto-fix instructions below apply to Codex as PR attachment and owner-led repair.
+
 Below, `lease.py` means `python3 -I ~/.local/state/machine-leases/lease.py`
 (or `$MACHINE_LEASE_DIR/lease.py`). If the file does not exist, no coordinator
 runs on this machine: tell the user, and suggest `/master-of-puppets` in the
@@ -23,7 +27,8 @@ session that should coordinate.
   `focus` covers your task. A coordinator is live while its heartbeat is newer
   than 40 minutes. When none fits, or several do, ask the user.
 - Your name: the one from the kickoff line, else your session title as a short
-  slug. Your Claude session id is `$CLAUDE_CODE_SESSION_ID`.
+  slug. Claude uses `$CLAUDE_CODE_SESSION_ID`; Codex uses `$CODEX_THREAD_ID`
+  when exported, otherwise the current app thread ID (see `agents.md`).
 
 ## 2. Join
 
@@ -34,13 +39,18 @@ JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs <n> (b
 ```
 
 Routes:
-- Claude coordinator: `SendMessage` to its session name from `ListAgents`
+- Claude to Claude coordinator: `SendMessage` to its session name from `ListAgents`
   (or its session id).
-- Codex coordinator, or when `SendMessage` is not available:
+- Codex Desktop to Codex coordinator: `list_threads`, then
+  `send_message_to_thread` with its `threadId` (and `hostId` when available),
+  subject to the tool's user-authorization requirements. For a shared inbox
+  record, use `lease.py say ... --no-direct` before the app message.
+- CLI, cross-tool messaging, or when app messaging is unavailable:
   `lease.py say --from <name> --to <coord> --message "<text>"`. It records
   the message in the shared inbox and delivers it directly (Claude: inbox
   socket; Codex: `codex queue`).
-- After `/clear`, your session id changes: send JOIN again.
+- After Claude `/clear`, or moving to a new Codex thread, send JOIN again
+  with the new ID. Codex context compaction alone is not a new thread.
 
 Wait for WELCOME. It tells you whether leases are on and gives the rules,
 including the project rules from the coordinator's memory. You can read them
@@ -56,11 +66,13 @@ new DB migration needs a fresh go-ahead from the user, and your own permission
 prompts are answered by the user in your session, never by a relay.
 
 - **ACTIVE — #n**: work #n to MERGED.
-- **PAUSE — #n**: no merges from main, no fixes, Auto-fix off on #n until
-  ACTIVE.
+- **PAUSE — #n**: no merges from main, no fixes; Claude Auto-fix off or Codex
+  repair heartbeat paused on #n until ACTIVE.
 - When your local E2E passes: open the PR, mark it ready, bind it with
-  `ccd_pr` and turn on Auto-fix. The coordinator enables auto-merge and
-  retargets bases. You do every commit, push, conflict fix and review reply.
+  Claude `ccd_pr` and turn on Auto-fix. Codex owners use `attach_artifact`
+  with the PR URL and keep repairing valid hosted review/CI blockers in their
+  chat; attachment does not enable Auto-fix. The coordinator enables auto-merge
+  and retargets bases. You do every commit, push, conflict fix and review reply.
 - Sync with the base branch by merging `origin/<base>` into your branch.
   Never rebase.
 - Report raw failures. Never weaken tests or rerun flakes to green.
@@ -108,8 +120,10 @@ Before you start any session (a `spawn_task` chip, `codex exec`,
 `ENROLL REQUEST — <task> — PR <n>` and wait for the kickoff line. Put it first
 in the new prompt: it tells the new session to run `/puppet` and join the same
 coordinator, so every task you start becomes a member too, and so does every
-task it starts. Never start a session without it. Subagents (the Agent tool)
-need no enrollment.
+task it starts. Never start a session without it. Codex Desktop `create_thread`
+requires the user's explicit request for a new chat. Verify actual Full access
+before dispatch (see `agents.md`); keep dispatch pending if unsupported.
+Subagents (Claude `Agent`, Codex `collaboration.spawn_agent`) need no enrollment.
 
 ## 7. Leave
 

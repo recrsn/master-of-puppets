@@ -14,6 +14,12 @@ the user asks to reconfigure.
 
 Nothing is written into the repository.
 
+Claude uses `AskUserQuestion` for the question groups below. Codex uses
+`functions.request_user_input_async` when available, or
+`functions.request_user_input` only when allowed by the current mode and tool
+instructions; split groups to fit the tool's question limit. Ordinary chat is
+the fallback. Wait for required choices before writing their configuration.
+
 ## 1. Detect
 
 Run these first, and put the real numbers into the options:
@@ -26,7 +32,7 @@ gh repo view --json defaultBranchRef,squashMergeAllowed,mergeCommitAllowed,rebas
 
 ## 2. Machine questions (only when `machine` is unconfigured)
 
-One `AskUserQuestion` call with four questions. Put the recommended option
+Ask these four questions using the agent's question tool. Put the recommended option
 first and add "(Recommended)" to its label.
 
 1. **Memory reserve** (header "RAM floor"): GiB kept free for the OS, apps and
@@ -56,7 +62,7 @@ tunnel), add each with `lease.py config set-class` (`references/leases.md`).
 
 ## 3. Project questions (only when `project` is unconfigured)
 
-One `AskUserQuestion` call with four questions:
+Ask these four questions using the agent's question tool:
 
 1. **Memory peaks** (header "Peaks"): Learn: start at BUILD 10 GiB and E2E
    8 GiB, then measure each lease with `lease.py measure-peak` (Recommended).

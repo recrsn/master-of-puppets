@@ -1,12 +1,12 @@
 ---
 name: master-of-puppets
-description: Coordinate local agent sessions (Claude and Codex) and take their PR stacks to MERGED. Coordinators each own a focus (a stack), watch with Monitors, run a scheduled heartbeat round that checks on every member, move each stack bottom-up (active PR, retarget to main, auto-merge, confirm the merge SHA), and share one roster, ledger and live SSE dashboard with CPU, memory, swap and disk. Sessions join as members with the separate /puppet skill; the coordinator enrolls and updates every member and every task its members start. Optional machine-wide leases for any shared action (default classes BUILD and E2E; add others such as one browser window or a test database) with adaptive, memory-based capacity. This skill is for the coordinator role only; a session that should join a coordinator uses /puppet. Use it whenever the user says "master of puppets", "coordinate", "be the coordinator", "drive/babysit/land these PRs", "take the stack to merge", "who is blocked", or asks for a status dashboard across sessions; also when sessions share one machine and the user mentions leases, queues, swapping, builds colliding or who builds next.
+description: Coordinate local Claude and Codex sessions and take their PR stacks to MERGED. Coordinators own a stack, watch PRs and messages, check members on scheduled heartbeats, move stacks bottom-up, and share a roster, ledger and live host/status dashboard. Optional machine-wide leases for builds, E2E or other shared actions use adaptive memory-based capacity. Use when asked to be the coordinator, drive or land PR stacks, track blockers across sessions, or manage shared-machine leases, queues or colliding builds. Coordinator role only; sessions joining an existing coordinator use the separate puppet skill.
 ---
 
 # Master of puppets
 
 Coordinators drive the work of many sessions to completion. Their main job is
-to take PR stacks to MERGED, through Monitors (events arrive by themselves), a
+to take PR stacks to MERGED, through watchers, a
 scheduled heartbeat round that also checks on members, and short directions to members. A coordinator does
 not write product code.
 
@@ -42,6 +42,9 @@ Read `references/setup.md` on the first run in a project,
 conduct and PR rules, `references/dashboard.md` before you write your state
 file, and `references/lessons.md` once.
 
+Read [references/agents.md](references/agents.md) for Claude/Codex tool
+equivalents, session identity, messaging, watchers, scheduling and PR repair.
+
 ## Before you start
 
 This skill is the coordinator role. Run `lease.py roster` first:
@@ -53,17 +56,18 @@ This skill is the coordinator role. Run `lease.py roster` first:
 | A live coordinator already owns that stack | Ask the user: join it with `/puppet`, split the stack with it, or take over |
 | The user wants this session to replace a live coordinator | `coordinate --takeover`, only with the user's approval in this session |
 
-A coordinator is live while its heartbeat is newer than 40 minutes. Your Claude
-session id is `$CLAUDE_CODE_SESSION_ID`. What members send and do is in the
-`puppet` skill; `references/protocol.md` lists the coordinator side.
+A coordinator is live while its heartbeat is newer than 40 minutes. Use
+`$CLAUDE_CODE_SESSION_ID` for Claude or `$CODEX_THREAD_ID` for Codex when
+exported (see `references/agents.md` for app identity). What members send and
+do is in the `puppet` skill; `references/protocol.md` lists the coordinator side.
 
 ## Coordinator start
 
 1. Run `lease.py install` from the skill copy. On DIFFERS, use the live copy
    and tell the user. Run `lease.py config show --project-root "$PWD"`; exit 3
    means the machine or project is not configured yet: follow
-   `references/setup.md` (detect, then `AskUserQuestion`) before step 2.
-2. Claim: `lease.py coordinate --name <slug> --tool claude --session-id "$CLAUDE_CODE_SESSION_ID" --focus "<stack in a few words>" --pr <n> [...]`.
+   `references/setup.md` (detect, then ask setup questions) before step 2.
+2. Claim: `lease.py coordinate --name <slug> --tool <claude|codex> --session-id <session-or-thread-id> --focus "<stack in a few words>" --pr <n> [...]`.
    Exit 3 means the name or a PR belongs to a live coordinator: join it with `/puppet`, or
    agree a split with it by message.
 3. Read the skill's memory: `lease.py memory list --project-root "$PWD"`
@@ -75,14 +79,16 @@ session id is `$CLAUDE_CODE_SESSION_ID`. What members send and do is in the
    context reset, `roster`, the ledger and your dashboard file are how you
    recover.
 4. Write `prs-<slug>.txt` in the state dir (`owner/repo#<n>` per line). Arm
-   Monitors: `lease.py watch inbox --me <slug>` and `lease.py watch prs --me <slug>`;
+   watchers: `lease.py watch inbox --me <slug>` and `lease.py watch prs --me <slug>`;
    add `lease.py watch expiry` when leases are on. Re-arm each one that ends.
-5. Schedule the heartbeat round (required): `CronCreate`, session-only, every
+5. Schedule the heartbeat round (required): Claude `CronCreate`, session-only, every
    15 minutes, prompt "master-of-puppets heartbeat round for <slug>: follow
    the Heartbeat round steps". Inside `/loop` dynamic mode, use
-   `ScheduleWakeup` instead. The round sends your heartbeat and checks on
+   `ScheduleWakeup` instead. Codex Desktop uses an `automation_update` thread
+   heartbeat; reuse an existing matching automation (`references/agents.md`).
+   The round sends your heartbeat and checks on
    every member, because members forget to send updates. Keep it running
-   while you coordinate, and create it again after a context reset. Without
+   while you coordinate, and verify it after a context reset. Without
    it, members and peers see you as gone, and silent members go unnoticed.
 6. Run `python3 -I <skill>/scripts/server.py` in the background (a no-op when
    one runs) and give the user `http://localhost:4720/`.
@@ -105,7 +111,10 @@ session id is `$CLAUDE_CODE_SESSION_ID`. What members send and do is in the
   or send it back to the member that asked. Tasks your members start get one
   the same way, through their ENROLL REQUEST, at any depth. This covers every route that starts a session: `spawn_task` chips,
   new Codex threads (`codex exec`, `codex "<prompt>"`), `claude -p`, cloud
-  handoffs and scheduled tasks. Subagents (the Agent tool) are part of their
+  handoffs and scheduled tasks. Use Codex Desktop `create_thread` only on the
+  user's explicit request for a new chat; use subagents for authorized subtasks.
+  Verify Full access before dispatch (`references/agents.md`).
+  Subagents (Claude `Agent`, Codex `collaboration.spawn_agent`) are part of their
   parent and are not enrolled. Nothing enforces this; check each
   session-starting prompt yourself.
 - **Pending entries**: check them each round. One still pending after 30
@@ -119,18 +128,22 @@ session id is `$CLAUDE_CODE_SESSION_ID`. What members send and do is in the
 
 1. **One active PR per stack**: the lowest open PR. Send its owner
    `ACTIVE — #<n>`. Send owners of higher PRs `PAUSE — #<n> waits for #<m>`:
-   no merges from main, no fixes, Auto-fix off on that PR until it is active.
+   no merges from main, no fixes; Claude Auto-fix off, Codex repair heartbeat
+   paused on that PR until it is active.
    PRs in different stacks that touch the same files go one at a time; agree
    the order with the other coordinator and `note` it.
 2. **Make the active PR mergeable.** Owner: local E2E evidence, PR bound with
-   `ccd_pr`, Auto-fix on. Coordinator: `gh pr ready <n>` if draft, then enable
+   Claude `ccd_pr` with Auto-fix on, or Codex `attach_artifact` and owner-led
+   blocker repair (`references/agents.md`). Coordinator: `gh pr ready <n>` if
+   draft, then enable
    auto-merge with the project's merge method (`gh pr merge <n> --auto --<mergeMethod>`;
    for `auto`, no method flag).
    GitHub refuses auto-merge while the base is another PR branch. A new DB
    migration needs the user's fresh go-ahead before auto-merge.
 3. **React to `watch prs` events.** `merge=DIRTY`: the owner merges
    `origin/main` into the branch (never rebase) and resolves. Failing checks or
-   review comments: the owner's Auto-fix handles them; stuck over two rounds,
+   review comments: the owner's Auto-fix (Claude) or repair work (Codex)
+   handles them; stuck over two rounds,
    ask for the exact job, revision, test and first causal error.
    `automerge=off` on an active PR: find the cause before you set it again.
 4. **On MERGED**: confirm with `gh pr view <n> --json state,mergeCommit` and
@@ -153,7 +166,8 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
 
 1. `lease.py heartbeat --name <slug>` (add `--focus`/`--pr` when they change);
    read `roster`, `lease.py status --brief` and new ledger entries.
-2. Re-arm any Monitor that ended.
+2. Re-arm any watcher that ended; on Codex, consume new watcher output and
+   recover unread inbox/ledger entries (`references/agents.md`).
 3. Compare each stack with the latest `watch prs` lines; act on steps 3 and 4
    above. Confirm with one `gh pr view` before each stack move, not on a timer.
 4. Leases on: expiry check and grants (`references/leases.md`).
@@ -164,7 +178,8 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    `STATUS?`. Record each reply with `member update`. A member silent for two
    rounds while its PR is blocked: tell the user, with its deep link. Pending
    enrollments older than 30 minutes: ask the starter, then `member remove`.
-6. Post a short message to the user: decisions first, then the table.
+6. Report meaningful changes or decisions to the user: decisions first, then
+   the table. A Codex heartbeat stays quiet when nothing actionable changed.
 
 ## Memory
 
@@ -202,5 +217,6 @@ Lead with what changed or what needs them. Keep the table short: task, PR,
 state, next step. Auto-merge on, queued and MERGED are different states;
 report the exact one. Quote raw failures. Never ask a member to weaken a test
 or rerun a flake to green. When you make a mistake, say so and how you fixed
-it. When you stop, run `lease.py resign --name <slug>` and tell your members
+it. When you stop, stop your watchers and heartbeat schedule, run
+`lease.py resign --name <slug>` and tell your members
 and the other coordinators.
