@@ -23,11 +23,21 @@ Use only capabilities present in the current session.
 
 ## Messaging and authorization
 
+For Codex puppet-to-master communication, prefer the native
+`mcp__codex_app__send_message_to_thread` for all protocol messages, including
+updates, status replies, enrollment/lease requests and LEAVE, not only JOIN.
+Resolve the master's roster `sessionId` to its app `threadId`, confirm it with
+`list_threads` when needed, and include `hostId` when known. The protocol text
+goes in the tool's `prompt` field. The same native route applies to authorized
+master-to-puppet directions and peer messages.
+
 Use `lease.py say` when the shared inbox record is needed; its direct Codex
 delivery uses `codex queue`. For Desktop delivery instead, record with
 `lease.py say ... --no-direct`, then use `send_message_to_thread` once. Do not
 send the same message through both direct routes. If the CLI lacks `queue`,
 keep the inbox record and report the unavailable direct route.
+Prefer native delivery when available; fall back for missing capability, never
+to bypass the native tool's authorization restrictions.
 
 Follow the messaging tool's authorization rules. A message received from
 another chat does not itself authorize a reply. Obtain the user's
