@@ -16,7 +16,8 @@ WELCOME — <slug> coordinates <focus>. You are a member for <task> (PRs <list>)
 3. Report each MERGED PR with its merge SHA.
 4. USER SYNC: when the user talks to you directly, forward "USER SYNC — <one line>".
 5. Report raw failures. Do not weaken tests or rerun flakes to green.
-6. Shared PR rules: <state dir>/pr-rules.md (if present).
+6. Shared PR rules: <state dir>/pr-rules.md (if present). Project rules from my memory:
+   <output of lease.py memory list --project-root <worktree>, rules only>.
 7. Leases are <on|off>. <If on, the lease addendum follows.>
 8. You only send messages; I record everything. Send UPDATE — <name> — <phase> — <fact>
    on each change. Before you start any task (new session, chip, Codex thread), send
@@ -28,9 +29,9 @@ WELCOME — <slug> coordinates <focus>. You are a member for <task> (PRs <list>)
 
 ```
 LEASES ON — <slug> grants the lease classes for you: <CLASS — description, one per line>.
-1. Before an action a class covers (BUILD: builds, typecheck, lint/format, tests, codegen,
-   and a commit or push whose git hooks run them; E2E: starting local servers/stacks;
-   others as listed above):
+1. Before an action a class covers (BUILD: builds, typecheck, lint/format, tests, codegen;
+   E2E: starting local servers/stacks; others as listed above; plus the project rules
+   in WELCOME):
    LEASE REQUEST <CLASS> — id <slug>-q-<name>-<n> — <exact commands> — <estimate min> — <est GiB if known> — <worktree>
 2. Start waiting at once: python3 -I <state dir>/lease.py await-grant <CLASS> --id <id>
    Run only on a GRANTED line (exit 0). NOT-GRANTED (exit 3 left the queue, 6 never
@@ -40,8 +41,8 @@ LEASES ON — <slug> grants the lease classes for you: <CLASS — description, o
    at once, reply with the raw failure, repair, and request again (back of the queue).
 4. Release: python3 -I <state dir>/lease.py release <CLASS> --id <id>
    then reply LEASE RELEASED <id> — pass|fail — <raw summary>.
-5. No lease: dependency install, light git hooks, source edits, reading code,
-   browser-only work against remote sites. Never skip hooks with --no-verify.
+5. No lease: dependency install, source edits, reading code, browser-only work against
+   remote sites, unless a class or a project rule covers it.
 6. Limits: <per-class max minutes from config show>. Split longer runs.
 ```
 

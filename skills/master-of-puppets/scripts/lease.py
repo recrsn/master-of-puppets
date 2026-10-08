@@ -9,10 +9,8 @@ database, a device). Leases are optional and machine-wide. Default registry:
 Each class has a description, defaultGiB (0 = not memory-bound; then only maxSlots
 limits it), maxMinutes and settle {OTHER: seconds} (after a grant of this class,
 OTHER waits that long; E2E settles BUILD for 60 s by default). Names are upper-case.
-A commit or push whose git hooks run lint, format, typecheck, a build or tests is a
-BUILD run (never skip hooks with --no-verify). No lease: a plain dependency install,
-light git hooks, source edits, reading code, browser-only work against remote sites
-(unless a class covers it).
+No lease: a plain dependency install, source edits, reading code, browser-only work
+against remote sites (unless a class or a project rule in `memory` covers it).
 Use it or return it: a lease covers only running the granted commands. No edits or
 repairs while holding one. When a check fails, release at once with the failure,
 repair without a lease, then join the queue again at the back.
@@ -57,7 +55,7 @@ Leases (coordinators)
   extend CLASS --id ID --minutes N
   host-check                      admission gate; exit 0 CALM, 1 BUSY; prints disk_low=yes|no
   measure-peak --id ID --worktree P [--interval S]   run in the background after acquire
-  drain-check --worktree P [--port N ...] [--ngrok]   exit 0 when nothing is left; never kills
+  drain-check --worktree P [--port N ...] [--process PATTERN ...]   exit 0 when nothing is left; never kills
   config show [--project-root P] | set-machine ... | set-project --root P ... | project-key P
        machine: --reserve-gib --disk-floor-gib --max-swapouts --swap-interval-s --load-per-core
                 --dashboard-port --max-slots CLASS=N (N=0 removes the cap)
@@ -82,6 +80,15 @@ Roster and members (coordinators write; members only send messages)
   member stale --coordinator C [--minutes 30]   members (not done) with no update for N minutes
   decision add --by C --text TEXT [--task ID] [--href URL] | decision clear --by C (--task ID | --all)
   note --by C --text TEXT [--pr N]   shared ledger
+
+Memory (the skill's own memory; coordinators write it, everyone reads it)
+  memory add --by NAME --text TEXT [--kind rule|lesson|note] [--project-root P]
+  memory list [--project-root P] [--json]      machine entries, then the project's
+  memory remove --id ID [--project-root P]
+       Machine scope: memory/machine.json. Project scope (with --project-root):
+       memory/<project-key>.json, shared by every worktree of the repository.
+       Project-specific rules (for example which git hooks need a lease) live here,
+       not in the skill text.
 
 Messaging and waiters (anyone)
   say --from NAME --message TEXT [--to C]      no --to reaches every coordinator
@@ -678,6 +685,51 @@ def brief(state):
     return "\n".join(lines)
 
 
+MEMORY = os.path.join(DIR, "memory")
+
+
+def memory_path(project_root=None):
+    name = project_key(project_root)[0] if project_root else "machine"
+    return os.path.join(MEMORY, f"{name}.json"), name
+
+
+def memory_cmd(args):
+    if args.mcmd == "list":
+        scopes = [memory_path()] + ([memory_path(args.project_root)] if args.project_root else [])
+        out = {name: (read_json(path) or {}).get("entries", []) for path, name in scopes}
+        if args.json:
+            print(json.dumps(out, indent=1))
+            return 0
+        for name, entries in out.items():
+            print(f"{'Machine' if name == 'machine' else 'Project ' + name}:")
+            for x in entries:
+                print(f"  - [{x['kind']}] {x['text']}  ({x['id']}, {x['by']}, {x['at'][:10]})")
+            if not entries:
+                print("  (none)")
+        return 0
+    path, name = memory_path(args.project_root)
+    lock()
+    try:
+        data = read_json(path) or {"entries": []}
+        if args.mcmd == "add":
+            entry = {"id": f"m-{os.urandom(3).hex()}", "kind": args.kind, "text": args.text, "by": args.by, "at": now().isoformat()}
+            data["entries"].append(entry)
+            write_json(path, data)
+            log(f"memory add {name} {entry['id']} by={args.by}")
+            print(entry["id"])
+            return 0
+        before = len(data["entries"])
+        data["entries"] = [x for x in data["entries"] if x["id"] != args.id]
+        if len(data["entries"]) == before:
+            print(f"no memory entry {args.id} in {name}")
+            return 3
+        write_json(path, data)
+        log(f"memory remove {name} {args.id}")
+        return 0
+    finally:
+        unlock()
+
+
 def await_grant(args):
     """Poll without the lock. A member may start before the coordinator queues the
     entry, so the ID gets --appear-timeout to show up before it is judged. Prints
@@ -824,7 +876,8 @@ def measure_peak_cmd(args):
 
 def drain_check_cmd(args):
     """Report what a released lease left behind: processes working in the worktree (with
-    their listeners), listeners on the given ports, and ngrok agents with --ngrok.
+    their listeners), listeners on the given ports, and processes matching each
+    --process pattern (for example a tunnel or a browser started for the run).
     Exit 0 when nothing is left, 1 otherwise. It only reports; it never kills."""
     left = 0
     pids = worktree_pids(args.worktree)
@@ -841,10 +894,10 @@ def drain_check_cmd(args):
                 pid = line[1:]
                 left += 1
                 print(f"  port {port} {pid} {run(['ps', '-o', 'command=', '-p', pid]).strip()[:100]}")
-    if args.ngrok:
-        for line in run(["pgrep", "-fl", "ngrok"]).splitlines():
+    for pattern in args.process or []:
+        for line in run(["pgrep", "-fl", pattern]).splitlines():
             left += 1
-            print(f"  ngrok {line[:110]}")
+            print(f"  process {pattern}: {line[:110]}")
     print(f"{'drained' if not left else 'not drained'}: {left} left for {args.worktree}")
     return 0 if not left else 1
 
@@ -1063,6 +1116,19 @@ def main():
     m.add_argument("--from", dest="sender", required=True)
     m.add_argument("--message", required=True)
     m.add_argument("--to")
+    me = sub.add_parser("memory")
+    mesub = me.add_subparsers(dest="mcmd", required=True)
+    ma = mesub.add_parser("add")
+    ma.add_argument("--by", required=True)
+    ma.add_argument("--text", required=True)
+    ma.add_argument("--kind", choices=("rule", "lesson", "note"), default="rule")
+    ma.add_argument("--project-root")
+    ml = mesub.add_parser("list")
+    ml.add_argument("--project-root")
+    ml.add_argument("--json", action="store_true")
+    mr2 = mesub.add_parser("remove")
+    mr2.add_argument("--id", required=True)
+    mr2.add_argument("--project-root")
     nt = sub.add_parser("note")
     nt.add_argument("--by", required=True)
     nt.add_argument("--text", required=True)
@@ -1126,7 +1192,7 @@ def main():
     dr = sub.add_parser("drain-check")
     dr.add_argument("--worktree", required=True)
     dr.add_argument("--port", type=int, action="append", help="also check for listeners on this port")
-    dr.add_argument("--ngrok", action="store_true", help="also count running ngrok agents")
+    dr.add_argument("--process", action="append", help="also count processes matching this pattern (pgrep -f)")
     wa = sub.add_parser("watch")
     wa.add_argument("what", choices=("inbox", "expiry", "prs"))
     wa.add_argument("--me", help="coordinator name (inbox, prs)")
@@ -1145,6 +1211,8 @@ def main():
     if args.cmd == "note":
         note(args.by, args.text, args.pr)
         return 0
+    if args.cmd == "memory":
+        return memory_cmd(args)
     if args.cmd == "await-grant":
         return await_grant(args)
     unlocked = {"host-check": host_check_cmd, "calm-wait": calm_wait_cmd, "measure-peak": measure_peak_cmd,

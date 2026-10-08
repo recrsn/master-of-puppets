@@ -39,11 +39,11 @@ first and add "(Recommended)" to its label.
    two samples, load below 2.5 × cores (Recommended). Strict: 100 and 1.5 ×
    cores. Loose: 500 and 4 × cores. Show the core count.
 4. **Slot caps** (header "Slot caps"): a hard limit on top of the memory
-   budget. At 24 GiB RAM or less, recommend "BUILD 1, E2E 1": with the default
-   peaks the budget alone admits two 8 GiB stacks at once. Above that,
-   recommend "No caps (memory budget only)". Offer "E2E 1 only" as the third
-   option. Another coordinator may require caps as a condition; if one did,
-   say so in the question.
+   budget. Compute the budget (RAM − reserve) with the class peaks. When it
+   fits two of any class (for example two E2E stacks) but not one of every
+   class alongside it, recommend "BUILD 1, E2E 1"; otherwise recommend "No
+   caps (memory budget only)". Offer "E2E 1 only" as the third option. If
+   another coordinator on the machine set caps, say so in the question.
 
 Then run:
 

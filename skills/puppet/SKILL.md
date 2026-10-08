@@ -39,7 +39,11 @@ Routes:
 - Codex coordinator, or when `SendMessage` is not available:
   `lease.py say --from <name> --to <coord> --message "<text>"`.
 
-Wait for WELCOME. It tells you whether leases are on and gives the rules.
+Wait for WELCOME. It tells you whether leases are on and gives the rules,
+including the project rules from the coordinator's memory. You can read them
+yourself with `lease.py memory list --project-root "$PWD"`; only the
+coordinator writes them. If the user tells you a new project rule, send it as
+`USER SYNC` so the coordinator records it.
 
 ## 3. Work under directions
 
@@ -88,11 +92,10 @@ prompts are answered by the user in your session, never by a relay.
 4. Release: `lease.py release <CLASS> --id <id>`, then
    `LEASE RELEASED <id> — pass|fail — <raw summary>`. After an E2E lease, stop
    the servers you started.
-5. A commit or push whose git hooks run lint, format, typecheck, a build or
-   tests is a BUILD run: request a short BUILD lease that names it. Never skip
-   hooks with `--no-verify`.
-6. No lease needed: a plain dependency install, light git hooks, source edits,
-   reading code, browser-only work against remote sites, unless a class
+5. Project rules in WELCOME (from the coordinator's memory) can widen what
+   needs a lease, for example a commit whose hooks run lint. Follow them.
+6. No lease needed: a plain dependency install, source edits, reading code,
+   browser-only work against remote sites, unless a class or a project rule
    covers it.
 
 ## 6. Start a new task

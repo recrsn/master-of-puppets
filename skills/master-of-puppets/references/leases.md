@@ -13,8 +13,7 @@ Classes are a machine-wide registry; any shared action can be one. The
 default registry has two:
 
 - **BUILD**: builds (including setup scripts that build), typecheck, lint,
-  format runs, tests and codegen, and any commit or push whose git hooks run
-  them. 10 GiB, 20 min.
+  format runs, tests and codegen. 10 GiB, 20 min.
 - **E2E**: starting local servers or stacks, and interacting with them. 8 GiB,
   45 min; settles BUILD for 60 s.
 
@@ -29,13 +28,14 @@ class. `config remove-class <NAME>` is refused while the class has holders or
 queue entries. Add classes only on the user's word, then tell the other
 coordinators and your members.
 
-**Git hooks** run as part of the command that triggers them. A commit or push
-whose hooks run lint, format, typecheck, a build or tests is a BUILD run:
-request a short BUILD lease that names the commit or push. Never skip hooks
-with `--no-verify`. Hooks that run none of these need no lease.
+**Project rules** can widen a class's scope, for example "a commit whose hooks
+run lint needs a BUILD lease" in one repository. They live in the skill's
+memory, not here: read them with `lease.py memory list --project-root <path>`
+and include them in WELCOME.
 
-**No lease**: a plain dependency install, light git hooks, source edits,
-reading code, browser-only work against remote sites, unless a class covers it.
+**No lease**: a plain dependency install, source edits, reading code,
+browser-only work against remote sites, unless a class or a project rule
+covers it.
 
 Maximum length: `maxMinutesEffective` per class from `lease.py config show`. Every release records the run minutes;
 in learn mode the limit adapts to p90 of the last 10 runs + 25%, capped by
@@ -100,7 +100,7 @@ The memory budget predicts; the host check observes. Both must pass.
    commands, expiry and release command.
 5. On release: confirm with `lease.py status --brief` and `note` the result.
    After an E2E release, run
-   `lease.py drain-check --worktree <path> [--port <n> ...] [--ngrok]`; grant
+   `lease.py drain-check --worktree <path> [--port <n> ...] [--process <pattern> ...]`; grant
    the next E2E only when it exits 0, else ask the holder to stop what is left.
    If the next head belongs to another coordinator, tell it the slot is free.
 6. A member running commands outside the recorded scope breaks "use it or
