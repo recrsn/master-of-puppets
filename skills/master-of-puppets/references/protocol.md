@@ -79,8 +79,19 @@ LEASES ON — <slug> grants the lease classes for you: <CLASS — description, o
   `ListAgents`, or to its session id. A session-id route can stop after about
   10 messages until the user types in that session; prefer the name route.
 - To a Codex thread: `codex queue --thread <thread-id> --message "<text>"`.
-- Any session to a coordinator, or coordinator to coordinator:
-  `lease.py say --from <name> --to <slug> --message "<text>"` (omit `--to` to
-  reach every coordinator). It lands in `inbox.jsonl`; `lease.py watch inbox` shows it.
+- Any session or script to a coordinator or member, or coordinator to
+  coordinator: `lease.py say --from <name> --to <name> --message "<text>"`
+  (omit `--to` to reach every live coordinator). It appends to `inbox.jsonl`
+  (`lease.py watch inbox` shows it), then delivers directly: a Claude session
+  through its inbox socket, a Codex thread through `codex queue`.
+  - The socket protocol is reverse-engineered, not an Anthropic interface
+    (https://github.com/PeterSR/claude-code-socket-transport#the-protocol).
+    The inbox record stays authoritative when direct delivery fails.
+  - A receiver that bypasses permission prompts holds a socket message from a
+    script for the user's approval; the Desktop app cannot show that dialog and
+    drops it after `dialogExpiry`. The user decides whether to set
+    `crossSessionInbound` to `accept` for that session; never change it yourself.
+  - The socket frame names the receiver's current session id. `/clear` mints a
+    new one, so a member that clears must send JOIN again.
 - Deep links for the dashboard: Claude `claude://claude.ai/epitaxy/<sessionId>`,
   Codex `codex://threads/<threadId>`.
