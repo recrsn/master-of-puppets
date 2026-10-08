@@ -88,7 +88,10 @@ prompts are answered by the user in your session, never by a relay.
 4. Release: `lease.py release <CLASS> --id <id>`, then
    `LEASE RELEASED <id> — pass|fail — <raw summary>`. After an E2E lease, stop
    the servers you started.
-5. No lease needed: a plain dependency install, git hooks, source edits,
+5. A commit or push whose git hooks run lint, format, typecheck, a build or
+   tests is a BUILD run: request a short BUILD lease that names it. Never skip
+   hooks with `--no-verify`.
+6. No lease needed: a plain dependency install, light git hooks, source edits,
    reading code, browser-only work against remote sites, unless a class
    covers it.
 
