@@ -91,7 +91,10 @@ prompts are answered by the user in your session, never by a relay.
 Before you start any session (a `spawn_task` chip, `codex exec`,
 `codex "<prompt>"`, `claude -p`, a cloud handoff), send
 `ENROLL REQUEST — <task> — PR <n>` and wait for the kickoff line. Put it first
-in the new prompt. Subagents (the Agent tool) need no enrollment.
+in the new prompt: it tells the new session to run `/puppet` and join the same
+coordinator, so every task you start becomes a member too, and so does every
+task it starts. Never start a session without it. Subagents (the Agent tool)
+need no enrollment.
 
 ## 7. Leave
 
