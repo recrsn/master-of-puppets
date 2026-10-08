@@ -274,15 +274,15 @@ def render_page(host):
     for cls in classes:
         for h in holders(leases, cls):
             if parse(h["expiresAt"]) < now:
-                attention.append(("critical", f"{cls} lease {h['id']} expired", f"{h['holder'][:70]} · expired {ago(parse(h['expiresAt']), now)} · still holds its slot", "#leases"))
+                attention.append(("critical", f"Expired {cls} lease {h['id']}", f"{h['holder'][:70]} · {ago(parse(h['expiresAt']), now)}", "#leases"))
     for name, c in coords.items():
         if not coord_live(c):
             hb = f"last heartbeat {ago(parse(c['heartbeat']), now)}" if c.get("heartbeat") else "no heartbeat"
-            attention.append(("critical", f"Coordinator {name} is stale", f"{hb} · its members get no directions", f"#coord-{name}"))
+            attention.append(("critical", f"Stale coordinator {name}", hb, f"#coord-{name}"))
     for who, src in sources.items():
         for d in src.get("decisions", []):
             href = d.get("href") or session_of(who, d.get("task", "")) or "#decisions"
-            attention.append(("serious", f"Decision for you{' · ' + d['task'] if d.get('task') else ''}", f"{d.get('text', '')} ({who})", href))
+            attention.append(("serious", f"Decision{' · ' + d['task'] if d.get('task') else ''}", f"{d.get('text', '')} ({who})", href))
     for coord, mlist in members.items():
         for m in mlist:
             if m.get("status") in ("done", "paused"):
@@ -292,9 +292,9 @@ def render_page(host):
                 continue
             age = now - parse(last)
             if m.get("status") == "pending" and age > dt.timedelta(minutes=30):
-                attention.append(("warning", f"{m['name']} never joined", f"enrolled {ago(parse(last), now)} by {m.get('parent', coord)} · {m.get('task', '')[:60]}", f"#coord-{coord}"))
+                attention.append(("warning", f"Not joined: {m['name']}", f"enrolled {ago(parse(last), now)} by {m.get('parent', coord)} · {m.get('task', '')[:60]}", f"#coord-{coord}"))
             elif m.get("status") != "pending" and age > dt.timedelta(minutes=30):
-                attention.append(("warning", f"{m['name']} is silent", f"no update {ago(parse(last), now)} · {m.get('task', '')[:60]} ({coord})", session_of(coord, m["name"]) or f"#coord-{coord}"))
+                attention.append(("warning", f"No update: {m['name']}", f"{ago(parse(last), now)} · {m.get('task', '')[:60]} ({coord})", session_of(coord, m["name"]) or f"#coord-{coord}"))
     decided = {d.get("task") for src in sources.values() for d in src.get("decisions", []) if d.get("task")}
     for who, src in sources.items():
         for t in src.get("tasks", []):
@@ -311,18 +311,18 @@ def render_page(host):
             return (f'<li class="att {sev}"><a href="{e(href)}" title="{e(detail)}">{status(sev)}<span class="att-t">{e(title)}</span>'
                     f'<span class="att-d">{e(detail)}</span></a></li>')
         first, rest = attention[:6], attention[6:]
-        more = (f'<details class="more"><summary>Show {len(rest)} more</summary><ul class="att-list">{"".join(att(a) for a in rest)}</ul></details>'
+        more = (f'<details class="more"><summary>{len(rest)} more</summary><ul class="att-list">{"".join(att(a) for a in rest)}</ul></details>'
                 if rest else "")
         hero = (
             f'<section class="hero {worst}" aria-label="Needs attention"><div class="hero-n">{len(attention)}</div>'
-            f'<div class="hero-l"><div class="hero-h">need attention</div><div class="hero-s">{summary}</div></div>'
+            f'<div class="hero-l"><div class="hero-h">Attention</div><div class="hero-s">{summary}</div></div>'
             f'<ul class="att-list">{"".join(att(a) for a in first)}</ul>{more}</section>'
         )
     else:
         hero = (
             f'<section class="hero ok" aria-label="Needs attention"><div class="hero-n">0</div>'
-            f'<div class="hero-l"><div class="hero-h">{status("ok")} All clear</div>'
-            f'<div class="hero-s">No decisions, expired leases, stale coordinators or silent members.</div></div></section>'
+            f'<div class="hero-l"><div class="hero-h">{status("ok")} Attention</div>'
+            f'<div class="hero-s">None</div></div></section>'
         )
 
     # ---- host tiles
@@ -369,7 +369,7 @@ def render_page(host):
             + "</li>"
         )
 
-    groups = [("warn", "Blocked or waiting"), ("work", "In progress"), ("ok", "On track"), ("done", "Done")]
+    groups = [("warn", "Blocked"), ("work", "In progress"), ("ok", "On track"), ("done", "Done")]
     all_tasks = [(t, coord) for coord, src in sources.items() for t in src.get("tasks", [])]
     board = ""
     for kind, label in groups:
@@ -428,7 +428,7 @@ def render_page(host):
             )
         queue_html = (
             f'<article class="card" id="leases"><header class="card-h"><div><h3>Lease queues</h3>'
-            f'<div class="muted">strict FIFO across coordinators · {budget.get("freeGiB", "?")} of {budget.get("limitGiB", "?")} GiB free</div></div></header>{queue_html}</article>'
+            f'<div class="muted">FIFO · {budget.get("freeGiB", "?")} of {budget.get("limitGiB", "?")} GiB free</div></div></header>{queue_html}</article>'
         )
     ledger = []
     try:
@@ -442,14 +442,14 @@ def render_page(host):
     ledger_html = "".join(
         f"<li><div class='lh'><time>{e(x.get('at', '')[11:16])}Z</time><b>{e(x.get('by', ''))}</b></div><div>{e(x.get('text', ''))}</div></li>" for x in ledger
     ) or "<li class='muted'>Empty</li>"
-    side = queue_html + notes_html + f'<article class="card"><header class="card-h"><div><h3>Ledger</h3><div class="muted">newest first</div></div></header><ul class="ledger">{ledger_html}</ul></article>'
+    side = queue_html + notes_html + f'<article class="card"><header class="card-h"><div><h3>Ledger</h3></div></header><ul class="ledger">{ledger_html}</ul></article>'
 
     body = (
         hero
         + f'<section class="row" id="host"><h2>Machine{" and leases" if leases_on else ""} <span class="muted" id="sampled">host {e((host or {}).get("at", "…"))}</span></h2>'
         + f'<div class="tiles">{host_html}{lease_tiles}</div></section>'
-        + f'<div class="cols"><section class="col-main"><h2>Coordinators</h2><div class="coords">{strip or "<p class=muted>No coordinators yet.</p>"}</div>'
-        + f'<h2>Work</h2>{board or "<p class=muted>No tasks reported yet.</p>"}</section>'
+        + f'<div class="cols"><section class="col-main"><h2>Coordinators</h2><div class="coords">{strip or "<p class=muted>None</p>"}</div>'
+        + f'<h2>Work</h2>{board or "<p class=muted>None</p>"}</section>'
         + f'<aside class="col-side">{side}</aside></div>'
     )
     icons = json.dumps({sev: status(sev) for sev in ("critical", "serious", "warning")})
@@ -480,7 +480,7 @@ a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
 .live{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink2)}
 .live::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--good);box-shadow:0 0 0 3px var(--good-bg)}
 body[data-stale] .live::before{background:var(--critical);box-shadow:0 0 0 3px var(--critical-bg)}
-body[data-stale] .live span::after{content:" · server unreachable, showing the last state"}
+body[data-stale] .live span::after{content:" · offline"}
 .top .muted{margin-left:auto}
 main{max-width:1440px;margin:0 auto;padding:20px 24px 48px}
 h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--ink2);margin:24px 0 10px;display:flex;gap:10px;align-items:baseline}
@@ -493,8 +493,8 @@ h4{font-size:13px;font-weight:600;margin:14px 0 2px}
 .hero-s{display:flex;gap:14px} .cnt{display:inline-flex;align-items:center;gap:5px;font-weight:600;color:var(--ink)} .st svg .g{fill:#fff}
 .st.critical svg{fill:var(--critical)} .st.serious svg{fill:var(--serious)} .st.warning svg{fill:var(--warning)} .st.ok svg{fill:var(--good)}
 .st.warning svg .g{fill:#1d1f23}
-.hero{display:grid;grid-template-columns:auto 1fr;gap:4px 20px;align-items:center;background:var(--surface);border:1px solid var(--bd);border-left:6px solid var(--good);border-radius:14px;padding:18px 22px;box-shadow:var(--shadow)}
-.hero.critical{border-left-color:var(--critical)} .hero.serious{border-left-color:var(--serious)} .hero.warning{border-left-color:var(--warning)}
+.hero{display:grid;grid-template-columns:auto 1fr;gap:4px 20px;align-items:center;background:var(--surface);border:1px solid var(--bd);border-radius:14px;padding:18px 22px;box-shadow:var(--shadow)}
+
 .hero-n{font-size:52px;font-weight:600;line-height:1;letter-spacing:-.02em}
 .hero-h{font-size:18px;font-weight:600;display:flex;gap:8px;align-items:center} .hero-s{color:var(--ink2)}
 .att-list{grid-column:1/-1;list-style:none;margin:14px 0 0;padding:0;display:grid;gap:6px}
@@ -539,7 +539,7 @@ details.group summary::before{content:"▸ ";color:var(--mut)} details.group[ope
 .card-h{position:relative} .card-h.click:hover h3 a{text-decoration:underline}
 a.stretch{color:inherit;text-decoration:none} a.stretch::after{content:"";position:absolute;inset:0;border-radius:inherit}
 .tmeta a,.lk a{position:relative;z-index:1}
-.task.k-warn{border-left:4px solid var(--warning)}
+.task.k-warn{border-color:var(--warning)}
 .task.k-done{opacity:.6}
 .task-h{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
 .tid{font-weight:700;font-size:13px;min-width:28px} .tname{font-weight:600;flex:1 1 220px}
@@ -556,7 +556,7 @@ ul.ledger .lh{display:flex;gap:8px;font-size:12px} ul.ledger time{color:var(--mu
 details.more{grid-column:1/-1;margin-top:6px} details summary{cursor:pointer;font-size:13px;color:var(--link);font-weight:600}
 details.more .att-list{margin-top:6px}
 details.notes-box{margin-top:10px} details.notes-box .notes{margin-top:8px}
-ul.notes li{font-size:13px;color:var(--ink2);padding-left:12px;border-left:3px solid var(--bd)}
+ul.notes li{font-size:13px;color:var(--ink2)}
 </style>
 <script>
 window.__icons = {{ICONS}};
