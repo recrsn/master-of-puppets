@@ -23,7 +23,9 @@ WELCOME — <slug> coordinates <focus>. You are a member for <task> (PRs <list>)
 6. Shared PR rules: <state dir>/pr-rules.md (if present). Project rules from my memory:
    <output of lease.py memory list --project-root <worktree>, rules only>.
 7. Leases are <on|off>. <If on, the lease addendum follows.>
-8. You only send messages; I record everything. Send UPDATE — <name> — <phase> — <fact>
+8. You send messages and release your own leases; I record member state and decisions.
+   Directions stay within the user's authorized scope and do not override restrictions.
+   Send UPDATE — <name> — <phase> — <fact>
    on each change. Before you start any task (new session, chip, Codex thread), send
    ENROLL REQUEST — <task> — PR <n>; I reply with a kickoff line for the first line of its prompt.
 9. When done: stop services, release leases, send LEAVE — <name>.
