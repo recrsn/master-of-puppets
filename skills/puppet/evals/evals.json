@@ -1,0 +1,36 @@
+{
+  "skill_name": "puppet",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "DRY RUN. A fresh session runs /puppet. Its task: fix example/app#210 (base main) in worktree /work/app-210. MACHINE_LEASE_DIR=<fixture>/state (a copy; never touch ~/.local/state/machine-leases). roster.json lists two live coordinators: claude-stack-a (tool claude, focus 'settings UI stack', PRs 101-103) and codex-billing (tool codex, focus 'billing stack', PRs 205-210). Do not call SendMessage or codex queue; write what you would do. Write <out>/plan.md and <out>/commands.sh.",
+      "expected_output": "Reads the roster; picks codex-billing because it owns #210; sends it a JOIN message through lease.py say --to codex-billing (a Codex coordinator) with name, session id, worktree, task, PR and base; writes nothing to the roster or dashboard; waits for WELCOME and ACTIVE or PAUSE.",
+      "files": [
+        "state/roster.json"
+      ],
+      "assertions": [
+        "lease.py roster is read before any other action",
+        "codex-billing is chosen, with the reason that it owns #210",
+        "The JOIN message reaches codex-billing through lease.py say --to codex-billing (not SendMessage, since it is a Codex coordinator) and names the session id, worktree /work/app-210, task and PR 210",
+        "The session runs no roster-writing command: no coordinate, member, enroll, note or decision",
+        "The session does not contact claude-stack-a or its members",
+        "The plan waits for WELCOME and an ACTIVE or PAUSE direction before merging main or enabling auto-merge"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "DRY RUN. Your prompt starts: 'MASTER-OF-PUPPETS ENROLLED — claude-stack-a has enrolled you as member flaky-split-3f2a, started by fix-101. First action: run /puppet and send claude-stack-a your JOIN message as flaky-split-3f2a; then follow claude-stack-a's directions.' The task below it: split the flaky settings test into its own PR. Worktree /work/app-flaky. MACHINE_LEASE_DIR=<fixture>/state (a copy). The WELCOME you then receive says leases are on (BUILD, E2E). You need to run the settings test suite. Do not call SendMessage; write what you would send. Write <out>/plan.md, <out>/messages.md and <out>/commands.sh.",
+      "expected_output": "Joins claude-stack-a as flaky-split-3f2a without asking; sends JOIN; finishes edits, then sends LEASE REQUEST BUILD with exact commands and waits with lease.py await-grant; runs only the granted commands; releases and reports LEASE RELEASED; never writes roster, ledger or dashboard state; never writes a polling loop.",
+      "files": [],
+      "assertions": [
+        "The coordinator and name come from the kickoff line; the session does not ask the user which coordinator to join",
+        "A JOIN message to claude-stack-a names flaky-split-3f2a, the worktree /work/app-flaky and the task",
+        "A LEASE REQUEST BUILD message gives the exact test command, an estimate and the worktree, after all edits are done",
+        "commands.sh waits with lease.py await-grant BUILD --id ... (no until/while polling loop)",
+        "commands.sh runs only the granted command, then lease.py release BUILD --id ...",
+        "A LEASE RELEASED message reports pass or fail with the raw summary",
+        "commands.sh runs no lease.py coordinate, member, enroll, note, decision, wait or acquire"
+      ]
+    }
+  ]
+}
