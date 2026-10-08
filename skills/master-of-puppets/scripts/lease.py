@@ -34,8 +34,8 @@ The project key comes from the repository's git common dir, so all worktrees of 
 repository share a file; nothing is written into the repository.
 
 Admission is strict FIFO per class across coordinators: only the first ready
-entry may acquire. An expired lease (past expiresAt) still holds its memory: the
-owning coordinator must release it, or the user must approve a takeover.
+entry may acquire. An expired lease (past expiresAt) still holds its memory: its
+holder releases it; a coordinator needs the user's approval for a takeover.
 
 State lives in $MACHINE_LEASE_DIR (default ~/.local/state/machine-leases), not beside
 this file, so every coordinator that runs any copy shares one state.
@@ -66,7 +66,7 @@ Leases (coordinators)
        release records run minutes; with --minutes learn the limit is p90 of the last 10
        runs + 25% (at least 5, at most --max-minutes); config show prints maxMinutesEffective.
 
-Roster and members (coordinators write; members only send messages)
+Roster and members (coordinators write; members send messages and release their own leases)
   roster | whoami --session-id ID
   coordinate --name C --tool claude|codex --session-id ID --focus TEXT [--pr N ...] [--takeover]
   heartbeat --name C [--focus TEXT] [--pr N ...] | resign --name C
@@ -90,13 +90,16 @@ Memory (the skill's own memory; coordinators write it, everyone reads it)
        Project-specific rules (for example which git hooks need a lease) live here,
        not in the skill text.
 
-Messaging and waiters (anyone)
+Peer-coordinator messaging
   say --from NAME --message TEXT [--to NAME] [--no-direct]
        appends to inbox.jsonl, then delivers directly: a Claude session through its inbox
        socket (protocol: github.com/PeterSR/claude-code-socket-transport, reverse-engineered,
        not an Anthropic interface), a Codex thread through `codex queue`. --to names a
-       coordinator or member; without it, every live coordinator. A receiver that bypasses
+       registered coordinator; without it, every live peer coordinator. Only registered
+       coordinators use say. A receiver that bypasses
        permission prompts holds a socket message for the user's approval.
+
+Waiters (authorized sessions)
   await-grant CLASS --id ID [--timeout-min N] [--appear-timeout S]
        prints GRANTED or NOT-GRANTED <reason>. Exit 0 granted (the only grant);
        3 left the queue without a grant; 5 timeout while still queued; 6 never queued
@@ -498,21 +501,21 @@ def send_codex(thread_id, text):
 
 def say_cmd(args):
     """Append to inbox.jsonl (the record every coordinator watches), then deliver directly:
-    Claude sessions through their inbox socket, Codex threads through `codex queue`."""
+    Peer Claude coordinators through their inbox socket, Codex through `codex queue`."""
+    roster = load_roster()
+    coords = roster["coordinators"]
+    if args.sender not in coords or (args.to and args.to not in coords):
+        print("say is coordinator-to-coordinator only; use native direct messaging for members")
+        return 2
     say(args.sender, args.message, args.to)
     print("inbox: appended")
     if args.no_direct:
         return 0
-    roster = load_roster()
     targets = []
     if args.to:
         c = roster["coordinators"].get(args.to)
         if c:
             targets.append((args.to, c.get("tool"), c.get("sessionId")))
-        for coord, members in roster["members"].items():
-            for m in members:
-                if m["name"] == args.to and m.get("sessionId"):
-                    targets.append((args.to, m.get("tool", "claude"), m["sessionId"]))
         if not targets:
             print(f"direct: no roster entry with a session id for {args.to} (inbox only)")
     else:

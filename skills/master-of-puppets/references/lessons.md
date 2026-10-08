@@ -17,10 +17,10 @@ explains why. Lessons that hold only for one machine or project go into
 - **Auto-merge reported as merged.** "Auto-merge on" was reported as done, and
   the PR then sat blocked. Fix: report the exact state; finish only
   on MERGED with a SHA.
-- **Peer instruction ignored.** A member held its PR because its first prompt
-  said "do not open a PR until asked", and the PR rule came only through the
-  coordinator. Fix: the welcome message states that directions count as the
-  user's, inside the member limits.
+- **Directions conflict with user restrictions.** A coordinator's PR direction
+  conflicted with a member's original "do not open a PR until asked" prompt.
+  Fix: clarify the user's authorization before acting; coordination directions
+  stay within that scope and do not replace user approval.
 
 ## Coordination
 

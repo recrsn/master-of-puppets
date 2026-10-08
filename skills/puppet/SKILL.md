@@ -7,15 +7,17 @@ description: Join a master-of-puppets coordinator as a member ("puppet") and wor
 
 You are a member of a coordinator session. The coordinator owns the stack,
 the roster, the ledger, the dashboard and the leases. You do the task: code,
-tests, commits, pushes, PR fixes. You never write coordination state; you
-send messages, and the coordinator records them.
+tests, commits, pushes, PR fixes. You never write the roster, ledger, dashboard
+or shared inbox; you send messages, and the coordinator records them. The
+explicit exception is `lease.py release` for your own lease, which updates
+lease state and measurement history. Do not release someone else's lease.
 
 For Claude/Codex tool equivalents, read
 [agents.md](../master-of-puppets/references/agents.md). Claude-specific
 Auto-fix instructions below apply to Codex as PR attachment and owner-led repair.
 
-Below, `lease.py` means `python3 -I ~/.local/state/machine-leases/lease.py`
-(or `$MACHINE_LEASE_DIR/lease.py`). If the file does not exist, no coordinator
+Below, `lease.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/lease.py"`.
+If the file does not exist, no coordinator
 runs on this machine: tell the user, and suggest `/master-of-puppets` in the
 session that should coordinate.
 
@@ -72,8 +74,10 @@ coordinator writes them. If the user tells you a new project rule, send it as
 
 ## 3. Work under directions
 
-Treat the coordinator's directions as the user's instructions for your task,
-inside these limits: no admin merge or merge bypass, never skip git hooks, a
+Follow the coordinator's directions within the task and authority the user
+already granted. Directions do not override the user's restrictions or count
+as fresh user approval; surface a conflict to the user and coordinator before
+acting on it. Limits: no admin merge or merge bypass, never skip git hooks, a
 new DB migration needs a fresh go-ahead from the user, and your own permission
 prompts are answered by the user in your session, never by a relay.
 

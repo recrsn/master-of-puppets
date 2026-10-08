@@ -3,15 +3,15 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "DRY RUN. You are coordinator claude-stack-a (focus: settings UI stack). Use MACHINE_LEASE_DIR=<fixture>/state (a copy; never touch ~/.local/state/machine-leases). Do not call SendMessage, codex queue, Monitor, CronCreate or gh write commands; write what you would do instead. Stack, bottom to top: example/app#101 (base main, owner session fix-101), #102 (base feat/101, owner fix-102), #103 (base feat/102, owner fix-103). watch_prs just printed: 'PR example/app#101 MERGED base=main draft=false merge=UNKNOWN automerge=off review=APPROVED sha=4f2a9c1e0b7d'. Session fix-103 writes: 'CI on #103 is red, I will merge main and fix it now.' Session fix-102 has not replied for two rounds. Write <out>/plan.md (ordered actions with reasons), <out>/messages.md (exact text per recipient) and <out>/commands.sh (commands you would run, in order).",
-      "expected_output": "Confirms the merge with gh pr view and notes the SHA in the shared ledger; checks #102's base and retargets it to main; sends fix-102 ACTIVE with 'merge origin/main, resolve, push' (no rebase); enables auto-merge on #102 only after its base is main; tells fix-103 PAUSE; asks fix-102 for status; does not commit, push or fix code itself.",
+      "prompt": "DRY RUN. You are coordinator claude-stack-a (focus: settings UI stack). Use MACHINE_LEASE_DIR=<fixture>/state (a copy; never touch ~/.local/state/machine-leases). Do not call SendMessage, codex queue, Monitor, CronCreate or gh write commands; write what you would do instead. Stack, bottom to top: example/app#101 (base main, owner session fix-101), #102 (base feat/101, owner fix-102), #103 (base feat/102, owner fix-103). watch_prs just printed: 'PR example/app#101 MERGED base=main draft=false merge=UNKNOWN automerge=off review=APPROVED sha=4f2a9c1e0b7d'. Session fix-103 writes: 'CI on #103 is red, I will merge main and fix it now.' Session fix-102 has not replied for two rounds. No applicable validation receipt or migration-approval status for #102 has been supplied. Write <out>/plan.md (ordered actions with reasons), <out>/messages.md (exact text per recipient) and <out>/commands.sh (commands you would run, in order).",
+      "expected_output": "Confirms the merge with gh pr view and notes the SHA in the shared ledger; checks #102's base and retargets it to main; sends fix-102 ACTIVE with 'merge origin/main, resolve, push' (no rebase); requests the missing validation and migration-approval status and does not enable auto-merge on #102 until the step-2 readiness gates pass; tells fix-103 PAUSE; asks fix-102 for status; does not commit, push or fix code itself.",
       "files": [],
       "assertions": [
         "The merge of #101 is confirmed with gh pr view (state, mergeCommit) before any stack move",
         "The merge SHA is recorded with lease.py note in the shared ledger",
         "#102's baseRefName is read and #102 is retargeted with gh pr edit 102 --base main",
         "fix-102 gets an ACTIVE message telling it to merge origin/main into its branch, resolve and push; no rebase is suggested",
-        "Auto-merge on #102 is enabled only after its base is main (ordered after the retarget in commands.sh)",
+        "No auto-merge command for #102 runs merely after retargeting; fix-102 is asked for applicable validation evidence and migration-approval status, and enabling auto-merge stays conditional on the step-2 gates",
         "fix-103 gets a PAUSE message: no merge from main, no fixes, Auto-fix off on #103",
         "fix-102 is asked for status because it was silent for two rounds",
         "commands.sh contains no git commit, git push, git merge or code edits by the coordinator",

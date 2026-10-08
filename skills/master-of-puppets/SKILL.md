@@ -14,7 +14,8 @@ not write product code.
   slug name and a focus (its stack), and owns its PRs. They share one roster,
   one ledger, the lease queues and one dashboard, and agree cross-stack
   questions (merge order, shared files) by message.
-- **The coordinator writes; members talk.** Members only send messages. The
+- **The coordinator records; members report.** Members send messages and
+  release their own leases. The
   coordinator records every enrollment, member and task update in the roster
   and on the dashboard.
 - **Enrollment is voluntary, except for children.** A session joins by running
@@ -32,7 +33,7 @@ not write product code.
 | `scripts/lease.py` | Leases, roster and members, messaging, waiters and watchers. Run with `python3 -I`; the docstring lists every command. The live copy is `$MACHINE_LEASE_DIR/lease.py` (default `~/.local/state/machine-leases`); every coordinator uses it. |
 | `scripts/server.py` | The one dashboard, on `http://localhost:4720/`: an at-a-glance card strip (needs you, CPU, memory, swap, disk, leases, coordinators), then details. Live by SSE. Exits with "already serving" when one runs. |
 
-Below, `lease.py` means `python3 -I ~/.local/state/machine-leases/lease.py`.
+Below, `lease.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/lease.py"`.
 `lease.py install` (run from the skill copy) installs it when absent. When the
 live copy differs, it prints the diff and stops: other coordinators use it
 now, so agree a change with them and the user before you replace it.
@@ -47,14 +48,18 @@ equivalents, session identity, messaging, watchers, scheduling and PR repair.
 
 ## Before you start
 
-This skill is the coordinator role. Run `lease.py roster` first:
+This skill is the coordinator role. If the live helper is missing, run
+`python3 -I <skill>/scripts/lease.py install` first. Then read `lease.py roster`
+and resolve your role with `lease.py whoami --session-id <current-id>`.
+Apply the following routes in order:
 
 | Situation | Action |
 | --- | --- |
-| The prompt starts with `MASTER-OF-PUPPETS ENROLLED`, or a live coordinator owns this session's PRs | Do not coordinate: use `/puppet` |
-| The user asked this session to coordinate a stack | Continue with "Coordinator start" |
-| A live coordinator already owns that stack | Ask the user: join it with `/puppet`, split the stack with it, or take over |
-| The user wants this session to replace a live coordinator | `coordinate --takeover`, only with the user's approval in this session |
+| The user explicitly asks to replace a live coordinator | `coordinate --takeover`, only with the user's approval in this session; an enrolled member needs explicit release from its member role before taking over |
+| The prompt starts with `MASTER-OF-PUPPETS ENROLLED`, or `whoami` identifies this session as a member | Do not coordinate: use `/puppet` |
+| `whoami` identifies this session as the coordinator | Resume its heartbeat round; do not enroll yourself as a member |
+| Another live coordinator already owns the requested stack | Ask the user: join it with `/puppet`, split the stack with it, or take over |
+| The user asked this unowned session to coordinate a stack | Continue with "Coordinator start" |
 
 A coordinator is live while its heartbeat is newer than 40 minutes. Use
 `$CLAUDE_CODE_SESSION_ID` for Claude or `$CODEX_THREAD_ID` for Codex when
@@ -154,7 +159,9 @@ Codex `send_message_to_thread` or a supported direct CLI route. Reserve
    `note` the SHA. Read the next PR's `baseRefName`; if it is not the base
    branch, run `gh pr edit <next> --base <base>`. Send its owner `ACTIVE` with
    "merge origin/<base> into your branch, resolve, push". When its base is the
-   base branch, enable auto-merge. Never merge a stacked PR into its parent.
+   base branch, return to step 2: confirm the owner's applicable evidence and
+   obtain any required migration approval before enabling auto-merge. A base
+   change alone is not readiness. Never merge a stacked PR into its parent.
 5. Repeat to the top. Then ask owners to stop services, release leases and
    leave; drop the PRs with `heartbeat --name <slug> --pr ...`.
 
