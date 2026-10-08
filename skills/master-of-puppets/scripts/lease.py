@@ -11,9 +11,10 @@ limits it), maxMinutes and settle {OTHER: seconds} (after a grant of this class,
 OTHER waits that long; E2E settles BUILD for 60 s by default). Names are upper-case.
 No lease: a plain dependency install, source edits, reading code, browser-only work
 against remote sites (unless a class or a project rule in `memory` covers it).
-Use it or return it: a lease covers only running the granted commands. No edits or
-repairs while holding one. When a check fails, release at once with the failure,
-repair without a lease, then join the queue again at the back.
+Use it or return it: a lease covers the granted commands and their resource cleanup.
+No edits or repairs while holding one. When a check fails, clean up owned resources
+(stop owned E2E servers), release promptly with the failure, repair without a lease,
+then join the queue again at the back.
 
 Capacity is adaptive. There is no fixed slot count. A grant is admitted when the
 expected peak memory of all holders plus the request fits in the memory budget:

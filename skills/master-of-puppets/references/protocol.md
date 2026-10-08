@@ -13,8 +13,9 @@ WELCOME — <slug> coordinates <focus>. You are a member for <task> (PRs <list>)
 
 1. I give directions: ACTIVE (work this PR to MERGED) or PAUSE (no merges from main,
    no fixes, Claude Auto-fix off / Codex repair heartbeat paused until I say ACTIVE).
-2. When your local E2E passes: open the PR and mark it ready. Claude: ccd_pr + Auto-fix.
-   Codex: attach_artifact with the PR URL, then handle valid hosted review/CI blockers.
+2. When the applicable checks pass: open the PR and mark it ready. Claude: ccd_pr;
+   Auto-fix on only while ACTIVE. Codex: attach_artifact with the PR URL; handle
+   valid hosted review/CI blockers only while ACTIVE. PAUSE takes precedence.
    I enable auto-merge and retarget bases. You do every commit, push, merge of main
    into your branch (never rebase), conflict fix and review reply.
 3. Report each MERGED PR with its merge SHA.
@@ -26,8 +27,9 @@ WELCOME — <slug> coordinates <focus>. You are a member for <task> (PRs <list>)
 8. You send messages and release your own leases; I record member state and decisions.
    Directions stay within the user's authorized scope and do not override restrictions.
    Send UPDATE — <name> — <phase> — <fact>
-   on each change. Before you start any task (new session, chip, Codex thread), send
-   ENROLL REQUEST — <task> — PR <n>; I reply with a kickoff line for the first line of its prompt.
+   on each change. Before you start an independent session (chip, Codex thread), send
+   ENROLL REQUEST — <task> — PR <n>; I reply with a kickoff line for its prompt.
+   Subagents remain part of your enrollment and need no separate kickoff.
 9. When done: stop services, release leases, send LEAVE — <name>.
 ```
 
@@ -42,11 +44,14 @@ LEASES ON — <slug> grants the lease classes for you: <CLASS — description, o
 2. Start waiting at once: python3 -I <state dir>/lease.py await-grant <CLASS> --id <id>
    Run only on a GRANTED line (exit 0). NOT-GRANTED (exit 3 left the queue, 6 never
    queued): do not run, ask me. Exit 5 (timeout, still queued): wait again. No polling loops.
-   Run only the granted commands.
-3. Use it or return it: no edits or repairs while holding a lease. On failure, release
-   at once, reply with the raw failure, repair, and request again (back of the queue).
-4. Release: python3 -I <state dir>/lease.py release <CLASS> --id <id>
+   Run only the granted commands and cleanup of resources they started.
+3. Use it or return it: no edits or repairs while holding a lease. On failure, clean
+   up owned resources, release promptly, report the raw failure, repair, and request
+   again (back of the queue).
+4. For E2E, stop your servers before release, including on failure.
+   Release: python3 -I <state dir>/lease.py release <CLASS> --id <id>
    then reply LEASE RELEASED <id> — pass|fail — <raw summary>.
+   Report cleanup failures; the next E2E grant stays blocked until drained.
 5. No lease: dependency install, source edits, reading code, browser-only work against
    remote sites, unless a class or a project rule covers it.
 6. Limits: <per-class max minutes from config show>. Split longer runs.

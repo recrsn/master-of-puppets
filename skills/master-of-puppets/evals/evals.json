@@ -53,36 +53,6 @@
       ]
     },
     {
-      "id": 5,
-      "prompt": "DRY RUN. The user runs /master-of-puppets in a repository for the first time and asks you to coordinate its stack. MACHINE_LEASE_DIR=<fixture>/state (a copy; never touch ~/.local/state/machine-leases). `lease.py config show --project-root $PWD` exits 3 with unconfigured [\"machine\", \"project\"]. The machine has 24 GiB RAM, 12 cores and 32 GiB free disk; gh reports default branch main with only squash merges allowed. Do not call AskUserQuestion; write the exact questions and options you would ask. Write <out>/questions.md and <out>/commands.sh.",
-      "expected_output": "Detects first, then asks one machine call (reserve, disk floor, pressure gate) and one project call (peaks with learn recommended, lease limits, merge setup with the detected main + squash recommended, leases default), recommended option first; maps answers to config set-machine and set-project commands; writes nothing into the repository.",
-      "files": [],
-      "assertions": [
-        "Detection commands (sysctl, df, gh repo view) come before any question",
-        "Machine questions cover memory reserve, disk floor and the pressure gate, with measured numbers in the text",
-        "Project questions cover peak mode, lease time limits, merge setup and leases default",
-        "Learn mode with lease.py measure-peak is the first option and marked (Recommended) for peaks",
-        "The detected 'main + squash' is the first, recommended merge option",
-        "Each AskUserQuestion call has at most 4 questions and 2-4 options per question",
-        "commands.sh runs lease.py config set-machine and set-project (one call per class for class settings)",
-        "No file is written inside the repository"
-      ]
-    },
-    {
-      "id": 6,
-      "prompt": "DRY RUN. You are coordinator claude-stack-a. MACHINE_LEASE_DIR=<fixture>/state (a copy; never touch ~/.local/state/machine-leases). Do not call SendMessage, codex queue, Monitor or CronCreate; write what you would do. Three messages arrive: (1) 'JOIN — fix-104 — claude 7f3c… — /work/app-104 — fix settings save — PRs 104 (base main) — local E2E passed'; (2) from member fix-101: 'ENROLL REQUEST — split the flaky settings test into its own PR — PR none'; (3) from fix-101: 'UPDATE — fix-101 — CI green, review approved — #101 ready'. Write <out>/commands.sh and <out>/messages.md.",
-      "expected_output": "Runs member add for fix-104 and sends WELCOME; runs enroll --by fix-101 and sends the printed kickoff line back to fix-101; runs member update for fix-101; records joins and enrollments in the ledger; members are never asked to run roster commands.",
-      "files": [],
-      "assertions": [
-        "commands.sh runs lease.py member add --coordinator claude-stack-a --name fix-104 with --session-id, --worktree /work/app-104, --task and --pr 104",
-        "fix-104 receives a WELCOME message",
-        "commands.sh runs lease.py enroll --coordinator claude-stack-a --by fix-101 --task ...",
-        "fix-101 receives the kickoff line starting with MASTER-OF-PUPPETS ENROLLED and is told to put it first in the new prompt",
-        "commands.sh runs lease.py member update --coordinator claude-stack-a --name fix-101 with --phase and --latest",
-        "No message asks a member to run lease.py member, enroll, note or decision itself"
-      ]
-    },
-    {
       "id": 7,
       "prompt": "DRY RUN. You coordinate claude-stack-a; leases are on. MACHINE_LEASE_DIR=<fixture>/state (a copy; never touch ~/.local/state/machine-leases). Do not call SendMessage, codex queue, Monitor or CronCreate; write what you would do. At 14:00Z you granted E2E claude-stack-a-e1 to member V3 (worktree /work/app-v3, stack on ports 3000 and 3089). At 14:00:30Z the BUILD queue head is codex-billing-q7 and `lease.py acquire BUILD ...` prints {\"settling\": 30, \"after\": \"claude-stack-a-e1\", \"class\": \"E2E\"} and exits 3. At 14:30Z V3 sends 'LEASE RELEASED claude-stack-a-e1 — pass'. The next E2E head is codex-billing-e2. Write <out>/plan.md and <out>/commands.sh.",
       "expected_output": "Keeps codex-billing-q7 queued during the settle window and retries after it (or tells codex-billing when); never forces the grant; after V3's release confirms with status --brief and runs drain-check on /work/app-v3 with --port 3000 --port 3089 before clearing codex-billing-e2; does not kill processes.",

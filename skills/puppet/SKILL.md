@@ -1,6 +1,6 @@
 ---
 name: puppet
-description: Join a master-of-puppets coordinator as a member ("puppet") and work your task under its directions until your PRs merge. Members only send messages (JOIN, UPDATE, ENROLL REQUEST, USER SYNC, LEASE REQUEST, LEAVE); the coordinator records everything. Use this at once when a prompt starts with "MASTER-OF-PUPPETS ENROLLED". Also use it when the user says "puppet", "join the coordinator", "join master of puppets", "enroll this session", "ask the coordinator for a lease", or "report to the coordinator".
+description: Join a master-of-puppets coordinator as a member ("puppet") and work your task under its directions until your PRs merge. Members report by message and release their own leases; the coordinator records membership and decisions. Use this at once when a prompt starts with "MASTER-OF-PUPPETS ENROLLED". Also use it when the user says "puppet", "join the coordinator", "join master of puppets", "enroll this session", "ask the coordinator for a lease", or "report to the coordinator".
 ---
 
 # Puppet
@@ -84,10 +84,12 @@ prompts are answered by the user in your session, never by a relay.
 - **ACTIVE — #n**: work #n to MERGED.
 - **PAUSE — #n**: no merges from main, no fixes; Claude Auto-fix off or Codex
   repair heartbeat paused on #n until ACTIVE.
-- When your local E2E passes: open the PR, mark it ready, bind it with
-  Claude `ccd_pr` and turn on Auto-fix. Codex owners use `attach_artifact`
-  with the PR URL and keep repairing valid hosted review/CI blockers in their
-  chat; attachment does not enable Auto-fix. The coordinator enables auto-merge
+- When the applicable checks pass (see `references/rules.md` in the
+  coordinator skill): open the PR and mark it ready. Claude owners bind it
+  with `ccd_pr`; turn on Auto-fix only while the PR is ACTIVE. Codex owners
+  use `attach_artifact` with the PR URL and repair valid hosted review/CI
+  blockers only while ACTIVE; attachment does not enable Auto-fix. PAUSE
+  takes precedence over repair instructions. The coordinator enables auto-merge
   and retargets bases. You do every commit, push, conflict fix and review reply.
 - Sync with the base branch by merging `origin/<base>` into your branch.
   Never rebase.
@@ -117,12 +119,14 @@ prompts are answered by the user in your session, never by a relay.
      do not run; ask your coordinator.
    - `NOT-GRANTED ... timeout` (exit 5): still queued; run `await-grant` again.
    Never write polling loops.
-3. Run only the granted commands. Use it or return it: no edits or repairs
-   while holding a lease. On a failure, release at once and report the raw
-   failure; repair; request again.
-4. Release: `lease.py release <CLASS> --id <id>`, then
-   `LEASE RELEASED <id> — pass|fail — <raw summary>`. After an E2E lease, stop
-   the servers you started.
+3. Run only the granted commands and cleanup of resources they started.
+   Use it or return it: no edits or repairs while holding a lease. On failure,
+   clean up owned resources, release promptly and report the raw failure;
+   repair; request again.
+4. For E2E, stop the servers you started before releasing, including on
+   failure. Release: `lease.py release <CLASS> --id <id>`, then
+   `LEASE RELEASED <id> — pass|fail — <raw summary>`. Report any cleanup
+   failure so the coordinator can keep the next E2E grant blocked.
 5. Project rules in WELCOME (from the coordinator's memory) can widen what
    needs a lease, for example a commit whose hooks run lint. Follow them.
 6. No lease needed: a plain dependency install, source edits, reading code,
