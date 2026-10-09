@@ -109,6 +109,14 @@ The memory budget predicts; the host check observes. Both must pass.
 Strict FIFO per class: only the first ready entry may acquire, whoever owns
 it. No coordinator jumps the queue.
 
+Only the user changes the order: the dashboard's Move up and Cancel buttons
+run `lease.py up|unwait CLASS --id ID --notify`. Move up puts a ready entry
+ahead of the ready entry in front of it; Cancel removes an entry. Each affected
+coordinator gets `INBOX dashboard: ...`. Treat it as the user's direction:
+tell the affected members their new turn, or that the entry is gone. Do not
+undo it, and queue a cancelled entry again only if the user agrees.
+Coordinators never run `up` themselves.
+
 ## Rules members get wrong
 
 - **Use it or return it.** A lease covers the granted commands and cleanup

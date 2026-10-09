@@ -10,8 +10,13 @@ Inputs ($MACHINE_LEASE_DIR, default ~/.local/state/machine-leases):
   dashboard/<coordinator>-state.json (one per coordinator).
 The page is rendered in memory when an input changes and every 30 s (ETAs and
 heartbeat age). Every 5 s the server samples the host (CPU, load, memory, swap, disk).
-  /            the page: what needs attention first (one hero count, worst first),
-               then machine meters, lease tiles, the work board, queues and the ledger
+  /            the page (shell: dashboard.html). Desk mode: host meters in the header,
+               "Needs you" first (worst first), the work board, then lease timelines,
+               queues and coordinators; the ledger opens in a drawer. Wall mode: the
+               same, large, for a shared screen (add ?mode=wall to the URL)
+  POST /queue  {"action": "up"|"unwait", "cls", "id"} from the page's Move up and Cancel
+               buttons: runs `lease.py <action> CLASS --id ID --notify`, which tells each
+               affected coordinator. Same-origin JSON with X-Requested-By only.
   /events      text/event-stream: `update` (page changed) and `host` (JSON sample)
   /host.json   the latest host sample
   /health      "ok <version>"
@@ -109,29 +114,23 @@ def sample_host(prev_swapouts, interval):
 
 
 SEV_ORDER = {"critical": 0, "serious": 1, "warning": 2, "ok": 3}
-SEV_LABEL = {"critical": "Critical", "serious": "Serious", "warning": "Warning", "ok": "OK"}
-ICONS = {
-    "critical": '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.2 1h5.6L15 5.2v5.6L10.8 15H5.2L1 10.8V5.2z"/><path class="g" d="M7.2 4h1.6v5H7.2zM7.2 10.5h1.6v1.6H7.2z"/></svg>',
-    "serious": '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1l7.5 13.5H.5z"/><path class="g" d="M7.2 5.5h1.6v4.5H7.2zM7.2 11h1.6v1.6H7.2z"/></svg>',
-    "warning": '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7"/><path class="g" d="M7.2 4h1.6v5H7.2zM7.2 10.5h1.6v1.6H7.2z"/></svg>',
-    "ok": '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7"/><path class="g" d="M6.9 10.9L4.1 8.1l1.1-1.1 1.7 1.7 3.9-3.9 1.1 1.1z"/></svg>',
-}
+STALE_MINUTES = 30
+PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
+KINDS = [("warn", "blocked", "Blocked"), ("work", "progress", "In progress"), ("ok", "ontrack", "On track"), ("done", "done", "Done")]
 
 
-def status(sev):
-    """Severity icon; the name is the accessible label and hover title, never shown as text."""
-    return f'<span class="st {sev}" role="img" aria-label="{SEV_LABEL[sev]}" title="{SEV_LABEL[sev]}">{ICONS[sev]}</span>'
+def fmt(v, unit=""):
+    return "?" if v is None else f"{v:g}{unit}" if isinstance(v, (int, float)) else f"{v}{unit}"
 
 
 def host_tiles(h):
-    """Four host tiles: id, label, value, sub, meter percent, severity. Sent with each host event."""
+    """Four host tiles: id, label, value, short value, sub, meter percent, severity. Sent with each host event."""
     if not h or h.get("error"):
         why = (h or {}).get("error", "waiting for the first sample")
-        return [{"id": k, "label": k.title(), "value": "…", "sub": why, "pct": 0, "sev": "ok"} for k in ("cpu", "memory", "swap", "disk")]
+        return [{"id": k, "label": label, "value": "…", "short": "…", "sub": why, "pct": 0, "sev": "ok"}
+                for k, label in (("cpu", "CPU"), ("memory", "Memory"), ("swap", "Swap"), ("disk", "Disk"))]
 
-    def f(v, unit=""):
-        return "?" if v is None else f"{v:g}{unit}" if isinstance(v, (int, float)) else f"{v}{unit}"
-
+    f = fmt
     load_ratio = (h["load1"] / h["maxLoad"]) if h.get("maxLoad") else 0
     mem_pct = 100 - h["memFreePct"] if h.get("memFreePct") is not None else 0
     swap_pct = 100 * h["swapUsedGiB"] / h["swapTotalGiB"] if h.get("swapTotalGiB") else 0
@@ -139,15 +138,19 @@ def host_tiles(h):
     outs, max_outs = h.get("swapoutsPer12s"), h.get("maxSwapouts", 200)
     return [
         {"id": "cpu", "label": "CPU", "value": f(h.get("cpuPct"), "%"), "pct": h.get("cpuPct") or 0,
+         "short": f"{f(h.get('cpuPct'), '%')} · load {f(h['load1'])}",
          "sub": f"load {f(h['load1'])} of {f(h['maxLoad'])} · {h['cores']} cores",
          "sev": "critical" if load_ratio >= 1 else "warning" if load_ratio >= 0.8 else "ok"},
         {"id": "memory", "label": "Memory", "value": f"{f(h.get('memUsedGiB'))} GiB", "pct": mem_pct,
+         "short": f"{f(h.get('memUsedGiB'))} / {f(h['memTotalGiB'])}G",
          "sub": f"of {f(h['memTotalGiB'])} GiB · {f(h.get('memFreePct'), '%')} free · reserve {f(h['reserveGiB'])} GiB",
          "sev": "critical" if mem_pct >= 90 else "warning" if mem_pct >= 80 else "ok"},
         {"id": "swap", "label": "Swap", "value": f"{f(h.get('swapUsedGiB'))} GiB", "pct": swap_pct,
+         "short": f"{f(h.get('swapUsedGiB'))} / {f(h.get('swapTotalGiB'))}G",
          "sub": f"of {f(h.get('swapTotalGiB'))} GiB · {f(outs)} swap-outs/12 s (max {max_outs})",
          "sev": "critical" if outs is not None and outs >= max_outs else "warning" if outs is not None and outs >= max_outs / 2 else "ok"},
         {"id": "disk", "label": "Disk", "value": f"{f(h['diskFreeGiB'])} GiB free", "pct": disk_pct,
+         "short": f"{f(h['diskFreeGiB'])}G free",
          "sub": f"of {f(h['diskTotalGiB'])} GiB · floor {f(h['diskFloorGiB'])} GiB",
          "sev": "critical" if h["diskFreeGiB"] < h["diskFloorGiB"] else "warning" if h["diskFreeGiB"] < 2 * h["diskFloorGiB"] else "ok"},
     ]
@@ -167,26 +170,57 @@ def holders(leases, cls):
     return leases.get(cls) or []
 
 
-def ago(t, now):
+def since(t, now):
     mins = int((now - t).total_seconds() // 60)
-    return f"{mins} min ago" if mins < 90 else f"{mins // 60} h {mins % 60} min ago"
+    return f"{mins} min" if mins < 90 else f"{mins // 60} h {mins % 60} min"
 
 
-def meter(pct, sev):
-    pct = max(0.0, min(100.0, float(pct)))
-    return f'<div class="meter {sev}" role="meter" aria-valuenow="{pct:.0f}" aria-valuemin="0" aria-valuemax="100"><i style="width:{pct:.1f}%"></i></div>'
+def ago(t, now):
+    return since(t, now) + " ago"
 
 
-def tile(t):
-    return (
-        f'<div class="tile" id="t-{e(t["id"])}" data-sev="{t["sev"]}"><div class="tl">{e(t["label"])}'
-        f'<span class="tst">{status(t["sev"]) if t["sev"] != "ok" else ""}</span></div>'
-        f'<div class="tv">{e(t["value"])}</div>{meter(t["pct"], t["sev"])}<div class="ts">{e(t["sub"])}</div></div>'
-    )
+def ago_short(t, now):
+    mins = int((now - t).total_seconds() // 60)
+    return "just now" if mins < 1 else f"{mins}m ago" if mins < 60 else f"{mins // 60}h {mins % 60}m ago"
 
 
 def link(item):
     return f'<a href="{e(item["href"])}">{e(item["label"])}</a>'
+
+
+def agent_class(tool):
+    tool = (tool or "").lower()
+    return "ag-claude" if "claude" in tool else "ag-codex" if "codex" in tool else "ag-other"
+
+
+def clamp(pct):
+    return max(0.0, min(100.0, float(pct)))
+
+
+def host_mini(t):
+    """Compact host meter for the header; the page script repaints it on each host event."""
+    return (
+        f'<div class="mini" data-host="{t["id"]}" data-sev="{t["sev"]}" title="{e(t["label"] + " " + t["value"] + " · " + t["sub"])}">'
+        f'<div class="vbar"><i class="fill" data-axis="h" style="height:{clamp(t["pct"]):.1f}%"></i></div>'
+        f'<div class="mini-t"><span class="cap">{e(t["label"])}</span><span class="hv" data-k="short">{e(t["short"])}</span></div></div>'
+    )
+
+
+def host_wall(t):
+    """Large host tile for wall mode."""
+    return (
+        f'<div class="wtile" data-host="{t["id"]}" data-sev="{t["sev"]}"><span class="wl">{e(t["label"])}</span>'
+        f'<span class="hv" data-k="value">{e(t["value"])}</span>'
+        f'<div class="hbar"><i class="fill" style="width:{clamp(t["pct"]):.1f}%"></i></div>'
+        f'<span class="hd" data-k="sub">{e(t["sub"])}</span></div>'
+    )
+
+
+def open_button(href):
+    if not href or href.startswith("#"):
+        return ""
+    label = "Open session" if href.startswith(("claude://", "codex://")) else "Open"
+    return f'<a class="btn" href="{e(href)}">{label}</a>'
 
 
 def render_page(host):
@@ -266,170 +300,282 @@ def render_page(host):
         row = next((t for t in src.get("tasks", []) if t.get("id") == task_id), {})
         return row.get("session", "")
 
-    # ---- attention: everything that needs a person, worst first
-    attention = []  # (sev, title, detail, href)
-    for t in host_tiles(host):
+    def tool_of(coord):
+        return coords.get(coord, {}).get("tool") or coord
+
+    def who(coord, when=None):
+        """Agent swatch and name, then the time of the last change."""
+        out = f'<span class="agent {agent_class(tool_of(coord))}"><i class="sw"></i>{e(coord)}</span>' if coord else ""
+        if when:
+            out += f'<span class="when">{local(when)} · {ago_short(when, now)}</span>'
+        return f'<div class="who">{out}</div>' if out else ""
+
+    tasks = {(coord, t.get("id", "")): t for coord, src in sources.items() for t in src.get("tasks", [])}
+    member_of = {(coord, m.get("name")): m for coord, mlist in members.items() for m in mlist}
+
+    def kind_of(t):
+        return t.get("kind") if t.get("kind") in ("warn", "work", "ok", "done") else "work"
+
+    def last_update(coord, name):
+        m = member_of.get((coord, name)) or {}
+        last = m.get("updatedAt") or m.get("joinedAt") or m.get("enrolledAt")
+        return parse(last) if last else None
+
+    # ---- needs you: everything that needs a person, one card per task, worst first
+    needs = {}
+
+    def need(key, sev, reason, **card):
+        n = needs.get(key)
+        if n is None:
+            n = needs[key] = {"sev": sev, "reasons": [], "asks": [], "id": "", "title": "", "status": "", "coord": "", "when": None, "href": ""}
+            n.update(card)
+        elif SEV_ORDER[sev] < SEV_ORDER[n["sev"]]:
+            n["sev"] = sev
+        if reason not in n["reasons"]:
+            n["reasons"].append(reason)
+        return n
+
+    def task_need(coord, task_id, sev, reason):
+        t = tasks[(coord, task_id)]
+        return need(("task", coord, task_id), sev, reason, id=task_id, title=t.get("name", ""), status=t.get("latest", ""),
+                    coord=coord, when=last_update(coord, task_id), href=t.get("session", ""))
+
+    tiles = host_tiles(host)
+    for t in tiles:
         if t["sev"] != "ok":
-            attention.append((t["sev"], f"Host {t['label'].lower()}: {t['value']}", t["sub"], "#host"))
+            need(("host", t["id"]), t["sev"], f"Host {t['label'].lower()}", title=t["value"], status=t["sub"])
     for cls in classes:
         for h in holders(leases, cls):
             if parse(h["expiresAt"]) < now:
-                attention.append(("critical", f"Expired {cls} lease {h['id']}", f"{h['holder'][:70]} · {ago(parse(h['expiresAt']), now)}", "#leases"))
+                need(("lease", h["id"]), "critical", f"Expired {cls} lease · {ago(parse(h['expiresAt']), now)}",
+                     id=h["id"], title=h.get("holder", ""), coord=h.get("coordinator", ""))
     for name, c in coords.items():
         if not coord_live(c):
-            hb = f"last heartbeat {ago(parse(c['heartbeat']), now)}" if c.get("heartbeat") else "no heartbeat"
-            attention.append(("critical", f"Stale coordinator {name}", hb, f"#coord-{name}"))
-    for who, src in sources.items():
-        for d in src.get("decisions", []):
-            href = d.get("href") or session_of(who, d.get("task", "")) or "#decisions"
-            attention.append(("serious", f"Decision{' · ' + d['task'] if d.get('task') else ''}", f"{d.get('text', '')} ({who})", href))
+            hb = f"Last heartbeat {ago(parse(c['heartbeat']), now)}" if c.get("heartbeat") else "No heartbeat"
+            need(("coord", name), "critical", "Stale coordinator", title=name, status=hb, coord=name,
+                 href=(sources.get(name, {}).get("coordinator") or {}).get("href", ""))
+    for (coord, task_id), t in tasks.items():
+        if kind_of(t) == "warn":
+            task_need(coord, task_id, "warning", f"Blocked · {t['phase']}" if t.get("phase") else "Blocked")
+    for coord, src in sources.items():
+        for i, d in enumerate(src.get("decisions", [])):
+            if isinstance(d, str):
+                task, sep, text = d.partition(":")
+                d = {"task": task.strip(), "text": text.strip()} if sep and " " not in task.strip() else {"text": d}
+            task = d.get("task", "")
+            if (coord, task) in tasks:
+                n = task_need(coord, task, "serious", "Decision needed")
+            else:
+                n = need(("decision", coord, i), "serious", "Decision needed", id=task, coord=coord, href=session_of(coord, task))
+            n["asks"].append(d.get("text", ""))
+            if d.get("href"):
+                n["href"] = d["href"]
     for coord, mlist in members.items():
         for m in mlist:
-            if m.get("status") in ("done", "paused"):
+            last = last_update(coord, m.get("name"))
+            if m.get("status") in ("done", "paused") or not last or now - last <= dt.timedelta(minutes=STALE_MINUTES):
                 continue
-            last = m.get("updatedAt") or m.get("joinedAt") or m.get("enrolledAt")
-            if not last:
-                continue
-            age = now - parse(last)
-            if m.get("status") == "pending" and age > dt.timedelta(minutes=30):
-                attention.append(("warning", f"Not joined: {m['name']}", f"enrolled {ago(parse(last), now)} by {m.get('parent', coord)} · {m.get('task', '')[:60]}", f"#coord-{coord}"))
-            elif m.get("status") != "pending" and age > dt.timedelta(minutes=30):
-                attention.append(("warning", f"No update: {m['name']}", f"{ago(parse(last), now)} · {m.get('task', '')[:60]} ({coord})", session_of(coord, m["name"]) or f"#coord-{coord}"))
-    decided = {d.get("task") for src in sources.values() for d in src.get("decisions", []) if d.get("task")}
-    for who, src in sources.items():
-        for t in src.get("tasks", []):
-            if t.get("kind") == "warn" and t.get("id") not in decided:
-                attention.append(("warning", f"{t.get('id')} · {t.get('phase', '')}", t.get("latest", ""), t.get("session") or f"#coord-{who}"))
-    attention.sort(key=lambda a: SEV_ORDER[a[0]])
+            if m.get("status") == "pending":
+                need(("member", coord, m["name"]), "warning", f"Not joined · enrolled {ago(last, now)}", id=m["name"],
+                     title=m.get("task", ""), status=f"Enrolled by {m.get('parent') or coord}", coord=coord, when=last)
+            elif (coord, m["name"]) in tasks:
+                task_need(coord, m["name"], "warning", f"No update for {since(last, now)}")
+            else:
+                need(("member", coord, m["name"]), "warning", f"No update for {since(last, now)}", id=m["name"],
+                     title=m.get("task", ""), coord=coord, when=last)
+    need_list = sorted(needs.values(), key=lambda n: SEV_ORDER[n["sev"]])
+    worst = "danger" if any(n["sev"] == "critical" for n in need_list) else "warn" if need_list else "ok"
 
-    if attention:
-        worst = attention[0][0]
-        counts = {s: sum(1 for a in attention if a[0] == s) for s in ("critical", "serious", "warning")}
-        summary = "".join(f'<span class="cnt">{status(s)}{n}</span>' for s, n in counts.items() if n)
-        def att(item):
-            sev, title, detail, href = item
-            return (f'<li class="att {sev}"><a href="{e(href)}" title="{e(detail)}">{status(sev)}<span class="att-t">{e(title)}</span>'
-                    f'<span class="att-d">{e(detail)}</span></a></li>')
-        first, rest = attention[:6], attention[6:]
-        more = (f'<details class="more"><summary>{len(rest)} more</summary><ul class="att-list">{"".join(att(a) for a in rest)}</ul></details>'
-                if rest else "")
-        hero = (
-            f'<section class="hero {worst}" aria-label="Needs attention"><div class="hero-n">{len(attention)}</div>'
-            f'<div class="hero-l"><div class="hero-h">Attention</div><div class="hero-s">{summary}</div></div>'
-            f'<ul class="att-list">{"".join(att(a) for a in first)}</ul>{more}</section>'
-        )
-    else:
-        hero = (
-            f'<section class="hero ok" aria-label="Needs attention"><div class="hero-n">0</div>'
-            f'<div class="hero-l"><div class="hero-h">{status("ok")} Attention</div>'
-            f'<div class="hero-s">None</div></div></section>'
-        )
+    def reasons_html(n):
+        return f'<div class="reasons">{"".join(f"<span>{e(r)}</span>" for r in n["reasons"])}</div>'
 
-    # ---- host tiles
-    host_html = "".join(tile(t) for t in host_tiles(host))
-
-    # ---- lease tiles
-    leases_on = roster.get("leases") == "on" or any(holders(leases, c) or queue.get(c) for c in classes)
-    lease_tiles = ""
-    if leases_on:
-        for cls in classes:
-            cur = holders(leases, cls)
-            cap = capacity.get(cls)
-            ready = [q for q in queue.get(cls, []) if not q.get("hold")]
-            expired = any(parse(h["expiresAt"]) < now for h in cur)
-            sev = "critical" if expired else "warning" if (cap is not None and len(cur) >= max(1, cap) and ready) else "ok"
-            pct = 100 * len(cur) / max(1, cap) if cap is not None else (100 if cur else 0)
-            sub = f"{len(ready)} queued"
-            if ready:
-                sub += f" · next {ready[0]['holder'][:26]} {eta_text(cls, ready[0]['id'])}"
-            left = settle_left(cls)
-            if left > 0:
-                sub = f"settling {int(left)} s · " + sub
-            holder = f"{cur[0]['holder'][:34]} · {eta_text(cls, cur[0]['id'])}" if cur else "free"
-            lease_tiles += (
-                f'<a class="tile" href="#leases" data-sev="{sev}"><div class="tl">{e(cls)}'
-                f'<span class="tst">{status(sev) if sev != "ok" else ""}</span></div>'
-                f'<div class="tv">{len(cur)} / {cap if cap is not None else "∞"}</div>{meter(pct, sev)}'
-                f'<div class="ts">{e(holder)}</div><div class="ts">{e(sub)}</div></a>'
-            )
-
-    # ---- work board: every coordinator's tasks in one list, grouped by work state
-    def task_row(t, coord):
-        links = [link(l) for l in t.get("links", [])]
-        when = task_eta(t.get("id", "")) or t.get("eta", "")
-        name_html = (f'<a class="stretch" href="{e(t["session"])}" title="Open session">{e(t.get("name", ""))}</a>'
-                     if t.get("session") else e(t.get("name", "")))
-        tool = coords.get(coord, {}).get("tool", "")
+    def need_card(n):
+        idl = (f'<span class="id">{e(n["id"])}</span>' if n["id"] else "") + (f'<span class="ttl">{e(n["title"])}</span>' if n["title"] else "")
+        side = who(n["coord"], n["when"]) + open_button(n["href"])
         return (
-            f'<li class="task k-{e(t.get("kind", "work"))}{" click" if t.get("session") else ""}"><div class="task-h"><span class="tid">{e(t.get("id", ""))}</span>'
-            f'<span class="tname">{name_html}</span><span class="tag" title="coordinator">{e(coord)}{" · " + e(tool) if tool and tool != coord else ""}</span>'
-            f'<span class="badge k-{e(t.get("kind", "work"))}">{e(t.get("phase", ""))}</span></div>'
-            + (f'<div class="tlatest">{e(t.get("latest", ""))}</div>' if t.get("latest") else "")
-            + (f'<div class="tmeta">{" · ".join(links)}{" · " if links and when else ""}{e(when)}</div>' if links or when else "")
-            + "</li>"
+            f'<article class="need{" critical" if n["sev"] == "critical" else ""}"><div class="need-main">{reasons_html(n)}'
+            + (f'<div class="idl">{idl}</div>' if idl else "")
+            + "".join(f'<p class="t1">{e(a)}</p>' for a in n["asks"] if a)
+            + (f'<p class="st">{e(n["status"])}</p>' if n["status"] else "")
+            + "</div>" + (f'<div class="need-side">{side}</div>' if side else "") + "</article>"
         )
 
-    groups = [("warn", "Blocked"), ("work", "In progress"), ("ok", "On track"), ("done", "Done")]
-    all_tasks = [(t, coord) for coord, src in sources.items() for t in src.get("tasks", [])]
+    def wall_card(n):
+        ident = f'<span class="id">{e(n["id"])}</span>' if n["id"] else ""
+        agent = f'<div class="agent {agent_class(tool_of(n["coord"]))}"><i class="sw"></i>{e(n["coord"])}</div>' if n["coord"] else ""
+        return (f'<article class="wneed{" critical" if n["sev"] == "critical" else ""}">{reasons_html(n)}'
+                f'<div class="wt">{ident}{e(n["title"])}</div>{agent}</article>')
+
+    # ---- work board: tasks not under Needs you, grouped by work state
+    def task_row(coord, t):
+        tid = t.get("id", "")
+        name = e(t.get("name", ""))
+        title = (f'<a class="ttl" href="{e(t["session"])}" title="Open session">{name}</a>' if t.get("session")
+                 else f'<span class="ttl">{name}</span>')
+        meta = [f'<span class="t1">{e(t["phase"])}</span>'] if t.get("phase") else []
+        when = task_eta(tid) or t.get("eta", "")
+        if when:
+            meta.append(f'<span class="mono t2">{e(when)}</span>')
+        meta += [link(l) for l in t.get("links", [])]
+        return (
+            f'<article class="row{" done" if kind_of(t) == "done" else ""}"><div class="row-main">'
+            f'<div class="idl"><span class="id">{e(tid)}</span>{title}</div>'
+            + (f'<p class="st">{e(t["latest"])}</p>' if t.get("latest") else "")
+            + (f'<div class="meta">{"".join(meta)}</div>' if meta else "")
+            + f"</div>{who(coord, last_update(coord, tid))}</article>"
+        )
+
+    rest = [(coord, t) for (coord, tid), t in tasks.items() if ("task", coord, tid) not in needs]
+    listed = sum(1 for k in needs if k[0] == "task")
     board = ""
-    for kind, label in groups:
-        rows = [task_row(t, c) for t, c in all_tasks if (t.get("kind") or "work") == kind]
+    for kind, dot, label in KINDS:
+        rows = [task_row(coord, t) for coord, t in rest if kind_of(t) == kind]
         if not rows:
             continue
-        inner = f'<ul class="tasks">{"".join(rows)}</ul>'
-        if kind == "done":
-            board += f'<details class="group"><summary><span class="gh">{label}</span> <span class="muted">{len(rows)}</span></summary>{inner}</details>'
-        else:
-            board += f'<section class="group"><div class="gh">{label} <span class="muted">{len(rows)}</span></div>{inner}</section>'
+        head = f'<span class="dot {dot}"></span>{label}<span class="n">{len(rows)}</span>'
+        inner = f'<div class="card list">{"".join(rows)}</div>'
+        board += (f'<details class="grp" id="grp-done"><summary class="grp-h">{head}</summary>{inner}</details>' if kind == "done"
+                  else f'<div class="grp"><div class="grp-h">{head}</div>{inner}</div>')
+    board = board or '<p class="t3">No tasks.</p>'
+    work_note = f"{len(rest)} tasks" + (f" · {listed} under Needs you" if listed else "")
 
-    strip = ""
+    # ---- leases: a timeline per class, then every held and queued entry
+    leases_on = roster.get("leases") == "on" or any(holders(leases, c) or queue.get(c) for c in classes)
+    lease_panel = wall_leases = ""
+    if leases_on:
+        spans = {}
+        for cls in classes:
+            items = []
+            for h in holders(leases, cls):
+                end = parse(h["expiresAt"])
+                start = parse(h["grantedAt"]) if h.get("grantedAt") else now
+                items.append(("expired" if end < now else "run", "", start, max(now, end), h))
+            pos = 0
+            for q in queue.get(cls, []):
+                kind, start, end = eta[cls].get(q["id"], (None, None, None))
+                if kind == "queued":
+                    pos += 1
+                    items.append(("queued", f"#{pos}", start, end, q))
+            spans[cls] = items
+        w0 = now - dt.timedelta(minutes=5)
+        last_end = max([i[3] for items in spans.values() for i in items] + [w0])
+        span = max(30, min(120, -(-int((last_end - w0).total_seconds()) // 300) * 5))
+        step = 5 if span <= 40 else 10 if span <= 80 else 15
+        w1 = w0 + dt.timedelta(minutes=span)
+
+        def pct(t):
+            return clamp((t - w0) / (w1 - w0) * 100)
+
+        lw = w0.astimezone().replace(second=0, microsecond=0)
+        tick = lw + dt.timedelta(minutes=step - lw.minute % step)
+        ticks = []
+        while tick < w1:
+            ticks.append((pct(tick), tick.strftime("%H:%M")))
+            tick += dt.timedelta(minutes=step)
+        tick_lines = "".join(f'<span class="tk" style="left:{p:.2f}%"></span>' for p, _ in ticks)
+        tick_labels = "".join(f'<span style="left:{p:.2f}%">{label}</span>' for p, label in ticks)
+        now_line = f'<span class="now" style="left:{pct(now):.2f}%"></span>'
+
+        def track(cls, big=False):
+            blocks = ""
+            for kind, pos, start, end, h in spans[cls]:
+                if end <= w0 or start >= w1:
+                    continue
+                left, right = pct(start), pct(end)
+                title = f'{h.get("holder", "")} · {h["id"]} · {local(start)}–{local(end)}'
+                blocks += (
+                    f'<div class="blk {kind} {agent_class(tool_of(h.get("coordinator", "")))}" title="{e(title)}" '
+                    f'style="left:{left:.2f}%;width:calc({right - left:.2f}% - 2px)">'
+                    + (f"<b>{pos}</b>" if pos else "") + f'<span>{e(h.get("holder", "").split(" ")[0])}</span></div>'
+                )
+            return f'<div class="track{" big" if big else ""}">{tick_lines}{blocks}{now_line}</div>'
+
+        def lane_status(cls):
+            cur, cap = holders(leases, cls), capacity.get(cls)
+            ready = [q for q in queue.get(cls, []) if not q.get("hold")]
+            queued = f" · {len(ready)} queued" if ready else ""
+            if any(parse(h["expiresAt"]) < now for h in cur):
+                text, color = "Expired" + queued, "danger"
+            elif cur:
+                full = cap is not None and len(cur) >= max(1, cap)
+                text = (f"Held {len(cur)}/{cap}" if cap and cap > 1 else "Held") + queued
+                color = "warn" if full and ready else "t1"
+            else:
+                text, color = "Free" + queued, "t2" if ready else "ok"
+            left = settle_left(cls)
+            if left > 0:
+                text = f"Settling {int(left)} s · " + text
+            return text, color
+
+        def qbutton(action, cls, entry_id, label):
+            return (f'<button type="button" class="ghost{" cancel" if action == "unwait" else ""}" data-q="{action}" '
+                    f'data-cls="{e(cls)}" data-id="{e(entry_id)}">{label}</button>')
+
+        def qrow(cls, tag, h, detail, commands="", actions=""):
+            task, _, what = h.get("holder", "").partition(" ")
+            return (
+                f'<div class="qrow"><span class="q-pos">{e(cls)} {e(tag)}</span><div class="q-b">'
+                f'<span><b>{e(task)}</b> <span class="t2">{e(what)}</span></span>'
+                f'<span class="sm t3">{e(h.get("coordinator", ""))} · {e(detail)}</span>'
+                + (f'<span class="mono xs t2 wrap">{e(commands)}</span>' if commands else "")
+                + f'<span class="mono xs t3 wrap">{e(h["id"])}</span>'
+                + (f'<div class="q-act">{actions}</div>' if actions else "") + "</div></div>"
+            )
+
+        desk_lanes, wall_lanes, qrows = f'<span></span><div class="ticks">{tick_labels}</div>', "", ""
+        for cls in classes:
+            text, color = lane_status(cls)
+            cap = capacity.get(cls)
+            desc = (f'{registry[cls].get("description", "")} · capacity {cap if cap is not None else "∞"}'
+                    f' · peak ~{fmt((budget.get("peakGiB") or {}).get(cls))} GiB')
+            desk_lanes += f'<div class="lane-l" title="{e(desc)}"><b>{e(cls)}</b><span class="{color}">{e(text)}</span></div>{track(cls)}'
+            wall_lanes += f'<div class="blane"><div class="blane-h"><b>{e(cls)}</b><span class="{color}">{e(text)}</span></div>{track(cls, True)}</div>'
+            for h in holders(leases, cls):
+                qrows += qrow(cls, "held", h, f'{fmt(h.get("gib"))} GiB · {eta_text(cls, h["id"])}', h.get("commands", ""))
+            pos = 0
+            for q in queue.get(cls, []):
+                pos += 0 if q.get("hold") else 1
+                actions = (qbutton("up", cls, q["id"], "Move up") if pos > 1 and not q.get("hold") else "") + qbutton("unwait", cls, q["id"], "Cancel")
+                qrows += qrow(cls, "hold" if q.get("hold") else f"#{pos}", q, f"~{est_minutes(cls, q):g} min · {eta_text(cls, q['id'])}",
+                              actions=actions)
+        qrows = qrows or '<div class="qempty sm t3">Nothing queued.</div>'
+        lease_panel = (
+            f'<section class="card panel" id="leases"><div class="panel-h"><h2>Leases</h2>'
+            f'<span class="sm t3">FIFO · {fmt(budget.get("freeGiB"))} of {fmt(budget.get("limitGiB"))} GiB free</span></div>'
+            f'<div class="lanes">{desk_lanes}</div><div>{qrows}</div></section>'
+        )
+        wall_leases = f'<section class="w-leases"><h2>Leases</h2>{wall_lanes}<div class="ticks big">{tick_labels}</div></section>'
+
+    # ---- coordinators
+    coord_rows = ""
     for name in sorted(set(coords) | set(sources)):
         c, src = coords.get(name, {}), sources.get(name, {})
         live = coord_live(c)
         mlist = members.get(name, [])
         pending = sum(1 for m in mlist if m.get("status") == "pending")
         href = (src.get("coordinator") or {}).get("href", "")
-        top = [link(l) for l in src.get("links", [])]
-        strip += (
-            f'<div class="coord{" click" if href else ""}" id="coord-{e(name)}"><div class="coord-h">'
-            + (f'<a class="stretch" href="{e(href)}" title="Open coordinator session">{e(name)}</a>' if href else e(name))
-            + f' <span class="chip {"live" if live else "stale"}">{"live" if live else "stale"}</span></div>'
-            f'<div class="muted small">{e(c.get("tool", ""))} · {e(c.get("focus", ""))}</div>'
-            f'<div class="small">{len(mlist) - pending} members{f" · {pending} pending" if pending else ""} · updated {e(src.get("updated", "?"))}</div>'
-            + (f'<div class="lk">{"".join(top)}</div>' if top else "")
-            + "</div>"
+        label = (f'<a class="c-n" href="{e(href)}" title="Open coordinator session">{e(name)}</a>' if href
+                 else f'<span class="c-n">{e(name)}</span>')
+        links, notes = [link(l) for l in src.get("links", [])], src.get("notes", [])
+        more = ""
+        if links or notes:
+            summary = " · ".join(([f"Links ({len(links)})"] if links else []) + ([f"Notes ({len(notes)})"] if notes else []))
+            more = (
+                f'<details id="coord-more-{e(name)}"><summary class="ghost"><span class="cl">{summary}</span><span class="op">Hide</span></summary>'
+                + (f'<div class="links">{"".join(links)}</div>' if links else "")
+                + (f'<ul class="notes">{"".join(f"<li>{e(n)}</li>" for n in notes)}</ul>' if notes else "")
+                + "</details>"
+            )
+        coord_rows += (
+            f'<div class="coord" id="coord-{e(name)}"><div class="c-h"><i class="sw {agent_class(tool_of(name))}"></i>{label}'
+            f'<span class="sm {"ok" if live else "danger"}">{"live" if live else "stale"}</span>'
+            f'<span class="c-m">{len(mlist) - pending} members{f" · {pending} pending" if pending else ""}'
+            f' · <span class="mono">{e(src.get("updated", "?"))}</span></span></div>'
+            + (f'<p class="c-s">{e(c["focus"])}</p>' if c.get("focus") else "") + more + "</div>"
         )
-    notes = [(name, n) for name, src in sources.items() for n in src.get("notes", [])]
-    notes_html = (
-        f'<article class="card"><details class="notes-box"><summary><span class="gh">Notes</span> <span class="muted">{len(notes)}</span></summary>'
-        f'<ul class="notes">{"".join(f"<li><span class=tag>{e(n)}</span> {e(x)}</li>" for n, x in notes)}</ul></details></article>'
-        if notes else ""
-    )
+    coord_rows = coord_rows or '<p class="coord t3">None</p>'
 
-    # ---- queues and ledger (side column)
-    queue_html = ""
-    if leases_on:
-        for cls in classes:
-            items = "".join(
-                f"<li><span class='badge k-work'>held</span> <b>{e(h['holder'][:48])}</b>"
-                f"<div class='muted'>{e(h['id'])} · {e(h['coordinator'])} · {h['gib']:g} GiB · {e(eta_text(cls, h['id']))}</div>"
-                + (f"<div class='code'>{e(h['commands'])}</div>" if h.get("commands") else "") + "</li>"
-                for h in holders(leases, cls)
-            ) + "".join(
-                f"<li><span class='badge {'k-done' if q.get('hold') else 'k-ok'}'>{'hold' if q.get('hold') else i + 1}</span> {e(q['holder'][:48])}"
-                f"<div class='muted'>{e(q['id'])} · {e(q['coordinator'])} · ~{est_minutes(cls, q):g} min · {e(eta_text(cls, q['id']))}</div></li>"
-                for i, q in enumerate(queue.get(cls, []))
-            )
-            cap = capacity.get(cls)
-            queue_html += (
-                f"<h4>{e(cls)} <span class='muted'>{e(registry[cls].get('description', ''))}</span></h4>"
-                f"<div class='muted small'>capacity {cap if cap is not None else '∞'} · peak ~{(budget.get('peakGiB') or {}).get(cls, '?')} GiB</div>"
-                f"<ol class='q'>{items or '<li class=muted>Empty</li>'}</ol>"
-            )
-        queue_html = (
-            f'<article class="card" id="leases"><header class="card-h"><div><h3>Lease queues</h3>'
-            f'<div class="muted">FIFO · {budget.get("freeGiB", "?")} of {budget.get("limitGiB", "?")} GiB free</div></div></header>{queue_html}</article>'
-        )
+    # ---- ledger drawer
     ledger = []
     try:
         for line in reversed(open(os.path.join(DIR, "ledger.jsonl")).read().splitlines()[-20:]):
@@ -439,165 +585,51 @@ def render_page(host):
                 pass
     except OSError:
         pass
-    ledger_html = "".join(
-        f"<li><div class='lh'><time>{e(x.get('at', '')[11:16])}Z</time><b>{e(x.get('by', ''))}</b></div><div>{e(x.get('text', ''))}</div></li>" for x in ledger
-    ) or "<li class='muted'>Empty</li>"
-    side = queue_html + notes_html + f'<article class="card"><header class="card-h"><div><h3>Ledger</h3></div></header><ul class="ledger">{ledger_html}</ul></article>'
 
-    body = (
-        hero
-        + f'<section class="row" id="host"><h2>Machine{" and leases" if leases_on else ""} <span class="muted" id="sampled">host {e((host or {}).get("at", "…"))}</span></h2>'
-        + f'<div class="tiles">{host_html}{lease_tiles}</div></section>'
-        + f'<div class="cols"><section class="col-main"><h2>Coordinators</h2><div class="coords">{strip or "<p class=muted>None</p>"}</div>'
-        + f'<h2>Work</h2>{board or "<p class=muted>None</p>"}</section>'
-        + f'<aside class="col-side">{side}</aside></div>'
+    def entry(x):
+        try:
+            at = local(parse(x.get("at", "")))
+        except (TypeError, ValueError):
+            at = str(x.get("at", ""))[11:16]
+        by = x.get("by", "")
+        return (f'<div class="entry"><div class="entry-h"><span class="mono t3">{e(at)}</span>'
+                f'<i class="sw {agent_class(tool_of(by))}"></i><b>{e(by)}</b></div><p class="st">{e(x.get("text", ""))}</p></div>')
+
+    ledger_html = "".join(entry(x) for x in ledger) or '<div class="entry t3">Empty</div>'
+
+    header = (
+        '<header class="top"><div class="top-l"><span class="brand">Master of puppets</span><span class="live"></span>'
+        f'<span class="mono sm t3">updated {time.strftime("%H:%M:%S")}</span></div><div class="top-r">'
+        f'<div class="minis" id="minis">{"".join(host_mini(t) for t in tiles)}</div>'
+        '<div class="seg"><button type="button" data-mode-btn="desk">Desk</button><button type="button" data-mode-btn="wall">Wall</button></div>'
+        f'<button type="button" class="btn" data-ledger-open>Ledger<span class="mono sm t3">{len(ledger)}</span></button></div></header>'
     )
-    icons = json.dumps({sev: status(sev) for sev in ("critical", "serious", "warning")})
-    return PAGE.replace("{{UPDATED}}", time.strftime("%H:%M:%S")).replace("{{ICONS}}", icons).replace("{{BODY}}", body)
-
-
-PAGE = """<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Master of puppets</title>
-<style>
-:root{color-scheme:light dark;
---bg:#f4f5f7;--surface:#ffffff;--surface2:#f8f9fa;--bd:#e3e5e8;--ink:#1d1f23;--ink2:#4b5058;--mut:#6b7079;
---accent:#3a6fd8;--accent-track:#dde6f7;--link:#2f5fc4;
---good:#0ca30c;--warning:#fab219;--serious:#ec835a;--critical:#d03b3b;
---good-bg:#e8f6e8;--warning-bg:#fff4dc;--serious-bg:#fdece5;--critical-bg:#fbe6e6;
---warning-track:#fdeac0;--serious-track:#f9d8ca;--critical-track:#f4d2d2;
---shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.08)}
-@media (prefers-color-scheme:dark){:root{
---bg:#121314;--surface:#1a1a19;--surface2:#202122;--bd:#2c2d2f;--ink:#eceef1;--ink2:#b9bdc4;--mut:#8d929a;
---accent:#6b9cf0;--accent-track:#22324f;--link:#8fb4f5;
---good-bg:#12301a;--warning-bg:#3a2e10;--serious-bg:#3b2318;--critical-bg:#3d1b1b;
---warning-track:#4a3a12;--serious-track:#4a2c1f;--critical-track:#4d2323;--shadow:none}}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif}
-a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
-.top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;padding:12px 24px;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--bd)}
-.top h1{font-size:16px;font-weight:600;margin:0;letter-spacing:-.01em}
-.live{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink2)}
-.live::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--good);box-shadow:0 0 0 3px var(--good-bg)}
-body[data-stale] .live::before{background:var(--critical);box-shadow:0 0 0 3px var(--critical-bg)}
-body[data-stale] .live span::after{content:" · offline"}
-.top .muted{margin-left:auto}
-main{max-width:1440px;margin:0 auto;padding:20px 24px 48px}
-h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--ink2);margin:24px 0 10px;display:flex;gap:10px;align-items:baseline}
-h2 .muted{text-transform:none;letter-spacing:0;font-weight:400}
-h3{font-size:15px;font-weight:600;margin:0;display:flex;align-items:center;gap:8px}
-h4{font-size:13px;font-weight:600;margin:14px 0 2px}
-.muted{color:var(--mut);font-weight:400} .small{font-size:12px}
-.st{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;white-space:nowrap}
-.st svg{width:16px;height:16px;flex:none} .st{vertical-align:-3px}
-.hero-s{display:flex;gap:14px} .cnt{display:inline-flex;align-items:center;gap:5px;font-weight:600;color:var(--ink)} .st svg .g{fill:#fff}
-.st.critical svg{fill:var(--critical)} .st.serious svg{fill:var(--serious)} .st.warning svg{fill:var(--warning)} .st.ok svg{fill:var(--good)}
-.st.warning svg .g{fill:#1d1f23}
-.hero{display:grid;grid-template-columns:auto 1fr;gap:4px 20px;align-items:center;background:var(--surface);border:1px solid var(--bd);border-radius:14px;padding:18px 22px;box-shadow:var(--shadow)}
-
-.hero-n{font-size:52px;font-weight:600;line-height:1;letter-spacing:-.02em}
-.hero-h{font-size:18px;font-weight:600;display:flex;gap:8px;align-items:center} .hero-s{color:var(--ink2)}
-.att-list{grid-column:1/-1;list-style:none;margin:14px 0 0;padding:0;display:grid;gap:6px}
-.att a{display:grid;grid-template-columns:18px minmax(180px,auto) 1fr;gap:12px;align-items:baseline;padding:9px 12px;border-radius:10px;color:inherit;text-decoration:none}
-.att.critical a{background:var(--critical-bg)} .att.serious a{background:var(--serious-bg)} .att.warning a{background:var(--warning-bg)}
-.att a:hover{outline:1px solid var(--bd)}
-.att-t{font-weight:600} .att-d{color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
-.tile{display:block;background:var(--surface);border:1px solid var(--bd);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow);color:inherit;text-decoration:none}
-a.tile:hover{border-color:var(--accent)}
-.tile[data-sev=critical]{border-color:var(--critical)} .tile[data-sev=warning]{border-color:var(--warning)}
-.tl{display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:600;color:var(--ink2);text-transform:uppercase;letter-spacing:.04em}
-.tv{font-size:24px;font-weight:600;margin:4px 0 8px;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ts{font-size:12px;color:var(--mut);margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.meter{height:8px;border-radius:4px;background:var(--accent-track);overflow:hidden}
-.meter i{display:block;height:100%;border-radius:4px;background:var(--accent);transition:width .6s ease}
-.meter.warning{background:var(--warning-track)} .meter.warning i{background:var(--warning)}
-.meter.serious{background:var(--serious-track)} .meter.serious i{background:var(--serious)}
-.meter.critical{background:var(--critical-track)} .meter.critical i{background:var(--critical)}
-.cols{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:20px;align-items:start}
-@media (max-width:1100px){.cols{grid-template-columns:1fr}}
-.col-side{position:sticky;top:64px;display:grid;gap:16px;margin-top:46px;max-height:calc(100vh - 80px);overflow:auto}
-.coords{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
-.coord{position:relative;background:var(--surface);border:1px solid var(--bd);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow)}
-.coord.click:hover{border-color:var(--accent)} .coord-h{font-weight:600;font-size:15px;display:flex;gap:8px;align-items:center}
-.group{margin-bottom:18px} .gh{font-size:13px;font-weight:600;margin:0 0 8px;color:var(--ink)}
-details.group summary{list-style:none;margin-bottom:8px} details.group summary::-webkit-details-marker{display:none}
-details.group summary::before{content:"▸ ";color:var(--mut)} details.group[open] summary::before{content:"▾ "}
-.tag{font-size:11px;padding:1px 7px;border-radius:6px;background:var(--surface);border:1px solid var(--bd);color:var(--ink2);white-space:nowrap}
-@media (max-width:1100px){.col-side{position:static;margin-top:0}}
-.card{background:var(--surface);border:1px solid var(--bd);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow);margin-bottom:16px}
-.col-side .card{margin-bottom:0}
-.card-h{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:10px}
-.card-n{text-align:right;font-size:13px;white-space:nowrap}
-.chip{font-size:11px;font-weight:600;padding:1px 8px;border-radius:999px}
-.chip.live{background:var(--good-bg);color:var(--good)} .chip.stale{background:var(--critical-bg);color:var(--critical)}
-.lk{font-size:12px;margin:6px 0 0;display:flex;flex-wrap:wrap;gap:4px 12px}
-.tasks{list-style:none;margin:0;padding:0;display:grid;gap:8px}
-.task{position:relative;border:1px solid var(--bd);border-radius:10px;padding:10px 12px;background:var(--surface2)}
-.task.click,.card-h.click{cursor:pointer}
-.task.click:hover{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
-.card-h{position:relative} .card-h.click:hover h3 a{text-decoration:underline}
-a.stretch{color:inherit;text-decoration:none} a.stretch::after{content:"";position:absolute;inset:0;border-radius:inherit}
-.tmeta a,.lk a{position:relative;z-index:1}
-.task.k-warn{border-color:var(--warning)}
-.task.k-done{opacity:.6}
-.task-h{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
-.tid{font-weight:700;font-size:13px;min-width:28px} .tname{font-weight:600;flex:1 1 220px}
-.tlatest{color:var(--ink2);font-size:13px;margin-top:4px} .tmeta{font-size:12px;color:var(--mut);margin-top:4px}
-.badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;white-space:nowrap;background:var(--accent-track);color:var(--accent)}
-.badge.k-ok{background:var(--good-bg);color:var(--good)} .badge.k-warn{background:var(--warning-track);color:#7a5200}
-.badge.k-done{background:var(--surface2);color:var(--mut);border:1px solid var(--bd)}
-@media (prefers-color-scheme:dark){.badge.k-warn{color:var(--warning)}}
-ol.q,ul.ledger,ul.notes{margin:6px 0 0;padding:0;list-style:none;display:grid;gap:8px}
-ol.q li{font-size:13px} .code{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--surface2);border:1px solid var(--bd);border-radius:6px;padding:4px 6px;margin-top:4px;overflow-x:auto;white-space:pre-wrap}
-ul.ledger{max-height:560px;overflow:auto}
-ul.ledger li{font-size:13px;padding-bottom:8px;border-bottom:1px solid var(--bd)} ul.ledger li:last-child{border-bottom:none}
-ul.ledger .lh{display:flex;gap:8px;font-size:12px} ul.ledger time{color:var(--mut);font-variant-numeric:tabular-nums} ul.ledger b{font-weight:600}
-details.more{grid-column:1/-1;margin-top:6px} details summary{cursor:pointer;font-size:13px;color:var(--link);font-weight:600}
-details.more .att-list{margin-top:6px}
-details.notes-box{margin-top:10px} details.notes-box .notes{margin-top:8px}
-ul.notes li{font-size:13px;color:var(--ink2)}
-</style>
-<script>
-window.__icons = {{ICONS}};
-(() => {
-  const paint = (h) => {
-    if (!h || !h.tiles) return;
-    for (const t of h.tiles) {
-      const el = document.getElementById("t-" + t.id);
-      if (!el) continue;
-      el.dataset.sev = t.sev;
-      el.querySelector(".tv").textContent = t.value;
-      el.querySelector(".ts").textContent = t.sub;
-      const m = el.querySelector(".meter");
-      m.className = "meter " + t.sev;
-      m.setAttribute("aria-valuenow", Math.round(t.pct));
-      m.querySelector("i").style.width = Math.max(0, Math.min(100, t.pct)) + "%";
-      el.querySelector(".tst").innerHTML = t.sev === "ok" ? "" : (window.__icons[t.sev] || "");
-    }
-    const at = document.getElementById("sampled");
-    if (at) at.textContent = "host " + h.at;
-  };
-  if (!window.EventSource || location.protocol === "file:") return;
-  const es = new EventSource("/events");
-  es.addEventListener("host", (ev) => { window.__host = JSON.parse(ev.data); paint(window.__host); });
-  es.addEventListener("update", async () => {
-    const r = await fetch("/", {cache: "no-store"});
-    if (!r.ok) return;
-    const doc = new DOMParser().parseFromString(await r.text(), "text/html");
-    const y = window.scrollY;
-    document.body.innerHTML = doc.body.innerHTML;
-    paint(window.__host);
-    window.scrollTo(0, y);
-  });
-  es.onerror = () => document.body.dataset.stale = "1";
-  es.onopen = () => delete document.body.dataset.stale;
-})();
-</script></head><body>
-<header class="top"><h1>Master of puppets</h1><span class="live"><span>live</span></span><span class="muted small">rendered {{UPDATED}}</span></header>
-<main>{{BODY}}</main>
-</body></html>
-"""
+    desk = (
+        '<main class="desk"><div class="col-main">'
+        f'<section class="sec"><div class="sec-h"><h2>Needs you</h2><span class="mono sm {worst}">{len(need_list)}</span>'
+        f'<span class="sm t3">Alarms, decisions, blocked tasks, or no update for {STALE_MINUTES} min</span></div>'
+        + ("".join(need_card(n) for n in need_list) or '<div class="empty">Nothing needs you right now.</div>')
+        + f'</section><section class="sec work"><div class="sec-h"><h2>Work</h2><span class="sm t3">{e(work_note)}</span></div>{board}</section></div>'
+        f'<aside class="col-side">{lease_panel}<section class="card coords"><h2>Coordinators</h2>{coord_rows}</section></aside></main>'
+    )
+    counts = "".join(
+        f'<div class="count"><b>{sum(1 for t in tasks.values() if kind_of(t) == kind)}</b><span><span class="dot {dot}"></span>{label}</span></div>'
+        for kind, dot, label in KINDS[:3]
+    )
+    wall = (
+        f'<main class="wall"><div class="w-host">{"".join(host_wall(t) for t in tiles)}</div>'
+        f'<section class="w-needs"><div class="w-count"><b class="{worst}">{len(need_list)}</b>'
+        f'<span>{"needs you" if len(need_list) == 1 else "need you"}</span></div>'
+        + "".join(wall_card(n) for n in need_list)
+        + f'<div class="counts">{counts}</div></section>{wall_leases}</main>'
+    )
+    drawer = (
+        '<div class="scrim" data-ledger-close></div><aside class="drawer" aria-label="Ledger"><div class="drawer-h">'
+        '<div class="sec-h"><span class="brand">Ledger</span><span class="sm t3">All coordinators · newest first</span></div>'
+        f'<button type="button" class="ghost" data-ledger-close>Close</button></div><div class="drawer-b">{ledger_html}</div></aside>'
+    )
+    with open(PAGE) as f:
+        return f.read().replace("{{BODY}}", header + desk + wall + drawer)
 
 
 # ---------------------------------------------------------------- server
@@ -630,7 +662,7 @@ def rerender():
         print(f"render failed: {exc!r}", file=sys.stderr, flush=True)
         return
     # The timestamp alone must not trigger an update.
-    digest = hashlib.sha256(re.sub(rb"rendered [0-9:]+", b"", body)).hexdigest()
+    digest = hashlib.sha256(re.sub(rb"updated [0-9:]+", b"", body)).hexdigest()
     with changed:
         page = body
         if digest != page_hash:
@@ -666,12 +698,55 @@ def host_sampler():
         time.sleep(HOST_EVERY)
 
 
+LEASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lease.py")
+QUEUE_ACTIONS = ("up", "unwait")
+ENTRY_ID = re.compile(r"^[\w.:@-]{1,200}$")
+
+
+def queue_action(action, cls, entry_id):
+    """Run `lease.py up|unwait CLASS --id ID --notify`; returns (ok, output lines)."""
+    if action not in QUEUE_ACTIONS or cls not in (machine_config().get("classes") or DEFAULT_REGISTRY) or not ENTRY_ID.match(entry_id):
+        return False, ["bad request"]
+    try:
+        r = subprocess.run([sys.executable, "-I", LEASE, action, cls, "--id", entry_id, "--notify"],
+                           capture_output=True, text=True, timeout=180)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, [f"lease.py failed: {exc}"]
+    lines = [x for x in (r.stdout + r.stderr).splitlines() if x.strip()]
+    return r.returncode == 0, lines or [f"lease.py exit {r.returncode}"]
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def send(self, body, ctype):
-        self.send_response(200)
+    def same_origin(self):
+        """Only this page may post: the Host and Origin must be this server, and the custom
+        header forces a CORS preflight, which this server never answers."""
+        local = {f"localhost:{PORT}", f"127.0.0.1:{PORT}"}
+        origin = self.headers.get("Origin", "")
+        return (self.headers.get("Host") in local and origin in {f"http://{h}" for h in local}
+                and self.headers.get("X-Requested-By") == "dashboard"
+                and self.headers.get("Content-Type", "").startswith("application/json"))
+
+    def do_POST(self):
+        if self.path.split("?")[0] != "/queue":
+            self.send_response(404)
+            self.end_headers()
+            return
+        if not self.same_origin():
+            self.send_response(403)
+            self.end_headers()
+            return
+        try:
+            req = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 4096)))
+            ok, lines = queue_action(str(req.get("action", "")), str(req.get("cls", "")), str(req.get("id", "")))
+        except (ValueError, AttributeError):
+            ok, lines = False, ["bad request"]
+        self.send(json.dumps({"ok": ok, "lines": lines}).encode(), "application/json", 200 if ok else 400)
+
+    def send(self, body, ctype, code=200):
+        self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Cache-Control", "no-store")
         self.end_headers()

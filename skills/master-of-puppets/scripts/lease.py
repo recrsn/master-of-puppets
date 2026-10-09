@@ -53,6 +53,9 @@ Leases (coordinators)
        (another class's grant settles this one), 4 over the memory budget.
        --commands records the granted scope; --measure starts measure-peak itself.
   release CLASS --id ID [--peak-gib N] | unwait | hold | ready CLASS --id ID
+  up CLASS --id ID                move a ready entry ahead of the ready entry in front of it
+       unwait and up take --notify (the dashboard's queue buttons): each affected
+       coordinator gets an inbox message from "dashboard", delivered directly as say does
   extend CLASS --id ID --minutes N
   host-check                      admission gate; exit 0 CALM, 1 BUSY; prints disk_low=yes|no
   measure-peak --id ID --worktree P [--interval S]   run in the background after acquire
@@ -494,7 +497,10 @@ def send_claude(session_id, text):
 
 
 def send_codex(thread_id, text):
-    r = subprocess.run(["codex", "queue", "--thread", thread_id, "--message", text], capture_output=True, text=True, timeout=60)
+    try:
+        r = subprocess.run(["codex", "queue", "--thread", thread_id, "--message", text], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"codex: queue failed: {exc} (inbox only)"
     if r.returncode != 0:
         return f"codex: queue failed: {(r.stderr or r.stdout).strip()[:200]} (inbox only)"
     return f"codex: queued to thread {thread_id}"
@@ -523,12 +529,65 @@ def say_cmd(args):
         targets = [(n, c.get("tool"), c.get("sessionId")) for n, c in roster["coordinators"].items() if n != args.sender and live(c)]
     text = f"[{args.sender} via lease.py say] {args.message}"
     for name, tool, sid in targets:
-        if not sid:
-            print(f"{name}: no session id (inbox only)")
-        elif tool == "codex":
-            print(f"{name}: {send_codex(sid, text)}")
+        print(deliver(name, tool, sid, text))
+    return 0
+
+
+def deliver(name, tool, session_id, text):
+    if not session_id:
+        return f"{name}: no session id (inbox only)"
+    return f"{name}: {send_codex(session_id, text) if tool == 'codex' else send_claude(session_id, text)}"
+
+
+def notify(to, message):
+    """Tell coordinator `to` about a dashboard action: an inbox record from "dashboard", then direct delivery."""
+    say("dashboard", message, to)
+    c = load_roster()["coordinators"].get(to)
+    if not c:
+        return f"{to}: not a registered coordinator (inbox only)"
+    return deliver(to, c.get("tool"), c.get("sessionId"), f"[dashboard] {message}")
+
+
+def queue_edit_cmd(args):
+    """unwait and up. With --notify, tell each affected coordinator after the lock is released."""
+    lock()
+    try:
+        state, machine = load(), load_machine()
+        queue = state["queue"][args.cls]
+        i = next((n for n, q in enumerate(queue) if q["id"] == args.id), None)
+        if i is None:
+            print(f"{args.id} is not queued for {args.cls}")
+            return 0 if args.cmd == "unwait" else 3
+        entry = queue[i]
+        if args.cmd == "unwait":
+            del queue[i]
+            done = f"removed {args.id} from the {args.cls} queue"
+            message = (f"The user cancelled {args.cls} queue entry {args.id} ({entry['holder']}) on the dashboard. "
+                       "Tell its member; queue it again only if the user agrees.")
+            to = [entry["coordinator"]]
+            log(f"unwait {args.cls} {args.id}" + (" by=dashboard" if args.notify else ""))
         else:
-            print(f"{name}: {send_claude(sid, text)}")
+            if entry.get("hold"):
+                print(f"{args.id} is on hold; mark it ready first")
+                return 3
+            ahead = next((n for n in range(i - 1, -1, -1) if not queue[n].get("hold")), None)
+            if ahead is None:
+                print(f"{args.id} is already first among ready {args.cls} entries")
+                return 0
+            other = queue[ahead]
+            queue.insert(ahead, queue.pop(i))
+            pos = sum(1 for q in queue[: ahead + 1] if not q.get("hold"))
+            done = f"moved {args.id} to {args.cls} position {pos}, ahead of {other['id']}"
+            message = (f"The user moved {args.cls} queue entry {args.id} ({entry['holder']}) up to position {pos}, "
+                       f"ahead of {other['id']} ({other['holder']}), on the dashboard. Tell the affected members their new turn.")
+            to = list(dict.fromkeys([entry["coordinator"], other["coordinator"]]))
+            log(f"up {args.cls} {args.id} ahead of {other['id']}" + (" by=dashboard" if args.notify else ""))
+        save(state, machine)
+    finally:
+        unlock()
+    print(done)
+    for name in to if args.notify else []:
+        print(notify(name, message))
     return 0
 
 
@@ -1161,9 +1220,11 @@ def main():
     w.add_argument("--commands", help="the exact commands the lease would cover")
     w.add_argument("--worktree", help="sets the project whose class peak applies")
     w.add_argument("--front", action="store_true", help="re-queue at the head (only for a run aborted by the coordinator)")
-    u = sub.add_parser("unwait")
-    u.add_argument("cls", metavar="CLASS")
-    u.add_argument("--id", required=True)
+    for name in ("unwait", "up"):
+        u = sub.add_parser(name)
+        u.add_argument("cls", metavar="CLASS")
+        u.add_argument("--id", required=True)
+        u.add_argument("--notify", action="store_true", help="tell each affected coordinator (sender: dashboard)")
     x = sub.add_parser("extend")
     x.add_argument("cls", metavar="CLASS")
     x.add_argument("--id", required=True)
@@ -1316,6 +1377,8 @@ def main():
         return unlocked[args.cmd](args)
     if args.cmd == "decision":
         return decision_cmd(args)
+    if args.cmd in ("unwait", "up"):
+        return queue_edit_cmd(args)
 
     lock()
     try:
@@ -1385,11 +1448,6 @@ def main():
                     q["hold"] = args.cmd == "hold"
             save(state, machine)
             log(f"{args.cmd} {args.cls} {args.id}")
-            return 0
-        if args.cmd == "unwait":
-            state["queue"][args.cls] = [q for q in queue if q["id"] != args.id]
-            save(state, machine)
-            log(f"unwait {args.cls} {args.id}")
             return 0
         holders = state[args.cls]
         if args.cmd == "acquire":

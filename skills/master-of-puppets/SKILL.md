@@ -31,7 +31,7 @@ not write product code.
 | File | What it does |
 | --- | --- |
 | `scripts/lease.py` | Leases, roster and members, messaging, waiters and watchers. Run with `python3 -I`; the docstring lists every command. The live copy is `$MACHINE_LEASE_DIR/lease.py` (default `~/.local/state/machine-leases`); every coordinator uses it. |
-| `scripts/server.py` | The one dashboard, on `http://localhost:4720/`: an at-a-glance card strip (needs you, CPU, memory, swap, disk, leases, coordinators), then details. Live by SSE. Exits with "already serving" when one runs. |
+| `scripts/server.py` | The one dashboard, on `http://localhost:4720/`, with the page shell `scripts/dashboard.html`: host meters, "Needs you" first, the work board, lease timelines and coordinators; a Wall mode for a shared screen. Live by SSE. Exits with "already serving" when one runs. |
 
 Below, `lease.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/lease.py"`.
 `lease.py install` (run from the skill copy) installs it when absent. When the

@@ -27,7 +27,8 @@ Puppet-to-master messages and master-to-puppet replies use native direct
 communication: Claude `SendMessage`, Codex `send_message_to_thread` (or
 supported CLI `codex queue` when app messaging is unavailable). This applies
 to all protocol messages, not just JOIN. Only coordinator-to-coordinator
-messages use `lease.py say` and the shared inbox; do not add inbox records for
+messages use `lease.py say`. The shared inbox holds only those and the
+dashboard's queue actions (sent as `dashboard`); do not add inbox records for
 member messages, even with `--no-direct`. The coordinator records member
 state with `member add|update|remove` and decisions with `note`.
 
