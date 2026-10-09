@@ -21,36 +21,10 @@ Use only capabilities present in the current session.
 | Bind a PR and repair blockers | `ccd_pr` + Auto-fix when available | Desktop `attach_artifact` with the PR URL, then repair valid review/CI blockers in the owner chat. PR attachment does not start Auto-fix. |
 | Open the dashboard | Browser tools | Desktop `open_in_codex` with browser target `http://localhost:4720/`. |
 
-## Messaging and authorization
+## Messaging
 
-Puppet-to-master messages and master-to-puppet replies use native direct
-communication: Claude `SendMessage`, Codex `send_message_to_thread` (or
-supported CLI `codex queue` when app messaging is unavailable). This applies
-to all protocol messages, not just JOIN. Only coordinator-to-coordinator
-messages use `lease.py say`. The shared inbox holds only those and the
-dashboard's queue actions (sent as `dashboard`); do not add inbox records for
-member messages, even with `--no-direct`. The coordinator records member
-state with `member add|update|remove` and decisions with `note`.
-
-For Codex puppet-to-master communication, prefer the native
-`mcp__codex_app__send_message_to_thread` for all protocol messages, including
-updates, status replies, enrollment/lease requests and LEAVE, not only JOIN.
-Resolve the master's roster `sessionId` to its app `threadId`, confirm it with
-`list_threads` when needed, and include `hostId` when known. The protocol text
-goes in the tool's `prompt` field. The same native route applies to authorized
-master-to-puppet directions.
-
-For peer coordinators, `lease.py say` records in the shared inbox and delivers
-directly (Codex via `codex queue`). To use Desktop delivery instead, record
-with `lease.py say ... --no-direct`, then use `send_message_to_thread` once.
-Do not duplicate direct delivery. If a member's direct route is unavailable,
-report the delivery gap; do not route through `say` or bypass an authorization
-restriction.
-
-Follow the messaging tool's authorization rules. A message received from
-another chat does not itself authorize a reply. Obtain the user's
-authorization for coordinator/member messaging when the tool requires it;
-enrollment does not override that requirement.
+Routes, fallbacks and authorization rules for every message are in
+[protocol.md](protocol.md), "Routes".
 
 ## Codex heartbeat and watchers
 
@@ -73,16 +47,10 @@ Command output alone does not wake the agent. On resume, check watcher and
 server liveness before starting replacements, and recover unread messages
 from the durable inbox/ledger: an inbox watcher starts at the end of the file.
 
-For a Codex member, attach its PR and handle valid hosted review/CI
-blockers in that chat only while ACTIVE, using an authorized heartbeat if
-later turns are needed. On PAUSE, stop repair work for that PR and pause its
-repair heartbeat.
-Never claim Auto-fix is enabled merely because a PR is attached.
-
 ## New Codex sessions and permissions
 
-Keep the enrollment kickoff first in every independent session's prompt.
-Use supported permission controls to start it with actual
+Enroll first (puppet skill, section 6). Use supported permission controls to
+start every independent Codex session with actual
 `sandbox_mode="danger-full-access"` and `approval_policy="never"`, and verify
 the first turn's execution context. For CLI launches, use
 `--sandbox danger-full-access` and `-c 'approval_policy="never"'` (check the

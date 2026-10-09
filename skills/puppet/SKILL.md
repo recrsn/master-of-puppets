@@ -12,9 +12,12 @@ or shared inbox; you send messages, and the coordinator records them. The
 explicit exception is `lease.py release` for your own lease, which updates
 lease state and measurement history. Do not release someone else's lease.
 
-For Claude/Codex tool equivalents, read
-[agents.md](../master-of-puppets/references/agents.md). Claude-specific
-Auto-fix instructions below apply to Codex as PR attachment and owner-led repair.
+**Every child task starts enrolled** (section 6).
+
+Read [agents.md](../master-of-puppets/references/agents.md) for Claude/Codex
+tool equivalents and session ids, and the "Routes" section of
+[protocol.md](../master-of-puppets/references/protocol.md) for how to message
+your coordinator.
 
 Below, `lease.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/lease.py"`.
 If the file does not exist, no coordinator
@@ -29,8 +32,7 @@ session that should coordinate.
   `focus` covers your task. A coordinator is live while its heartbeat is newer
   than 40 minutes. When none fits, or several do, ask the user.
 - Your name: the one from the kickoff line, else your session title as a short
-  slug. Claude uses `$CLAUDE_CODE_SESSION_ID`; Codex uses `$CODEX_THREAD_ID`
-  when exported, otherwise the current app thread ID (see `agents.md`).
+  slug. Your session id: `agents.md`.
 
 ## 2. Join
 
@@ -40,37 +42,18 @@ Send one message to the coordinator:
 JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs <n> (base <b>) ... — <phase> — <planned heavy commands>
 ```
 
-Routes:
-- Claude to Claude coordinator: `SendMessage` to its session name from `ListAgents`
-  (or its session id). Use this for every protocol message, not only JOIN.
-- Codex puppet to Codex master: prefer the native inter-thread communicator,
-  `mcp__codex_app__send_message_to_thread`, whenever available and authorized.
-  Resolve the master's thread ID from its roster `sessionId`; use
-  `mcp__codex_app__list_threads` to confirm the destination and obtain `hostId`
-  when needed. Send `{threadId: <master thread id>, hostId: <host if known>,
-  prompt: <protocol message>}`.
-- CLI to a Codex coordinator, when native app messaging is unavailable:
-  `codex queue --thread <master thread id> --message "<protocol message>"`,
-  when supported and authorized. For cross-tool communication, use an
-  available supported direct route for the recipient. If none exists, report
-  the delivery gap; do not substitute `lease.py say`.
-- After Claude `/clear`, or moving to a new Codex thread, send JOIN again
-  with the new ID. Codex context compaction alone is not a new thread.
-
-Use the matching native route for every puppet-to-master message: JOIN,
-UPDATE, MERGED, USER SYNC, STATUS replies, ENROLL REQUEST, LEASE REQUEST,
-LEASE RELEASED and LEAVE. Master-to-puppet replies use the same direct routes. Only messages
-between coordinators use `lease.py say`; puppets do not write shared inbox
-records, even with `--no-direct`. Use a supported direct fallback only when
-native messaging is unavailable, never to bypass an authorization restriction.
-Follow the messaging tool's authorization requirements; another chat's request
-alone is not user authorization.
+Send it, and every later message (UPDATE, MERGED, USER SYNC, STATUS replies,
+ENROLL REQUEST, LEASE REQUEST, LEASE RELEASED, LEAVE), by the direct route
+for your coordinator's tool (`protocol.md`, "Routes"). Never use `lease.py say`
+and never write shared inbox records, even with `--no-direct`. When your
+session id changes, send JOIN again (`protocol.md`, "Routes").
 
 Wait for WELCOME. It tells you whether leases are on and gives the rules,
 including the project rules from the coordinator's memory. You can read them
 yourself with `lease.py memory list --project-root "$PWD"`; only the
 coordinator writes them. If the user tells you a new project rule, send it as
-`USER SYNC` so the coordinator records it.
+`USER SYNC` so the coordinator records it. Do not work a PR until the
+coordinator sends ACTIVE or PAUSE for it.
 
 ## 3. Work under directions
 
@@ -89,14 +72,12 @@ never by a relay.
   turn. Passing checks is not the end of the task. If the user's instructions
   need approval before a commit or a PR (for example a `CLAUDE.md` rule), ask
   the user at once and send `UPDATE — <name> — Waiting to commit — <fact>`.
-  Never report the task complete with uncommitted changes. Claude owners bind it
-  with `ccd_pr`; turn on Auto-fix only while the PR is ACTIVE. Codex owners
+  Claude owners bind the PR with `ccd_pr`; turn on Auto-fix only while the PR
+  is ACTIVE. Codex owners
   use `attach_artifact` with the PR URL and repair valid hosted review/CI
   blockers only while ACTIVE; attachment does not enable Auto-fix. PAUSE
   takes precedence over repair instructions. The coordinator enables auto-merge
   and retargets bases. You do every commit, push, conflict fix and review reply.
-- Sync with the base branch the way the project's rules (in WELCOME) or the
-  user say.
 - Report raw failures. Never weaken tests or rerun flakes to green.
 
 ## 4. Report
@@ -135,21 +116,21 @@ never by a relay.
    failure so the coordinator can keep the next E2E grant blocked.
 5. Project rules in WELCOME (from the coordinator's memory) can widen what
    needs a lease, for example a commit whose hooks run lint. Follow them.
-6. No lease needed: a plain dependency install, source edits, reading code,
-   browser-only work against remote sites, unless a class or a project rule
-   covers it.
+6. What needs no lease: `leases.md`, "Classes", in the coordinator skill.
 
 ## 6. Start a new task
 
-Before you start any session (a `spawn_task` chip, `codex exec`,
-`codex "<prompt>"`, `claude -p`, a cloud handoff), send
-`ENROLL REQUEST — <task> — PR <n>` and wait for the kickoff line. Put it first
-in the new prompt: it tells the new session to run `/puppet` and join the same
-coordinator, so every task you start becomes a member too, and so does every
-task it starts. Never start a session without it. Codex Desktop `create_thread`
-requires the user's explicit request for a new chat. Verify actual Full access
-before dispatch (see `agents.md`); keep dispatch pending if unsupported.
-Subagents (Claude `Agent`, Codex `collaboration.spawn_agent`) need no enrollment.
+Every child task starts with puppet enrollment. Before you start any session,
+send `ENROLL REQUEST — <task> — PR <n>` and wait for the kickoff line. This
+covers every route: a `spawn_task` chip, a new Codex thread (`codex exec`,
+`codex "<prompt>"`), `claude -p`, a cloud handoff, a scheduled task, and a
+task you suggest for the user to start. Put the kickoff line first in the new
+prompt, before any other text. It tells the new session to run `/puppet` and
+join the same coordinator, so every task you start becomes a member too, and
+so does every task it starts. Never start a session without it. If the
+coordinator does not answer, wait; do not start the session unenrolled.
+Codex Desktop `create_thread` requires the user's explicit request for a new
+chat; Codex permissions for new sessions are in `agents.md`. Subagents (Claude `Agent`, Codex `collaboration.spawn_agent`) need no enrollment.
 
 ## 7. Leave
 

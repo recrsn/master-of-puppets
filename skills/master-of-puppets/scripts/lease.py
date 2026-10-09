@@ -648,7 +648,8 @@ def kickoff_line(coord, name, parent):
     return (
         f"{KICKOFF_MARK} — {coord} has enrolled you as member {name}{by}. "
         f"First action: run /puppet and send {coord} your JOIN message as {name}; "
-        f"then follow {coord}'s directions."
+        f"then follow {coord}'s directions. Start every child task you create with "
+        f"puppet enrollment: send {coord} an ENROLL REQUEST and put its kickoff line first in the new prompt."
     )
 
 
