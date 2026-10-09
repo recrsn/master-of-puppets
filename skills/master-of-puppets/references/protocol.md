@@ -120,6 +120,10 @@ in the ledger; member messages need no shared inbox copy.
     `crossSessionInbound` to `accept` for that session; never change it yourself.
   - The socket frame names the receiver's current session id. `/clear` mints a
     new one, so a coordinator that clears must refresh its roster session ID.
+- Dashboard to coordinator: the dashboard's queue buttons run
+  `lease.py up|unwait --notify`, which records an inbox message from
+  `dashboard` to each affected coordinator and delivers it directly, as `say`
+  does. It reports the user's action (`references/leases.md`).
 - If no supported direct route to a member or its coordinator is available,
   report the delivery gap. Do not use `say` as a member-message fallback.
 - Deep links for the dashboard: Claude `claude://claude.ai/epitaxy/<sessionId>`,
