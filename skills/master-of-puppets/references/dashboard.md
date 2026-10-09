@@ -19,10 +19,14 @@ live-update script). It follows the system light or dark theme.
 Layout, desk mode: the header shows CPU, memory, swap and disk meters, a
 Desk/Wall switch and a Ledger button. "Needs you" comes first, worst first:
 host alarms, expired leases, stale coordinators, decisions, blocked tasks and
-members with no update for 30 min. One card per task holds all its reasons.
-Then the work board groups the other tasks by state (Done is collapsed). The
-side column shows lease timelines and queues (only when leases are on or in
-use), then the coordinators with their links and notes. The Ledger button
+members with no update for 30 min. One card per task holds all its reasons,
+with a chip for its stream. Then the work board groups the other tasks by
+stream (open streams in roster order, then "No stream"), and by state inside
+each stream (Done is collapsed). Each stream header shows its label, owner,
+open tasks, tasks under Needs you and its goal. With no streams, the board
+groups by state only. The side column shows lease timelines and queues (only
+when leases are on or in use), then the coordinators with their open streams,
+links and notes. The Ledger button
 opens the newest 20 shared-ledger entries in a drawer.
 
 Each queued lease entry has Move up and Cancel buttons (Cancel asks first).
@@ -31,8 +35,53 @@ They run `lease.py up|unwait --notify`, which tells each affected coordinator
 server accepts these posts only from its own page.
 
 Wall mode is the same data, large, for a shared screen: host tiles, the
-"need you" count and cards, task counts by state and the lease timelines.
+"need you" count and cards, task counts by state and by stream, and the lease
+timelines.
 Open `http://localhost:4720/?mode=wall`; the page keeps the last mode.
+
+## Writing for the dashboard
+
+The user reads the dashboard in a few seconds. Every text on it must be
+concise and readable. This applies to the state file, `member update`,
+`decision add`, `note` (the ledger drawer) and lease `--holder` names.
+
+| Field | Limit | Says |
+| --- | --- | --- |
+| stream `label` | 4 words (40 characters, enforced) | The goal's name: "Repo access security". |
+| stream `goal` | 1 sentence (140 characters, enforced) | What done means for the stream. |
+| task `name` | 6 words | What the task is. Not its status. |
+| `phase` | 5 words | The current step: "In review", "Waiting for BUILD", "Auto-merge on". |
+| `latest` | 1 sentence, 20 words | The newest fact and, if useful, the next step. |
+| decision `text` | 1 question, 25 words | What the user must decide, and where (PR number). |
+| `notes` | 3 per coordinator, 1 sentence each | Cross-task facts the user must know. Remove a note when it is no longer true. |
+| ledger `note` | 2 sentences | What happened, the result, the next step. |
+| lease `--holder` | task id + 5 words | "S9 typecheck and unit tests". |
+
+Do:
+- Use plain words, active voice and present tense.
+- Write PRs as `#123` and times as `14:05Z`, only when they help.
+- Replace `latest`; do not add to it. It holds only the newest fact.
+- Put detail behind a link (PR, report file, session), not in the text.
+
+Do not:
+- Write full commit SHAs (use 7 characters, only when the user needs it),
+  test counts, file paths, command lines, lease or queue IDs, or stack traces.
+- Repeat the phase, the task name or the time in `latest`; the dashboard
+  already shows them. No "STATUS 18:35Z:" prefixes.
+- Write lists of steps, internal reasoning or your tool's process.
+
+Example:
+
+- Too long: "B1 from main 54c56d84eca: bot-contracts queue-pause contract;
+  agent-platform store/control/workflow/routes behind
+  ENABLE_CODING_QUEUE_PAUSE_ON_STOP (off); Handler client/router +
+  resumeQueuedMessages boundary + authz entry. Edit-only subagents; one BUILD
+  request next."
+- Good: phase "Editing B1", latest "Queue pause on Stop is behind a flag (off).
+  Next: one BUILD run."
+
+When a member's UPDATE is long, shorten it before `member update`. Keep the
+full text in your own notes if you need it.
 
 ## Your state file
 
@@ -53,6 +102,7 @@ coordinator slug; it labels your section and your decisions.
       "id": "S9",
       "name": "Short task name",
       "phase": "Active · auto-merge on",
+      "stream": "repo-access",
       "kind": "ok",
       "latest": "One line: newest fact, with PR number.",
       "session": "claude://claude.ai/epitaxy/<sessionId>",
@@ -64,6 +114,9 @@ coordinator slug; it labels your section and your decisions.
 }
 ```
 
+- `stream` is a stream slug from `lease.py stream add`. `enroll` and
+  `member add|update --stream` set it; the roster's member entry has it too.
+  Streams live in `roster.json` under `streams`, not in this file.
 - `kind` sets the work group: `warn` (Blocked, also listed under Needs you),
   `work` (In progress), `ok` (On track), `done` (Done).
 - A decision may be a string `"S2: text"`; the task id before the colon

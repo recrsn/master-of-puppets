@@ -109,12 +109,21 @@ Use native direct messaging for member communication: Claude `SendMessage`,
 Codex `send_message_to_thread` or a supported direct CLI route. Reserve
 `lease.py say` for messages between coordinators (`references/protocol.md`).
 
-- **JOIN** arrives: `lease.py member add --coordinator <slug> --name <name> --tool <t> --session-id <id> --worktree <p> --task "<task>" --pr <n> --repo <owner/repo> --session <deep link>`,
+- **Streams**: group your members by goal, so the user can tell the work apart
+  on the dashboard (for example "Repo access security" and "Scope UX"). A
+  stream is a named goal; it may own several PR stacks. Create one per goal:
+  `lease.py stream add --coordinator <slug> --name <stream-slug> --label "<4 words>" [--goal "<one sentence>"] [--pr <n> ...]`.
+  Give every member a stream with `--stream` on `enroll` and `member add|update`.
+  Close a stream when its goal is done: `lease.py stream close`. Stream slugs are
+  unique on the machine; only the owner changes a stream.
+- **JOIN** arrives: `lease.py member add --coordinator <slug> --name <name> --tool <t> --session-id <id> --worktree <p> --task "<task>" --pr <n> --repo <owner/repo> --session <deep link> --stream <stream-slug>`,
   then send WELCOME (`references/protocol.md`).
 - **UPDATE, STATUS reply or MERGED**: `lease.py member update --coordinator <slug> --name <name> --phase "<phase>" --kind ok|work|warn|done --latest "<newest fact>" [--pr ...]`.
-  This also updates the member's row on the dashboard.
+  This also updates the member's row on the dashboard. Keep `--phase` and
+  `--latest` short; shorten a long UPDATE first (`references/dashboard.md`,
+  "Writing for the dashboard").
 - **ENROLL REQUEST**, or a task you start yourself:
-  `lease.py enroll --coordinator <slug> --task "<one line>" [--by <member>] [--pr <n>]`.
+  `lease.py enroll --coordinator <slug> --task "<one line>" --stream <stream-slug> [--by <member>] [--pr <n>]`.
   The printed kickoff line tells the new session to run `/puppet` and join you
   under its enrolled name. Put it first in the prompt of every task you start,
   or send it back to the member that asked. Tasks your members start get one
@@ -129,7 +138,17 @@ Codex `send_message_to_thread` or a supported direct CLI route. Reserve
 - **Pending entries**: check them each round. One still pending after 30
   minutes is a task that never started (a chip not clicked) or a child that did
   not send JOIN: ask the starter, then `lease.py member remove`.
-- **LEAVE**: `lease.py member remove --coordinator <slug> --name <name>`.
+- **Done** means every PR of the task is MERGED, or the user dropped the task,
+  or the task changes no code (an investigation) and its answer is reported.
+  Passing checks is not done. When a member reports code that is complete but
+  has no PR, keep it `--kind work --phase "Ready to commit"` and tell it to
+  commit, push and open the PR. When it waits for the user's permission to
+  commit, add a decision (`<id>: commit and open the PR?`) so the user sees it
+  under Needs you. Never mark a member done, or tell it LEAVE is fine, while it
+  has uncommitted changes or an open PR.
+- **LEAVE**: confirm the task is done (above), then
+  `lease.py member remove --coordinator <slug> --name <name>`. A LEAVE with
+  uncommitted work or an open PR: ask why first, and ask the user when unsure.
 - **Decisions for the user**: `lease.py decision add --by <slug> --task <id> --text "..." [--href <link>]`;
   `decision clear --by <slug> --task <id>` once answered.
 
