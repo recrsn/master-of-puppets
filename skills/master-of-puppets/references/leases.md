@@ -119,11 +119,9 @@ Coordinators never run `up` themselves.
 
 ## Rules members get wrong
 
-- **Use it or return it.** A lease covers the granted commands and cleanup
-  of resources they started. Stop owned E2E servers before release, including
-  on failure, and report cleanup failures. No edits or repairs while holding
-  it. On failure: clean up owned resources, release promptly with the raw
-  failure, repair without a lease, queue again at the back.
+The member's side of a lease ("use it or return it", E2E cleanup, release) is
+in the puppet skill, section 5. The coordinator's side:
+
 - **Expired is not free.** An expired lease still holds its memory. Ask its
   holder. If the holder is gone, check for its processes and ask the user
   before a takeover. Never kill a process yourself.

@@ -14,11 +14,9 @@ the user asks to reconfigure.
 
 Nothing is written into the repository.
 
-Claude uses `AskUserQuestion` for the question groups below. Codex uses
-`functions.request_user_input_async` when available, or
-`functions.request_user_input` only when allowed by the current mode and tool
-instructions; split groups to fit the tool's question limit. Ordinary chat is
-the fallback. Wait for required choices before writing their configuration.
+Ask the question groups below with the agent's question tool
+(`agents.md`, "Ask setup questions"). Wait for required choices before
+writing their configuration.
 
 ## 1. Detect
 
@@ -32,7 +30,7 @@ gh repo view --json defaultBranchRef,squashMergeAllowed,mergeCommitAllowed,rebas
 
 ## 2. Machine questions (only when `machine` is unconfigured)
 
-Ask these four questions using the agent's question tool. Put the recommended option
+Ask these four questions. Put the recommended option
 first and add "(Recommended)" to its label.
 
 1. **Memory reserve** (header "RAM floor"): GiB kept free for the OS, apps and
@@ -62,7 +60,7 @@ tunnel), add each with `lease.py config set-class` (`references/leases.md`).
 
 ## 3. Project questions (only when `project` is unconfigured)
 
-Ask these four questions using the agent's question tool:
+Ask these four questions:
 
 1. **Memory peaks** (header "Peaks"): Learn: start at BUILD 10 GiB and E2E
    8 GiB, then measure each lease with `lease.py measure-peak` (Recommended).
@@ -98,12 +96,8 @@ learn mode stays at the starting values.
 
 ## Using the values
 
-- Lease limits: split a request longer than `maxMinutesEffective` from
-  `lease.py config show --project-root <worktree>`.
-- Merging: use `baseBranch` where the stack steps say `main`. Run
-  `gh pr merge --auto --<mergeMethod>`; for `auto`, run `gh pr merge --auto`
-  with no method flag (the merge queue or the repository default applies).
+- Merging: use `baseBranch` where the stack steps say `main`, and
+  `mergeMethod` in SKILL.md, "Driving a stack", step 2.
 - Leases default: at coordinator start, when no coordinator has set leases
   and the project says `on`, ask the user before you run `lease.py leases on`.
-- Disk: when `lease.py host-check` prints `disk_low=yes`, stop BUILD grants and
-  propose removing unused worktrees.
+- Lease limits and the disk floor: `references/leases.md`.
