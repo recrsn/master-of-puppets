@@ -72,6 +72,10 @@ in the ledger; member messages need no shared inbox copy.
   `collaboration.followup_task` for new work). These IDs are not app thread IDs.
 - Coordinator to coordinator only:
   `lease.py say --from <name> --to <name> --message "<text>"`
+  Send only what the other coordinator must act on: handoffs, blockers, order
+  changes, rule changes. Do not send acknowledgements of acknowledgements or
+  per-step progress such as "acquired" or "released"; `events.log` already
+  shows them.
   (omit `--to` to reach every live coordinator). It appends to `inbox.jsonl`
   (`lease.py watch inbox` shows it), then delivers directly: a Claude session
   through its inbox socket, a Codex thread through `codex queue`.

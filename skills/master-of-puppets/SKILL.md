@@ -241,7 +241,13 @@ BUILD lease", "this repo merges through a merge queue".
 ## Reporting to the user
 
 Lead with what changed or what needs them. Keep the table short: task, PR,
-state, next step. Auto-merge on, queued and MERGED are different states;
+state, next step.
+
+Report fully only on a merge, a blocker, an idle or stalled lease slot, a host
+alarm, or a decision for the user. Routine events need no report: a lease
+wait, acquire or release, a watcher re-arm, a first PR reading, a peer's
+acknowledgement. Answer them in a few words or not at all, and batch them
+into the next real report. Auto-merge on, queued and MERGED are different states;
 report the exact one. Quote raw failures. Never ask a member to weaken a test
 or rerun a flake to green. When you make a mistake, say so and how you fixed
 it. When you stop, stop your watchers and heartbeat schedule, run
