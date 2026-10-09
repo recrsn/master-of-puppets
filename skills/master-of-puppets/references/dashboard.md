@@ -94,7 +94,7 @@ coordinator slug; it labels your section and your decisions.
 {
   "updated": "12:05Z",
   "coordinator": {"label": "<slug> session", "href": "claude://claude.ai/epitaxy/<sessionId>"},
-  "decisions": [{"task": "S2", "text": "Approve the new DB migration in #123."}],
+  "decisions": [{"task": "S2", "text": "Accept #123 without a local E2E?"}],
   "notes": ["#124 and the billing stack both touch the settings schema; billing goes first."],
   "links": [{"label": "Notes", "href": "file:///path/to/scratch.md"}],
   "tasks": [

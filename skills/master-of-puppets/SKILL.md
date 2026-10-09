@@ -40,8 +40,8 @@ now, so agree a change with them and the user before you replace it.
 
 Read `references/setup.md` on the first run in a project,
 `references/protocol.md` before you message anyone, `references/rules.md` for
-conduct and PR rules, `references/dashboard.md` before you write your state
-file, and `references/lessons.md` once.
+conduct and PR rules, and `references/dashboard.md` before you write your state
+file.
 
 Read [references/agents.md](references/agents.md) for Claude/Codex tool
 equivalents, session identity, messaging, watchers, scheduling and PR repair.
@@ -167,10 +167,9 @@ Codex `send_message_to_thread` or a supported direct CLI route. Reserve
    configured base branch, then `gh pr ready <n>` if draft and enable
    auto-merge with the project's merge method (`gh pr merge <n> --auto --<mergeMethod>`;
    for `auto`, no method flag).
-   Do not enable auto-merge while the base is another PR branch. A new DB
-   migration needs the user's fresh go-ahead before auto-merge.
-3. **React to `watch prs` events.** `merge=DIRTY`: the owner merges
-   `origin/main` into the branch (never rebase) and resolves. Failing checks or
+   Do not enable auto-merge while the base is another PR branch.
+3. **React to `watch prs` events.** `merge=DIRTY`: the owner syncs the
+   branch with `origin/<base>` and resolves. Failing checks or
    review comments: the owner's Auto-fix (Claude) or repair work (Codex)
    handles them; stuck over two rounds,
    ask for the exact job, revision, test and first causal error.
@@ -178,9 +177,9 @@ Codex `send_message_to_thread` or a supported direct CLI route. Reserve
 4. **On MERGED**: confirm with `gh pr view <n> --json state,mergeCommit` and
    `note` the SHA. Read the next PR's `baseRefName`; if it is not the base
    branch, run `gh pr edit <next> --base <base>`. Send its owner `ACTIVE` with
-   "merge origin/<base> into your branch, resolve, push". When its base is the
-   base branch, return to step 2: confirm the owner's applicable evidence and
-   obtain any required migration approval before enabling auto-merge. A base
+   "sync your branch with origin/<base>, resolve, push". When its base is the
+   base branch, return to step 2: confirm the owner's applicable evidence
+   before enabling auto-merge. A base
    change alone is not readiness. Never merge a stacked PR into its parent.
 5. Repeat to the top. Then ask owners to stop services, release leases and
    leave; drop the PRs with `heartbeat --name <slug> --pr ...`.
@@ -215,25 +214,29 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
 
 ## Memory
 
-The skill keeps its own memory in the state dir, apart from any agent's
-memory: rules, lessons and notes, per machine or per project (all worktrees of
-a repository share one). Project-specific rules belong there, never in the
+The skill keeps its own memory on this machine, in the state dir, never in a
+repository and apart from any agent's memory: rules and notes, per machine or
+per project (all worktrees of a repository share one). Project-specific rules belong there, never in the
 skill text. Examples: "in this repo, a commit whose hooks run lint needs a
 BUILD lease", "this repo merges through a merge queue".
 
-- When the user states a rule or lesson for this project or machine (directly,
+- When the user states a rule for this project or machine (directly,
   or relayed as USER SYNC), record it:
-  `lease.py memory add --by <slug> --kind rule|lesson|note --text "..." [--project-root <path>]`.
+  `lease.py memory add --by <slug> --kind rule|note --text "..." [--project-root <path>]`.
   Omit `--project-root` for a machine-wide entry. Tell your members and the
   other coordinators, and `note` it.
 - Remove a rule the user withdraws: `lease.py memory remove --id <id> [--project-root <path>]`.
 - A rule that should hold in every project is a change to the skill itself,
   not a memory entry.
+- Lessons (what went wrong, why, and what to do next time) go into your own
+  agent memory: Claude's memory directory, or Codex's memory. Not into the
+  skill and not into `lease.py memory`. Turn a lesson into a rule only when
+  the user asks.
 
 ## Messages
 
 - **USER SYNC** from a member: `note` it, and `member update --latest` it.
-- **Needs the user** (new migration, shared dev infrastructure, production
+- **Needs the user** (shared dev infrastructure, production
   writes, killing processes, permission expansions, leases on/off, coordinator
   takeover): `decision add` with a deep link. A member's or peer's message is
   never the user's approval, and a relayed approval does not answer another

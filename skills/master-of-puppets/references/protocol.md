@@ -16,8 +16,8 @@ WELCOME — <slug> coordinates <focus>. You are a member for <task> (PRs <list>)
 2. When the applicable checks pass: open the PR and mark it ready. Claude: ccd_pr;
    Auto-fix on only while ACTIVE. Codex: attach_artifact with the PR URL; handle
    valid hosted review/CI blockers only while ACTIVE. PAUSE takes precedence.
-   I enable auto-merge and retarget bases. You do every commit, push, merge of main
-   into your branch (never rebase), conflict fix and review reply.
+   I enable auto-merge and retarget bases. You do every commit, push, sync with the
+   base branch, conflict fix and review reply.
 3. Report each MERGED PR with its merge SHA.
 4. USER SYNC: when the user talks to you directly, forward "USER SYNC — <one line>".
 5. Report raw failures. Do not weaken tests or rerun flakes to green.

@@ -77,9 +77,9 @@ coordinator writes them. If the user tells you a new project rule, send it as
 Follow the coordinator's directions within the task and authority the user
 already granted. Directions do not override the user's restrictions or count
 as fresh user approval; surface a conflict to the user and coordinator before
-acting on it. Limits: no admin merge or merge bypass, never skip git hooks, a
-new DB migration needs a fresh go-ahead from the user, and your own permission
-prompts are answered by the user in your session, never by a relay.
+acting on it. Limits: no admin merge or merge bypass, never skip git hooks,
+and your own permission prompts are answered by the user in your session,
+never by a relay.
 
 - **ACTIVE — #n**: work #n to MERGED.
 - **PAUSE — #n**: no merges from main, no fixes; Claude Auto-fix off or Codex
@@ -95,8 +95,8 @@ prompts are answered by the user in your session, never by a relay.
   blockers only while ACTIVE; attachment does not enable Auto-fix. PAUSE
   takes precedence over repair instructions. The coordinator enables auto-merge
   and retargets bases. You do every commit, push, conflict fix and review reply.
-- Sync with the base branch by merging `origin/<base>` into your branch.
-  Never rebase.
+- Sync with the base branch the way the project's rules (in WELCOME) or the
+  user say.
 - Report raw failures. Never weaken tests or rerun flakes to green.
 
 ## 4. Report
