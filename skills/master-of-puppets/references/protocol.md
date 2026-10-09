@@ -30,7 +30,11 @@ WELCOME — <slug> coordinates <focus>. You are a member for <task> (PRs <list>)
    on each change. Before you start an independent session (chip, Codex thread), send
    ENROLL REQUEST — <task> — PR <n>; I reply with a kickoff line for its prompt.
    Subagents remain part of your enrollment and need no separate kickoff.
-9. When done: stop services, release leases, send LEAVE — <name>.
+9. Done means every PR of your task is MERGED, or the user dropped the task.
+   Passing checks is not done: commit, push and open the PR. If you need the
+   user's permission to commit, ask the user at once and send
+   UPDATE — <name> — Waiting to commit — <fact>.
+   When done: stop services, release leases, send LEAVE — <name>.
 ```
 
 ## Lease addendum (only when leases are on)

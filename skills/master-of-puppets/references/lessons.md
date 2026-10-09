@@ -17,6 +17,11 @@ explains why. Lessons that hold only for one machine or project go into
 - **Auto-merge reported as merged.** "Auto-merge on" was reported as done, and
   the PR then sat blocked. Fix: report the exact state; finish only
   on MERGED with a SHA.
+- **Passing checks taken as done.** A member's code passed its final checks
+  but was not committed, because the user's rules needed approval for a
+  commit. The coordinator marked it done and told it LEAVE was fine, so no PR
+  was opened. Fix: done means every PR is MERGED; a member that waits to
+  commit asks the user, and the coordinator adds a decision.
 - **Directions conflict with user restrictions.** A coordinator's PR direction
   conflicted with a member's original "do not open a PR until asked" prompt.
   Fix: clarify the user's authorization before acting; coordination directions

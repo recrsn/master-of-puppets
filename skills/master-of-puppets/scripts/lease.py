@@ -75,10 +75,16 @@ Roster and members (coordinators write; members send messages and release their 
   coordinate --name C --tool claude|codex --session-id ID --focus TEXT [--pr N ...] [--takeover]
   heartbeat --name C [--focus TEXT] [--pr N ...] | resign --name C
   leases on|off --by C            machine-wide; only on the user's word
-  enroll --coordinator C --task TEXT [--by MEMBER] [--name NAME] [--pr N ...]
+  stream add|update --coordinator C --name SLUG [--label TEXT] [--goal TEXT] [--pr N ...]
+  stream close|reopen --coordinator C --name SLUG | stream list [--coordinator C]
+       a stream is a named goal (one or more PR stacks) that groups members on the
+       dashboard. The slug is unique on the machine; only its coordinator changes it.
+       add needs --label (at most 40 characters); --goal at most 140.
+  enroll --coordinator C --task TEXT [--by MEMBER] [--name NAME] [--pr N ...] [--stream SLUG]
        registers a task before it starts and prints the kickoff line for its prompt
   member add|update --coordinator C --name NAME [--tool] [--session-id] [--worktree] [--task]
        [--pr N ...] [--repo owner/repo] [--status] [--phase] [--kind] [--latest] [--session URL]
+       [--stream SLUG]   (--stream "" clears it)
        updates the roster and the member's row in dashboard/<C>-state.json
   member remove --coordinator C --name NAME
   member stale --coordinator C [--minutes 30]   members (not done) with no update for N minutes
@@ -604,6 +610,7 @@ def load_roster():
     roster.setdefault("leases", "off")
     roster.setdefault("coordinators", {})
     roster.setdefault("members", {})
+    roster.setdefault("streams", {})
     return roster
 
 
@@ -720,6 +727,16 @@ def roster_cmd(args):
         log(f"resign {args.name}")
         note(args.name, "resigned")
         return 0
+    if args.cmd == "stream":
+        return stream_cmd(args, roster)
+    stream = getattr(args, "stream", None)
+    if stream:
+        if stream not in roster["streams"]:
+            print(f"no stream named {stream}; create it with lease.py stream add")
+            return 3
+        if roster["streams"][stream].get("status") == "closed":
+            print(f"stream {stream} is closed; reopen it first")
+            return 3
     cur = coords.get(args.coordinator)
     members = roster["members"].setdefault(args.coordinator, [])
     if not live(cur):
@@ -735,10 +752,11 @@ def roster_cmd(args):
             "parent": args.by or args.coordinator,
             "task": args.task,
             "prs": args.pr or [],
+            "stream": stream or "",
             "enrolledAt": now().isoformat(),
         })
         save_roster(roster)
-        upsert_task(args.coordinator, name, {"name": args.task, "phase": "Enrolled, not started", "kind": "work"})
+        upsert_task(args.coordinator, name, {"name": args.task, "phase": "Enrolled, not started", "kind": "work", "stream": stream or ""})
         note(args.coordinator, f"{name} enrolled (started by {args.by or args.coordinator}): {args.task}")
         print(kickoff_line(args.coordinator, name, args.by))
         return 0
@@ -771,7 +789,8 @@ def roster_cmd(args):
     elif m is None:
         print(f"{args.name} is not a member of {args.coordinator}")
         return 3
-    for flag, field in (("tool", "tool"), ("session_id", "sessionId"), ("worktree", "worktree"), ("task", "task"), ("status", "status")):
+    for flag, field in (("tool", "tool"), ("session_id", "sessionId"), ("worktree", "worktree"), ("task", "task"), ("status", "status"),
+                        ("stream", "stream")):
         if getattr(args, flag, None) is not None:
             m[field] = getattr(args, flag)
     if args.pr is not None:
@@ -779,7 +798,8 @@ def roster_cmd(args):
     m["updatedAt"] = now().isoformat()
     save_roster(roster)
     row = {}
-    for flag, field in (("task", "name"), ("phase", "phase"), ("kind", "kind"), ("latest", "latest"), ("worktree", "worktree"), ("session", "session")):
+    for flag, field in (("task", "name"), ("phase", "phase"), ("kind", "kind"), ("latest", "latest"), ("worktree", "worktree"), ("session", "session"),
+                        ("stream", "stream")):
         if getattr(args, flag, None) is not None:
             row[field] = getattr(args, flag)
     if args.pr is not None and args.repo:
@@ -789,6 +809,58 @@ def roster_cmd(args):
     upsert_task(args.coordinator, args.name, row)
     if args.mcmd == "add":
         note(args.coordinator, f"{args.name} joined: {m.get('task', '')} (PRs {' '.join('#' + str(n) for n in m.get('prs', [])) or 'none'})")
+    return 0
+
+
+def stream_cmd(args, roster):
+    """Streams: named goals that group members on the dashboard. Only the owning coordinator changes one."""
+    streams = roster["streams"]
+    if args.scmd == "list":
+        rows = {n: s for n, s in streams.items() if not args.coordinator or s.get("coordinator") == args.coordinator}
+        print(json.dumps(rows, indent=1))
+        return 0
+    if not SLUG.match(args.name):
+        print("--name must be a lowercase slug, for example repo-access")
+        return 2
+    for flag, limit in (("label", 40), ("goal", 140)):
+        text = getattr(args, flag, None)
+        if text is not None and len(text) > limit:
+            print(f"--{flag} must be at most {limit} characters; it is shown on the dashboard")
+            return 2
+    cur = streams.get(args.name)
+    if not live(roster["coordinators"].get(args.coordinator)):
+        print(json.dumps({"no_live_coordinator": args.coordinator}))
+        return 3
+    if args.scmd == "add":
+        if cur:
+            print(json.dumps({"stream_exists": {args.name: cur}}))
+            return 3
+        if not args.label:
+            print("stream add needs --label")
+            return 2
+        cur = streams[args.name] = {"coordinator": args.coordinator, "label": args.label, "goal": args.goal or "",
+                                    "prs": args.pr or [], "status": "open", "createdAt": now().isoformat()}
+    elif not cur:
+        print(f"no stream named {args.name}")
+        return 3
+    elif cur.get("coordinator") != args.coordinator:
+        print(json.dumps({"owned_by": cur.get("coordinator"), "stream": args.name}))
+        return 3
+    elif args.scmd == "update":
+        for flag in ("label", "goal"):
+            if getattr(args, flag) is not None:
+                cur[flag] = getattr(args, flag)
+        if args.pr is not None:
+            cur["prs"] = args.pr
+    else:
+        cur["status"] = "closed" if args.scmd == "close" else "open"
+    cur["updatedAt"] = now().isoformat()
+    save_roster(roster)
+    log(f"stream {args.scmd} {args.name} by={args.coordinator}")
+    if args.scmd in ("add", "close", "reopen"):
+        verb = {"add": "opened", "close": "closed", "reopen": "reopened"}[args.scmd]
+        note(args.coordinator, f"stream {args.name} {verb}: {cur['label']}")
+    print(json.dumps({args.name: cur}, indent=1))
     return 0
 
 
@@ -1323,6 +1395,7 @@ def main():
         mx.add_argument("--kind", choices=("ok", "work", "warn", "done"))
         mx.add_argument("--latest")
         mx.add_argument("--session", help="deep link for the dashboard")
+        mx.add_argument("--stream", help='stream slug; "" clears it')
     mr = msub.add_parser("remove")
     mr.add_argument("--coordinator", required=True)
     mr.add_argument("--name", required=True)
@@ -1335,6 +1408,19 @@ def main():
     en.add_argument("--task", required=True)
     en.add_argument("--name")
     en.add_argument("--pr", type=int, action="append")
+    en.add_argument("--stream", help="stream slug (lease.py stream add)")
+    sm = sub.add_parser("stream")
+    ssub = sm.add_subparsers(dest="scmd", required=True)
+    for name in ("add", "update", "close", "reopen"):
+        sx = ssub.add_parser(name)
+        sx.add_argument("--coordinator", required=True)
+        sx.add_argument("--name", required=True)
+        if name in ("add", "update"):
+            sx.add_argument("--label", help="at most 40 characters, about 4 words")
+            sx.add_argument("--goal", help="one sentence, at most 140 characters")
+            sx.add_argument("--pr", type=int, action="append", help="replaces the PR list")
+    sl = ssub.add_parser("list")
+    sl.add_argument("--coordinator")
     wh = sub.add_parser("whoami")
     wh.add_argument("--session-id", required=True)
     sub.add_parser("host-check")
@@ -1382,7 +1468,7 @@ def main():
 
     lock()
     try:
-        if args.cmd in ("roster", "coordinate", "heartbeat", "resign", "leases", "member", "enroll", "whoami"):
+        if args.cmd in ("roster", "coordinate", "heartbeat", "resign", "leases", "member", "enroll", "whoami", "stream"):
             return roster_cmd(args)
         if args.cmd == "config":
             return config_cmd(args)

@@ -85,7 +85,11 @@ prompts are answered by the user in your session, never by a relay.
 - **PAUSE — #n**: no merges from main, no fixes; Claude Auto-fix off or Codex
   repair heartbeat paused on #n until ACTIVE.
 - When the applicable checks pass (see `references/rules.md` in the
-  coordinator skill): open the PR and mark it ready. Claude owners bind it
+  coordinator skill): commit, push, open the PR and mark it ready, in the same
+  turn. Passing checks is not the end of the task. If the user's instructions
+  need approval before a commit or a PR (for example a `CLAUDE.md` rule), ask
+  the user at once and send `UPDATE — <name> — Waiting to commit — <fact>`.
+  Never report the task complete with uncommitted changes. Claude owners bind it
   with `ccd_pr`; turn on Auto-fix only while the PR is ACTIVE. Codex owners
   use `attach_artifact` with the PR URL and repair valid hosted review/CI
   blockers only while ACTIVE; attachment does not enable Auto-fix. PAUSE
@@ -99,7 +103,9 @@ prompts are answered by the user in your session, never by a relay.
 
 - `UPDATE — <name> — <phase> — <newest fact>` on each change, and at least
   every 30 minutes while you work. The coordinator checks on silent members
-  each round, but your report is the record.
+  each round, but your report is the record. It goes on the dashboard: keep
+  the phase to 5 words and the fact to one plain sentence of 20 words. Write
+  PRs as `#123`. No SHAs, test counts, paths or commands.
 - `MERGED — #<n> — <merge sha>` for each merged PR.
 - `USER SYNC — <one line>` whenever the user talks to you directly. The
   coordinator must know every decision.
@@ -147,5 +153,9 @@ Subagents (Claude `Agent`, Codex `collaboration.spawn_agent`) need no enrollment
 
 ## 7. Leave
 
-When your work is done: stop your services, release any lease, send
-`LEAVE — <name>`.
+Your work is done when every PR of your task is MERGED, or the user drops the
+task. Then stop your services, release any lease, send `LEAVE — <name>`.
+
+Do not leave with uncommitted changes or an open PR. If the coordinator says
+you are done while you have either, reply with what is left (for example
+`UPDATE — <name> — Ready to commit — no PR yet`) and stay a member.

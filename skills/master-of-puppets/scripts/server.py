@@ -321,13 +321,26 @@ def render_page(host):
         last = m.get("updatedAt") or m.get("joinedAt") or m.get("enrolledAt")
         return parse(last) if last else None
 
+    streams = roster.get("streams", {})
+
+    def stream_of(coord, task_id):
+        t = tasks.get((coord, task_id)) or {}
+        return t.get("stream") or (member_of.get((coord, task_id)) or {}).get("stream") or ""
+
+    def stream_label(slug):
+        return (streams.get(slug) or {}).get("label") or slug
+
+    def stream_chip(slug):
+        return f'<a class="chip" href="#stream-{e(slug)}" title="Stream {e(slug)}">{e(stream_label(slug))}</a>' if slug else ""
+
     # ---- needs you: everything that needs a person, one card per task, worst first
     needs = {}
 
     def need(key, sev, reason, **card):
         n = needs.get(key)
         if n is None:
-            n = needs[key] = {"sev": sev, "reasons": [], "asks": [], "id": "", "title": "", "status": "", "coord": "", "when": None, "href": ""}
+            n = needs[key] = {"sev": sev, "reasons": [], "asks": [], "id": "", "title": "", "status": "", "coord": "", "when": None,
+                              "href": "", "stream": ""}
             n.update(card)
         elif SEV_ORDER[sev] < SEV_ORDER[n["sev"]]:
             n["sev"] = sev
@@ -338,7 +351,7 @@ def render_page(host):
     def task_need(coord, task_id, sev, reason):
         t = tasks[(coord, task_id)]
         return need(("task", coord, task_id), sev, reason, id=task_id, title=t.get("name", ""), status=t.get("latest", ""),
-                    coord=coord, when=last_update(coord, task_id), href=t.get("session", ""))
+                    coord=coord, when=last_update(coord, task_id), href=t.get("session", ""), stream=stream_of(coord, task_id))
 
     tiles = host_tiles(host)
     for t in tiles:
@@ -377,12 +390,13 @@ def render_page(host):
                 continue
             if m.get("status") == "pending":
                 need(("member", coord, m["name"]), "warning", f"Not joined · enrolled {ago(last, now)}", id=m["name"],
-                     title=m.get("task", ""), status=f"Enrolled by {m.get('parent') or coord}", coord=coord, when=last)
+                     title=m.get("task", ""), status=f"Enrolled by {m.get('parent') or coord}", coord=coord, when=last,
+                     stream=m.get("stream", ""))
             elif (coord, m["name"]) in tasks:
                 task_need(coord, m["name"], "warning", f"No update for {since(last, now)}")
             else:
                 need(("member", coord, m["name"]), "warning", f"No update for {since(last, now)}", id=m["name"],
-                     title=m.get("task", ""), coord=coord, when=last)
+                     title=m.get("task", ""), coord=coord, when=last, stream=m.get("stream", ""))
     need_list = sorted(needs.values(), key=lambda n: SEV_ORDER[n["sev"]])
     worst = "danger" if any(n["sev"] == "critical" for n in need_list) else "warn" if need_list else "ok"
 
@@ -390,7 +404,8 @@ def render_page(host):
         return f'<div class="reasons">{"".join(f"<span>{e(r)}</span>" for r in n["reasons"])}</div>'
 
     def need_card(n):
-        idl = (f'<span class="id">{e(n["id"])}</span>' if n["id"] else "") + (f'<span class="ttl">{e(n["title"])}</span>' if n["title"] else "")
+        idl = (stream_chip(n["stream"]) + (f'<span class="id">{e(n["id"])}</span>' if n["id"] else "")
+               + (f'<span class="ttl">{e(n["title"])}</span>' if n["title"] else ""))
         side = who(n["coord"], n["when"]) + open_button(n["href"])
         return (
             f'<article class="need{" critical" if n["sev"] == "critical" else ""}"><div class="need-main">{reasons_html(n)}'
@@ -403,10 +418,11 @@ def render_page(host):
     def wall_card(n):
         ident = f'<span class="id">{e(n["id"])}</span>' if n["id"] else ""
         agent = f'<div class="agent {agent_class(tool_of(n["coord"]))}"><i class="sw"></i>{e(n["coord"])}</div>' if n["coord"] else ""
+        chip = f'<span class="chip">{e(stream_label(n["stream"]))}</span>' if n["stream"] else ""
         return (f'<article class="wneed{" critical" if n["sev"] == "critical" else ""}">{reasons_html(n)}'
-                f'<div class="wt">{ident}{e(n["title"])}</div>{agent}</article>')
+                f'<div class="wt">{ident}{e(n["title"])}</div><div class="wmeta">{chip}{agent}</div></article>')
 
-    # ---- work board: tasks not under Needs you, grouped by work state
+    # ---- work board: tasks not under Needs you, grouped by stream, then by work state
     def task_row(coord, t):
         tid = t.get("id", "")
         name = e(t.get("name", ""))
@@ -425,19 +441,53 @@ def render_page(host):
             + f"</div>{who(coord, last_update(coord, tid))}</article>"
         )
 
+    def state_groups(items, key):
+        out = ""
+        for kind, dot, label in KINDS:
+            rows = [task_row(coord, t) for coord, t in items if kind_of(t) == kind]
+            if not rows:
+                continue
+            head = f'<span class="dot {dot}"></span>{label}<span class="n">{len(rows)}</span>'
+            inner = f'<div class="card list">{"".join(rows)}</div>'
+            board_part = (f'<details class="grp" id="grp-done-{e(key)}"><summary class="grp-h">{head}</summary>{inner}</details>' if kind == "done"
+                          else f'<div class="grp"><div class="grp-h">{head}</div>{inner}</div>')
+            out += board_part
+        return out
+
     rest = [(coord, t) for (coord, tid), t in tasks.items() if ("task", coord, tid) not in needs]
     listed = sum(1 for k in needs if k[0] == "task")
+    in_stream = {}  # slug -> (open tasks, tasks under Needs you)
+    for (coord, tid), t in tasks.items():
+        slug = stream_of(coord, tid)
+        if kind_of(t) != "done":
+            total, waiting = in_stream.get(slug, (0, 0))
+            in_stream[slug] = (total + 1, waiting + (("task", coord, tid) in needs))
+    shown = [slug for slug, st in streams.items() if st.get("status") != "closed" or slug in in_stream]
+    shown += [slug for slug in in_stream if slug and slug not in streams]
     board = ""
-    for kind, dot, label in KINDS:
-        rows = [task_row(coord, t) for coord, t in rest if kind_of(t) == kind]
-        if not rows:
-            continue
-        head = f'<span class="dot {dot}"></span>{label}<span class="n">{len(rows)}</span>'
-        inner = f'<div class="card list">{"".join(rows)}</div>'
-        board += (f'<details class="grp" id="grp-done"><summary class="grp-h">{head}</summary>{inner}</details>' if kind == "done"
-                  else f'<div class="grp"><div class="grp-h">{head}</div>{inner}</div>')
+    if shown:
+        for slug in shown + [""]:
+            items = [(coord, t) for coord, t in rest if stream_of(coord, t.get("id", "")) == slug]
+            total, waiting = in_stream.get(slug, (0, 0))
+            if not slug and not items:
+                continue
+            st = streams.get(slug, {})
+            owner = st.get("coordinator", "")
+            head = (
+                f'<div class="stream-h"><h3>{e(stream_label(slug)) if slug else "No stream"}</h3>'
+                + (f'<span class="agent {agent_class(tool_of(owner))}"><i class="sw"></i>{e(owner)}</span>' if owner else "")
+                + f'<span class="n">{total} open</span>'
+                + (f'<span class="sm warn">{waiting} under Needs you</span>' if waiting else "")
+                + ('<span class="sm t3">closed</span>' if st.get("status") == "closed" else "") + "</div>"
+                + (f'<p class="stream-goal">{e(st["goal"])}</p>' if st.get("goal") else "")
+            )
+            body = state_groups(items, slug or "none") or f'<p class="sm t3">{"All open tasks are under Needs you." if total else "No tasks."}</p>'
+            board += f'<section class="stream" id="stream-{e(slug or "none")}">{head}{body}</section>'
+    else:
+        board = state_groups(rest, "all")
     board = board or '<p class="t3">No tasks.</p>'
-    work_note = f"{len(rest)} tasks" + (f" · {listed} under Needs you" if listed else "")
+    work_note = (f"{len(rest)} tasks" + (f" in {len([x for x in shown if x])} streams" if shown else "")
+                 + (f" · {listed} under Needs you" if listed else ""))
 
     # ---- leases: a timeline per class, then every held and queued entry
     leases_on = roster.get("leases") == "on" or any(holders(leases, c) or queue.get(c) for c in classes)
@@ -566,6 +616,12 @@ def render_page(host):
                 + (f'<ul class="notes">{"".join(f"<li>{e(n)}</li>" for n in notes)}</ul>' if notes else "")
                 + "</details>"
             )
+        owned = [slug for slug, st in streams.items() if st.get("coordinator") == name and st.get("status") != "closed"]
+        owned_html = "".join(
+            f'<a href="#stream-{e(slug)}">{e(stream_label(slug))}</a><span class="n">{in_stream.get(slug, (0, 0))[0]}</span>'
+            for slug in owned
+        )
+        more = (f'<div class="c-streams">{owned_html}</div>' if owned else "") + more
         coord_rows += (
             f'<div class="coord" id="coord-{e(name)}"><div class="c-h"><i class="sw {agent_class(tool_of(name))}"></i>{label}'
             f'<span class="sm {"ok" if live else "danger"}">{"live" if live else "stale"}</span>'
@@ -616,12 +672,20 @@ def render_page(host):
         f'<div class="count"><b>{sum(1 for t in tasks.values() if kind_of(t) == kind)}</b><span><span class="dot {dot}"></span>{label}</span></div>'
         for kind, dot, label in KINDS[:3]
     )
+    wall_streams = "".join(
+        f'<div class="wstream"><span class="wl">{e(stream_label(slug)) if slug else "No stream"}</span>'
+        f'<span class="t2">{in_stream.get(slug, (0, 0))[0]} open</span>'
+        + (f'<span class="warn">{in_stream[slug][1]} need you</span>' if in_stream.get(slug, (0, 0))[1] else "") + "</div>"
+        for slug in shown + ([""] if "" in in_stream else [])
+    ) if shown else ""
     wall = (
         f'<main class="wall"><div class="w-host">{"".join(host_wall(t) for t in tiles)}</div>'
         f'<section class="w-needs"><div class="w-count"><b class="{worst}">{len(need_list)}</b>'
         f'<span>{"needs you" if len(need_list) == 1 else "need you"}</span></div>'
         + "".join(wall_card(n) for n in need_list)
-        + f'<div class="counts">{counts}</div></section>{wall_leases}</main>'
+        + f'<div class="counts">{counts}</div>'
+        + (f'<div class="wstreams"><h2>Streams</h2>{wall_streams}</div>' if wall_streams else "")
+        + f'</section>{wall_leases}</main>'
     )
     drawer = (
         '<div class="scrim" data-ledger-close></div><aside class="drawer" aria-label="Ledger"><div class="drawer-h">'
