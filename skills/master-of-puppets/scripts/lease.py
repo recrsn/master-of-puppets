@@ -92,9 +92,10 @@ Roster and members (coordinators write; members send messages and release their 
   note --by C --text TEXT [--pr N]   shared ledger
 
 Memory (the skill's own memory; coordinators write it, everyone reads it)
-  memory add --by NAME --text TEXT [--kind rule|lesson|note] [--project-root P]
+  memory add --by NAME --text TEXT [--kind rule|note] [--project-root P]
   memory list [--project-root P] [--json]      machine entries, then the project's
   memory remove --id ID [--project-root P]
+       Stored on this machine, in the state dir, never in a repository.
        Machine scope: memory/machine.json. Project scope (with --project-root):
        memory/<project-key>.json, shared by every worktree of the repository.
        Project-specific rules (for example which git hooks need a lease) live here,
@@ -1349,7 +1350,7 @@ def main():
     ma = mesub.add_parser("add")
     ma.add_argument("--by", required=True)
     ma.add_argument("--text", required=True)
-    ma.add_argument("--kind", choices=("rule", "lesson", "note"), default="rule")
+    ma.add_argument("--kind", choices=("rule", "note"), default="rule")
     ma.add_argument("--project-root")
     ml = mesub.add_parser("list")
     ml.add_argument("--project-root")
