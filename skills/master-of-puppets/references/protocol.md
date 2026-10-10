@@ -73,7 +73,9 @@ in the ledger; member messages need no shared inbox copy.
 - Coordinator to coordinator only:
   `lease.py say --from <name> --to <name> --message "<text>"`
   Send only what the other coordinator must act on: handoffs, blockers, order
-  changes, rule changes. Do not send acknowledgements of acknowledgements or
+  changes, rule changes. A general coordinator's one `WORK REQUEST` gets a
+  `HANDOFF` reply only from a coordinator with work to spare (SKILL.md, "When
+  your work is done"). Do not send acknowledgements of acknowledgements or
   per-step progress such as "acquired" or "released"; `events.log` already
   shows them.
   (omit `--to` to reach every live coordinator). It appends to `inbox.jsonl`

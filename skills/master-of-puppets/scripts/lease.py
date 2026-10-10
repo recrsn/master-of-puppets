@@ -72,10 +72,14 @@ Leases (coordinators)
 
 Roster and members (coordinators write; members send messages and release their own leases)
   roster | whoami --session-id ID
-  coordinate --name C --tool claude|codex --session-id ID --focus TEXT [--pr N ...] [--takeover]
-  heartbeat --name C [--focus TEXT] [--pr N ...] | resign --name C
+  coordinate --name C --tool claude|codex --session-id ID --focus TEXT [--pr N ...] [--takeover] [--general]
+       --general: a general-purpose coordinator with no fixed scope
+  heartbeat --name C [--focus TEXT] [--pr N ...] [--status active|idle] | resign --name C
+       --status idle: no open work. Refused (exit 3) while C owns PRs or has members
+       that are not done. An idle coordinator is not reported stale.
   leases on|off --by C            machine-wide; only on the user's word
   stream add|update --coordinator C --name SLUG [--label TEXT] [--goal TEXT] [--pr N ...]
+       update --owner C2 hands the stream to live coordinator C2
   stream close|reopen --coordinator C --name SLUG | stream list [--coordinator C]
        a stream is a named goal (one or more PR stacks) that groups members on the
        dashboard. The slug is unique on the machine; only its coordinator changes it.
@@ -702,6 +706,8 @@ def roster_cmd(args):
                 "prs": args.pr or [],
                 "since": now().isoformat(),
                 "heartbeat": now().isoformat(),
+                "status": "active",
+                "general": args.general,
             }
             roster["members"].setdefault(args.name, [])
             save_roster(roster)
@@ -721,6 +727,15 @@ def roster_cmd(args):
                 cur["prs"] = args.pr
             if args.focus:
                 cur["focus"] = args.focus
+            if args.status == "idle":
+                open_members = [m["name"] for m in roster["members"].get(args.name, []) if m.get("status") != "done"]
+                if cur.get("prs") or open_members:
+                    print(json.dumps({"not_idle": {"prs": cur.get("prs", []), "members": open_members}}))
+                    return 3
+            if args.status and args.status != cur.get("status", "active"):
+                cur["status"] = args.status
+                log(f"{args.status} {args.name}")
+                note(args.name, f"{args.name} is {args.status}")
             cur["heartbeat"] = now().isoformat()
             save_roster(roster)
             return 0
@@ -745,6 +760,10 @@ def roster_cmd(args):
         alive = {n: c["focus"] for n, c in coords.items() if live(c)}
         print(json.dumps({"no_live_coordinator": args.coordinator, "live": alive}))
         return 3
+    if args.cmd in ("enroll", "member") and cur.get("status") == "idle" and getattr(args, "mcmd", "add") == "add":
+        cur["status"] = "active"
+        log(f"active {args.coordinator}")
+        note(args.coordinator, f"{args.coordinator} is active")
     if args.cmd == "enroll":
         name = args.name or f"{re.sub(r'[^a-z0-9]+', '-', args.task.lower()).strip('-')[:24].strip('-')}-{os.urandom(2).hex()}"
         members[:] = [m for m in members if m["name"] != name]
@@ -849,11 +868,17 @@ def stream_cmd(args, roster):
         print(json.dumps({"owned_by": cur.get("coordinator"), "stream": args.name}))
         return 3
     elif args.scmd == "update":
+        if args.owner and not live(roster["coordinators"].get(args.owner)):
+            print(json.dumps({"no_live_coordinator": args.owner}))
+            return 3
         for flag in ("label", "goal"):
             if getattr(args, flag) is not None:
                 cur[flag] = getattr(args, flag)
         if args.pr is not None:
             cur["prs"] = args.pr
+        if args.owner and args.owner != args.coordinator:
+            cur["coordinator"] = args.owner
+            note(args.coordinator, f"stream {args.name} handed to {args.owner}")
     else:
         cur["status"] = "closed" if args.scmd == "close" else "open"
     cur["updatedAt"] = now().isoformat()
@@ -1371,10 +1396,12 @@ def main():
     co.add_argument("--focus", required=True)
     co.add_argument("--pr", type=int, action="append")
     co.add_argument("--takeover", action="store_true", help="replace a live coordinator of the same name (user approval only)")
+    co.add_argument("--general", action="store_true", help="general-purpose coordinator with no fixed scope")
     hb = sub.add_parser("heartbeat")
     hb.add_argument("--name", required=True)
     hb.add_argument("--focus")
     hb.add_argument("--pr", type=int, action="append")
+    hb.add_argument("--status", choices=("active", "idle"))
     rs = sub.add_parser("resign")
     rs.add_argument("--name", required=True)
     ls = sub.add_parser("leases")
@@ -1421,6 +1448,8 @@ def main():
             sx.add_argument("--label", help="at most 40 characters, about 4 words")
             sx.add_argument("--goal", help="one sentence, at most 140 characters")
             sx.add_argument("--pr", type=int, action="append", help="replaces the PR list")
+        if name == "update":
+            sx.add_argument("--owner", help="hand the stream to this live coordinator")
     sl = ssub.add_parser("list")
     sl.add_argument("--coordinator")
     wh = sub.add_parser("whoami")
