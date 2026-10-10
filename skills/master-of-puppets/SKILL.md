@@ -72,6 +72,8 @@ skill; `references/protocol.md` lists the coordinator side.
    means the machine or project is not configured yet: follow
    `references/setup.md` (detect, then ask setup questions) before step 2.
 2. Claim: `lease.py coordinate --name <slug> --tool <claude|codex> --session-id <session-or-thread-id> --focus "<stack in a few words>" --pr <n> [...]`.
+   Add `--general` when the user asked you to coordinate with no fixed stack
+   or scope (a general-purpose coordinator).
    Exit 3 means the name or a PR belongs to a live coordinator: join it with `/puppet`, or
    agree a split with it by message.
 3. Read the skill's memory: `lease.py memory list --project-root "$PWD"`
@@ -94,6 +96,7 @@ skill; `references/protocol.md` lists the coordinator side.
    every member, because members forget to send updates. Keep it running
    while you coordinate, and verify it after a context reset. Without
    it, members and peers see you as gone, and silent members go unnoticed.
+   Only an idle coordinator stops it ("When your work is done").
 6. Run `python3 -I <skill>/scripts/server.py` in the background (a no-op when
    one runs) and give the user `http://localhost:4720/`.
 7. Tell the other coordinators: `lease.py say --from <slug> --message "<slug> coordinates <focus>, PRs ..."`.
@@ -203,6 +206,38 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    its deep link. Check pending entries ("Members and tasks").
 6. Report meaningful changes or decisions to the user: decisions first, then
    the table. A Codex heartbeat stays quiet when nothing actionable changed.
+
+## When your work is done
+
+Your work is done when you own no open PR and every member is done or has
+left ("Done" in "Members and tasks").
+
+1. **General coordinator** (`--general`): just before you go idle, ask the
+   other coordinators once for work:
+   `lease.py say --from <slug> --message "WORK REQUEST — <slug> is free for a stream, a task or PRs"`.
+   Send it only this once; never repeat it. Wait until your next heartbeat
+   round. A HANDOFF reply: take the work (below) and stay active. No handoff:
+   go idle. A scoped coordinator sends no work request.
+2. **Go idle**: `lease.py heartbeat --name <slug> --status idle` (refused while
+   you own a PR or have a member who is not done). Then stop your heartbeat
+   schedule and watchers, and tell the user once: "<slug> is idle; nothing is
+   open." The dashboard shows you as idle. Nobody flags an idle coordinator as
+   stale or without updates, and peers do not chase it.
+3. **New work later** comes only from the user, or from a HANDOFF in reply to
+   your one request. `lease.py heartbeat --name <slug> --status active` (an
+   `enroll` or `member add` also does it), then re-arm the watchers and the
+   heartbeat schedule ("Coordinator start", steps 4 and 5).
+
+**A WORK REQUEST from a peer**: reply only when you have work to hand off: a
+stream without enough members, a task not yet started, or a PR without an
+active owner. Send `HANDOFF — <what> — PRs <n> — streams <slug> — members <names>`.
+When the peer agrees:
+- `lease.py stream update --coordinator <you> --name <stream> --owner <peer>`.
+- Drop the PRs with `heartbeat --name <you> --pr ...`; the peer claims them
+  with `heartbeat --name <peer> --pr ...`.
+- Tell each moved member to send JOIN to the peer; then `member remove`.
+- Both coordinators `note` the handoff.
+With nothing to hand off, do not reply.
 
 ## Memory
 

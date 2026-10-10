@@ -363,7 +363,7 @@ def render_page(host):
                 need(("lease", h["id"]), "critical", f"Expired {cls} lease · {ago(parse(h['expiresAt']), now)}",
                      id=h["id"], title=h.get("holder", ""), coord=h.get("coordinator", ""))
     for name, c in coords.items():
-        if not coord_live(c):
+        if not coord_live(c) and c.get("status") != "idle":
             hb = f"Last heartbeat {ago(parse(c['heartbeat']), now)}" if c.get("heartbeat") else "No heartbeat"
             need(("coord", name), "critical", "Stale coordinator", title=name, status=hb, coord=name,
                  href=(sources.get(name, {}).get("coordinator") or {}).get("href", ""))
@@ -624,8 +624,10 @@ def render_page(host):
         more = (f'<div class="c-streams">{owned_html}</div>' if owned else "") + more
         coord_rows += (
             f'<div class="coord" id="coord-{e(name)}"><div class="c-h"><i class="sw {agent_class(tool_of(name))}"></i>{label}'
-            f'<span class="sm {"ok" if live else "danger"}">{"live" if live else "stale"}</span>'
-            f'<span class="c-m">{len(mlist) - pending} members{f" · {pending} pending" if pending else ""}'
+            + (f'<span class="sm t3">idle</span>' if c.get("status") == "idle"
+               else f'<span class="sm {"ok" if live else "danger"}">{"live" if live else "stale"}</span>')
+            + ('<span class="sm t3">general</span>' if c.get("general") else "")
+            + f'<span class="c-m">{len(mlist) - pending} members{f" · {pending} pending" if pending else ""}'
             f' · <span class="mono">{e(src.get("updated", "?"))}</span></span></div>'
             + (f'<p class="c-s">{e(c["focus"])}</p>' if c.get("focus") else "") + more + "</div>"
         )
