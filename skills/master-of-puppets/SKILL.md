@@ -209,8 +209,10 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
 
 ## When your work is done
 
-Your work is done when you own no open PR and every member is done or has
-left ("Done" in "Members and tasks").
+Go idle when no work can move: every member is done, has left, or is paused
+because the user parked its work. Parked work stays yours: you keep its PRs
+and paused members, and the dashboard marks them "Parked". An active or
+pending member keeps you active.
 
 1. **General coordinator** (`--general`): just before you go idle, ask the
    other coordinators once for work:
@@ -219,14 +221,16 @@ left ("Done" in "Members and tasks").
    round. A HANDOFF reply: take the work (below) and stay active. No handoff:
    go idle. A scoped coordinator sends no work request.
 2. **Go idle**: `lease.py heartbeat --name <slug> --status idle` (refused while
-   you own a PR or have a member who is not done). Then stop your heartbeat
-   schedule and watchers, and tell the user once: "<slug> is idle; nothing is
-   open." The dashboard shows you as idle. Nobody flags an idle coordinator as
+   a member is active or pending; it lists parked PRs and members). Then stop
+   your heartbeat schedule and watchers, and tell the user once: "<slug> is
+   idle" and what is parked, waiting for the user. The dashboard shows you as
+   idle. Nobody flags an idle coordinator as
    stale or without updates, and peers do not chase it.
-3. **New work later** comes only from the user, or from a HANDOFF in reply to
-   your one request. `lease.py heartbeat --name <slug> --status active` (an
-   `enroll` or `member add` also does it), then re-arm the watchers and the
-   heartbeat schedule ("Coordinator start", steps 4 and 5).
+3. **New work later** comes only from the user (new work, or resuming parked
+   work), or from a HANDOFF in reply to your one request.
+   `lease.py heartbeat --name <slug> --status active` (an `enroll`, a
+   `member add` or `member update --status active` also does it), then re-arm
+   the watchers and the heartbeat schedule ("Coordinator start", steps 4 and 5).
 
 **A WORK REQUEST from a peer**: reply only when you have work to hand off: a
 stream without enough members, a task not yet started, or a PR without an
