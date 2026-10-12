@@ -428,7 +428,8 @@ def render_page(host):
         name = e(t.get("name", ""))
         title = (f'<a class="ttl" href="{e(t["session"])}" title="Open session">{name}</a>' if t.get("session")
                  else f'<span class="ttl">{name}</span>')
-        meta = [f'<span class="t1">{e(t["phase"])}</span>'] if t.get("phase") else []
+        meta = ['<span class="warn">Parked</span>'] if (member_of.get((coord, tid)) or {}).get("status") == "paused" else []
+        meta += [f'<span class="t1">{e(t["phase"])}</span>'] if t.get("phase") else []
         when = task_eta(tid) or t.get("eta", "")
         if when:
             meta.append(f'<span class="mono t2">{e(when)}</span>')
@@ -603,6 +604,7 @@ def render_page(host):
         live = coord_live(c)
         mlist = members.get(name, [])
         pending = sum(1 for m in mlist if m.get("status") == "pending")
+        paused = sum(1 for m in mlist if m.get("status") == "paused")
         href = (src.get("coordinator") or {}).get("href", "")
         label = (f'<a class="c-n" href="{e(href)}" title="Open coordinator session">{e(name)}</a>' if href
                  else f'<span class="c-n">{e(name)}</span>')
@@ -624,7 +626,7 @@ def render_page(host):
         more = (f'<div class="c-streams">{owned_html}</div>' if owned else "") + more
         coord_rows += (
             f'<div class="coord" id="coord-{e(name)}"><div class="c-h"><i class="sw {agent_class(tool_of(name))}"></i>{label}'
-            + (f'<span class="sm t3">idle</span>' if c.get("status") == "idle"
+            + (f'<span class="sm t3">idle{f" · {paused} parked" if paused else ""}</span>' if c.get("status") == "idle"
                else f'<span class="sm {"ok" if live else "danger"}">{"live" if live else "stale"}</span>')
             + ('<span class="sm t3">general</span>' if c.get("general") else "")
             + f'<span class="c-m">{len(mlist) - pending} members{f" · {pending} pending" if pending else ""}'

@@ -26,8 +26,9 @@ each stream (Done is collapsed). Each stream header shows its label, owner,
 open tasks, tasks under Needs you and its goal. With no streams, the board
 groups by state only. The side column shows lease timelines and queues (only
 when leases are on or in use), then the coordinators with their open streams,
-links and notes. An idle coordinator shows "idle", not "stale", and raises no
-alarm; a general-purpose one shows "general". The Ledger button
+links and notes. An idle coordinator shows "idle" (with its count of parked
+members), not "stale", and raises no alarm; a general-purpose one shows
+"general". A paused member's task row shows "Parked". The Ledger button
 opens the newest 20 shared-ledger entries in a drawer.
 
 Each queued lease entry has Move up and Cancel buttons (Cancel asks first).

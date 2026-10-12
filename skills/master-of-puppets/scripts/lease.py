@@ -75,8 +75,9 @@ Roster and members (coordinators write; members send messages and release their 
   coordinate --name C --tool claude|codex --session-id ID --focus TEXT [--pr N ...] [--takeover] [--general]
        --general: a general-purpose coordinator with no fixed scope
   heartbeat --name C [--focus TEXT] [--pr N ...] [--status active|idle] | resign --name C
-       --status idle: no open work. Refused (exit 3) while C owns PRs or has members
-       that are not done. An idle coordinator is not reported stale.
+       --status idle: no work can move. Refused (exit 3) while a member is active or
+       pending. Paused members and their PRs stay C's as parked work. An idle
+       coordinator is not reported stale; resuming a member wakes it.
   leases on|off --by C            machine-wide; only on the user's word
   stream add|update --coordinator C --name SLUG [--label TEXT] [--goal TEXT] [--pr N ...]
        update --owner C2 hands the stream to live coordinator C2
@@ -728,10 +729,14 @@ def roster_cmd(args):
             if args.focus:
                 cur["focus"] = args.focus
             if args.status == "idle":
-                open_members = [m["name"] for m in roster["members"].get(args.name, []) if m.get("status") != "done"]
-                if cur.get("prs") or open_members:
-                    print(json.dumps({"not_idle": {"prs": cur.get("prs", []), "members": open_members}}))
+                mlist = roster["members"].get(args.name, [])
+                moving = [m["name"] for m in mlist if m.get("status") not in ("done", "paused")]
+                if moving:
+                    print(json.dumps({"not_idle": {"members": moving}}))
                     return 3
+                parked = [m["name"] for m in mlist if m.get("status") == "paused"]
+                if parked or cur.get("prs"):
+                    print(json.dumps({"parked": {"prs": cur.get("prs", []), "members": parked}}))
             if args.status and args.status != cur.get("status", "active"):
                 cur["status"] = args.status
                 log(f"{args.status} {args.name}")
@@ -760,7 +765,8 @@ def roster_cmd(args):
         alive = {n: c["focus"] for n, c in coords.items() if live(c)}
         print(json.dumps({"no_live_coordinator": args.coordinator, "live": alive}))
         return 3
-    if args.cmd in ("enroll", "member") and cur.get("status") == "idle" and getattr(args, "mcmd", "add") == "add":
+    wakes = args.cmd == "enroll" or (args.cmd == "member" and (args.mcmd == "add" or (args.mcmd == "update" and args.status in ("active", "pending"))))
+    if wakes and cur.get("status") == "idle":
         cur["status"] = "active"
         log(f"active {args.coordinator}")
         note(args.coordinator, f"{args.coordinator} is active")
