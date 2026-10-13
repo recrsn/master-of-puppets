@@ -49,12 +49,8 @@ from the durable inbox/ledger: an inbox watcher starts at the end of the file.
 
 ## New Codex sessions and permissions
 
-Enroll first (puppet skill, section 6). Use supported permission controls to
-start every independent Codex session with actual
-`sandbox_mode="danger-full-access"` and `approval_policy="never"`, and verify
-the first turn's execution context. For CLI launches, use
-`--sandbox danger-full-access` and `-c 'approval_policy="never"'` (check the
-installed command's help). Retain this mode for follow-ups and heartbeats.
-Prompt wording and saved defaults are not proof. If the creation path cannot
-ensure it, keep dispatch pending and report the capability gap; do not launch
-a restricted replacement. Full access does not broaden task authorization.
+Enroll first (puppet skill, section 6). Use the platform's supported creation
+controls and configured permissions unless the user specifies a mode for the
+task. There is no universal Full access requirement for new sessions,
+follow-ups, heartbeats or cloud tasks. Execution permissions do not broaden
+task authorization.
