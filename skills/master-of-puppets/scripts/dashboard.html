@@ -158,6 +158,10 @@ a.chip:hover{color:var(--text-color-cui-primary)}
 .q-act{display:flex;gap:4px;margin-top:4px;margin-left:-8px}
 .ghost.cancel:hover{background:var(--background-color-cui-danger-subtle);color:var(--text-color-cui-danger)}
 .ghost:disabled{opacity:.5;cursor:progress}
+.row-side{margin-left:auto;display:flex;align-items:center;gap:12px}
+.parkform{display:inline-flex;align-items:center;gap:6px;padding:4px 6px;border-radius:6px;background:var(--background-color-cui-subtle)}
+.parkform input{height:24px;padding:0 6px;border:1px solid var(--border-color-cui-neutral);border-radius:4px;background:var(--background-color-cui-base-2);color:var(--text-color-cui-primary);font:500 12px/16px var(--font-cui-sans)}
+.parkform .hint{font:400 12px/16px var(--font-cui-sans);color:var(--text-color-cui-tertiary)}
 .toast{position:fixed;left:50%;bottom:20px;z-index:30;transform:translateX(-50%);max-width:min(640px,calc(100% - 40px));display:flex;flex-direction:column;gap:2px;padding:10px 14px;border-radius:8px;background:var(--background-color-cui-base-2);box-shadow:var(--shadow-cui-xl),0 0 0 1px var(--border-color-cui-neutral);font-size:12px;line-height:16px;color:var(--text-color-cui-secondary)}
 .toast b{font-size:14px;line-height:20px;font-weight:500;color:var(--text-color-cui-primary)} .toast.bad b{color:var(--text-color-cui-danger)}
 .qempty{padding:8px 0;border-top:1px solid var(--border-color-cui-neutral)}
@@ -240,6 +244,8 @@ html[data-ledger] .scrim{display:block} html[data-ledger] .drawer{display:flex}
   // The page body is replaced on each update; this state lives outside it.
   const open = new Set(JSON.parse(localStorage.getItem("mop-open") || "[]"));
   let ledgerTop = 0;
+  // An open Park form: {coord, name, until}; redrawn after each body swap.
+  let parkForm = null;
 
   const paint = (h) => {
     if (!h || !h.tiles) return;
@@ -292,12 +298,57 @@ html[data-ledger] .scrim{display:block} html[data-ledger] .drawer{display:flex}
     }
   };
 
+  const post = async (url, body, btn) => {
+    if (btn) btn.disabled = true;
+    try {
+      const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json", "X-Requested-By": "dashboard"},
+                                  body: JSON.stringify(body)});
+      const res = await r.json().catch(() => ({ok: false, lines: [`HTTP ${r.status}`]}));
+      showToast(res.ok, res.lines);
+      return res.ok;
+    } catch (err) {
+      showToast(false, ["Request failed", String(err)]);
+      return false;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  };
+  const findPark = (coord, name) =>
+    [...document.querySelectorAll('[data-park="park"]')].find((b) => b.dataset.coord === coord && b.dataset.name === name);
+  const drawParkForm = () => {
+    document.querySelector(".parkform")?.remove();
+    if (!parkForm) return;
+    const anchor = findPark(parkForm.coord, parkForm.name);
+    if (!anchor) return;
+    const f = document.createElement("span");
+    f.className = "parkform";
+    const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    f.innerHTML = '<input type="date" aria-label="Park until"><button type="button" class="ghost" data-park-go>Park</button>' +
+                  '<button type="button" class="ghost cancel" data-park-cancel>Cancel</button><span class="hint">no date: until unparked</span>';
+    const input = f.querySelector("input");
+    input.min = today;
+    input.value = parkForm.until || "";
+    input.addEventListener("input", () => { parkForm.until = input.value; });
+    anchor.after(f);
+    input.focus();
+  };
+  const parkClick = async (btn) => {
+    const {park: action, coord, name} = btn.dataset;
+    if (action === "unpark") {
+      if (confirm(`Unpark ${name}? Its coordinator gets a message.`)) await post("/park", {action, coord, name}, btn);
+      return;
+    }
+    parkForm = {coord, name, until: ""};
+    drawParkForm();
+  };
+
   const sync = () => {
     for (const d of document.querySelectorAll("details[id]")) d.open = open.has(d.id);
     drawToast();
     const b = document.querySelector(".drawer-b");
     if (b) b.scrollTop = ledgerTop;
     paint(window.__host);
+    drawParkForm();
   };
 
   document.addEventListener("toggle", (ev) => {
@@ -312,7 +363,18 @@ html[data-ledger] .scrim{display:block} html[data-ledger] .drawer{display:flex}
   document.addEventListener("click", (ev) => {
     const q = ev.target.closest("[data-q]");
     const m = ev.target.closest("[data-mode-btn]");
-    if (q) {
+    const pk = ev.target.closest("[data-park]");
+    if (pk) {
+      parkClick(pk);
+    } else if (ev.target.closest("[data-park-go]")) {
+      const {coord, name, until} = parkForm;
+      parkForm = null;
+      drawParkForm();
+      post("/park", {action: "park", coord, name, until});
+    } else if (ev.target.closest("[data-park-cancel]")) {
+      parkForm = null;
+      drawParkForm();
+    } else if (q) {
       queueAction(q);
     } else if (m) {
       root.dataset.mode = m.dataset.modeBtn;
@@ -323,7 +385,10 @@ html[data-ledger] .scrim{display:block} html[data-ledger] .drawer{display:flex}
       delete root.dataset.ledger;
     }
   });
-  document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") delete root.dataset.ledger; });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Escape") return;
+    if (parkForm) { parkForm = null; drawParkForm(); } else delete root.dataset.ledger;
+  });
   document.addEventListener("DOMContentLoaded", sync);
 
   if (!window.EventSource || location.protocol === "file:") return;

@@ -211,8 +211,13 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
 
 Go idle when no work can move: every member is done, has left, or is paused
 because the user parked its work. Parked work stays yours: you keep its PRs
-and paused members, and the dashboard marks them "Parked". An active or
-pending member keeps you active.
+and paused members, and the dashboard lists them under Parked. Park and
+unpark with `lease.py park --coordinator <slug> --name <member> [--until YYYY-MM-DD]`
+and `lease.py unpark`; the user can do both from the dashboard, and you then get
+a "[dashboard]" message: tell the member to stop or resume. A dated park
+returns to Needs you as "Revisit" after its date: ask the user whether to
+resume it, park it again or close it. An active or pending member keeps you
+active.
 
 1. **General coordinator** (`--general`): just before you go idle, ask the
    other coordinators once for work:

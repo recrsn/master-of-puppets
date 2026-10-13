@@ -57,6 +57,10 @@ Leases (coordinators)
        unwait and up take --notify (the dashboard's queue buttons): each affected
        coordinator gets an inbox message from "dashboard", delivered directly as say does
   extend CLASS --id ID --minutes N
+  park --coordinator C --name MEMBER [--until YYYY-MM-DD] [--notify]
+  unpark --coordinator C --name MEMBER [--notify]
+       park sets the member to paused; the task leaves Needs you and returns there as
+       "Revisit" after --until. The dashboard's Park/Unpark buttons use --notify.
   host-check                      admission gate; exit 0 CALM, 1 BUSY; prints disk_low=yes|no
   measure-peak --id ID --worktree P [--interval S]   run in the background after acquire
   drain-check --worktree P [--port N ...] [--process PATTERN ...]   exit 0 when nothing is left; never kills
@@ -600,6 +604,54 @@ def queue_edit_cmd(args):
     print(done)
     for name in to if args.notify else []:
         print(notify(name, message))
+    return 0
+
+
+PARK_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def park_cmd(args):
+    """park: member status "paused", with an optional deadline (parkedUntil, a local
+    date). Parked tasks stay out of Needs you; once the deadline passes the dashboard
+    lists it there again as "Revisit". unpark: status "active", deadline cleared.
+    With --notify (the dashboard's Park buttons), the coordinator gets a message."""
+    if args.cmd == "park" and args.until and not PARK_DATE.match(args.until):
+        print("--until wants a date, YYYY-MM-DD")
+        return 2
+    lock()
+    try:
+        roster = load_roster()
+        members = roster["members"].get(args.coordinator, [])
+        m = next((x for x in members if x["name"] == args.name), None)
+        if m is None:
+            print(f"{args.name} is not a member of {args.coordinator}")
+            return 3
+        if args.cmd == "park":
+            m["status"] = "paused"
+            m["parkedAt"] = now().isoformat()
+            if args.until:
+                m["parkedUntil"] = args.until
+            else:
+                m.pop("parkedUntil", None)
+            done = f"parked {args.name}" + (f" until {args.until}" if args.until else "")
+            message = (f"The user parked {args.name} ({m.get('task', '')})"
+                       + (f" until {args.until}" if args.until else " with no deadline")
+                       + " on the dashboard. Tell its member to stop work on it until it is unparked.")
+        else:
+            m["status"] = "active"
+            for key in ("parkedAt", "parkedUntil"):
+                m.pop(key, None)
+            done = f"unparked {args.name}"
+            message = f"The user unparked {args.name} ({m.get('task', '')}) on the dashboard. Tell its member to resume."
+        m["updatedAt"] = now().isoformat()
+        save_roster(roster)
+        log(f"{args.cmd} {args.coordinator} {args.name}" + (f" until={args.until}" if args.cmd == "park" and args.until else "")
+            + (" by=dashboard" if args.notify else ""))
+    finally:
+        unlock()
+    print(done)
+    if args.notify:
+        print(notify(args.coordinator, message))
     return 0
 
 
@@ -1330,6 +1382,15 @@ def main():
         u.add_argument("cls", metavar="CLASS")
         u.add_argument("--id", required=True)
         u.add_argument("--notify", action="store_true", help="tell each affected coordinator (sender: dashboard)")
+    pk = sub.add_parser("park")
+    pk.add_argument("--coordinator", required=True)
+    pk.add_argument("--name", required=True)
+    pk.add_argument("--until", help="deadline YYYY-MM-DD; after it the task returns to Needs you as Revisit")
+    pk.add_argument("--notify", action="store_true", help="tell the coordinator (sender: dashboard)")
+    upk = sub.add_parser("unpark")
+    upk.add_argument("--coordinator", required=True)
+    upk.add_argument("--name", required=True)
+    upk.add_argument("--notify", action="store_true", help="tell the coordinator (sender: dashboard)")
     x = sub.add_parser("extend")
     x.add_argument("cls", metavar="CLASS")
     x.add_argument("--id", required=True)
@@ -1502,6 +1563,8 @@ def main():
         return decision_cmd(args)
     if args.cmd in ("unwait", "up"):
         return queue_edit_cmd(args)
+    if args.cmd in ("park", "unpark"):
+        return park_cmd(args)
 
     lock()
     try:

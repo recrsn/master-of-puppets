@@ -14,6 +14,8 @@ heartbeat age). Every 5 s the server samples the host (CPU, load, memory, swap, 
                "Needs you" first (worst first), the work board, then lease timelines,
                queues and coordinators; the ledger opens in a drawer. Wall mode: the
                same, large, for a shared screen (add ?mode=wall to the URL)
+  POST /park   {"action": "park"|"unpark", "coord", "name", "until"?} from the Park and Unpark
+               buttons: runs `lease.py park|unpark ... --notify`, so the coordinator is told.
   POST /queue  {"action": "up"|"unwait", "cls", "id"} from the page's Move up and Cancel
                buttons: runs `lease.py <action> CLASS --id ID --notify`, which tells each
                affected coordinator. Same-origin JSON with X-Requested-By only.
@@ -313,6 +315,24 @@ def render_page(host):
     tasks = {(coord, t.get("id", "")): t for coord, src in sources.items() for t in src.get("tasks", [])}
     member_of = {(coord, m.get("name")): m for coord, mlist in members.items() for m in mlist}
 
+    today = dt.datetime.now().date()
+
+    def park_state(coord, name):
+        """None unless parked; else the deadline (a date or None) and whether it has passed."""
+        m = member_of.get((coord, name)) or {}
+        if m.get("status") != "paused":
+            return None
+        try:
+            until = dt.date.fromisoformat(m["parkedUntil"]) if m.get("parkedUntil") else None
+        except ValueError:
+            until = None
+        return {"until": until, "revisit": bool(until and today > until)}
+
+    def parked_away(coord, name):
+        """Parked with no deadline, or before it: kept out of Needs you and the work board."""
+        p = park_state(coord, name)
+        return bool(p and not p["revisit"])
+
     def kind_of(t):
         return t.get("kind") if t.get("kind") in ("warn", "work", "ok", "done") else "work"
 
@@ -368,7 +388,7 @@ def render_page(host):
             need(("coord", name), "critical", "Stale coordinator", title=name, status=hb, coord=name,
                  href=(sources.get(name, {}).get("coordinator") or {}).get("href", ""))
     for (coord, task_id), t in tasks.items():
-        if kind_of(t) == "warn":
+        if kind_of(t) == "warn" and not parked_away(coord, task_id):
             task_need(coord, task_id, "warning", f"Blocked · {t['phase']}" if t.get("phase") else "Blocked")
     for coord, src in sources.items():
         for i, d in enumerate(src.get("decisions", [])):
@@ -376,6 +396,8 @@ def render_page(host):
                 task, sep, text = d.partition(":")
                 d = {"task": task.strip(), "text": text.strip()} if sep and " " not in task.strip() else {"text": d}
             task = d.get("task", "")
+            if parked_away(coord, task):
+                continue
             if (coord, task) in tasks:
                 n = task_need(coord, task, "serious", "Decision needed")
             else:
@@ -397,8 +419,27 @@ def render_page(host):
             else:
                 need(("member", coord, m["name"]), "warning", f"No update for {since(last, now)}", id=m["name"],
                      title=m.get("task", ""), coord=coord, when=last, stream=m.get("stream", ""))
+    for (coord, name), m in member_of.items():
+        p = park_state(coord, name)
+        if p and p["revisit"]:
+            why = f"Revisit · parked until {p['until'].strftime('%b %-d')}"
+            if (coord, name) in tasks:
+                task_need(coord, name, "warning", why)
+            else:
+                need(("member", coord, name), "warning", why, id=name, title=m.get("task", ""), coord=coord,
+                     when=last_update(coord, name), stream=m.get("stream", ""))
     need_list = sorted(needs.values(), key=lambda n: SEV_ORDER[n["sev"]])
     worst = "danger" if any(n["sev"] == "critical" for n in need_list) else "warn" if need_list else "ok"
+
+    def park_buttons(coord, name):
+        """Park (optional deadline) for any member; Unpark when it is parked."""
+        if (coord, name) not in member_of:
+            return ""
+        attrs = f'data-coord="{e(coord)}" data-name="{e(name)}"'
+        out = f'<button type="button" class="ghost" data-park="park" {attrs}>Park</button>'
+        if park_state(coord, name):
+            out += f'<button type="button" class="ghost" data-park="unpark" {attrs}>Unpark</button>'
+        return out
 
     def reasons_html(n):
         return f'<div class="reasons">{"".join(f"<span>{e(r)}</span>" for r in n["reasons"])}</div>'
@@ -406,7 +447,7 @@ def render_page(host):
     def need_card(n):
         idl = (stream_chip(n["stream"]) + (f'<span class="id">{e(n["id"])}</span>' if n["id"] else "")
                + (f'<span class="ttl">{e(n["title"])}</span>' if n["title"] else ""))
-        side = who(n["coord"], n["when"]) + open_button(n["href"])
+        side = who(n["coord"], n["when"]) + open_button(n["href"]) + park_buttons(n["coord"], n["id"])
         return (
             f'<article class="need{" critical" if n["sev"] == "critical" else ""}"><div class="need-main">{reasons_html(n)}'
             + (f'<div class="idl">{idl}</div>' if idl else "")
@@ -428,7 +469,9 @@ def render_page(host):
         name = e(t.get("name", ""))
         title = (f'<a class="ttl" href="{e(t["session"])}" title="Open session">{name}</a>' if t.get("session")
                  else f'<span class="ttl">{name}</span>')
-        meta = ['<span class="warn">Parked</span>'] if (member_of.get((coord, tid)) or {}).get("status") == "paused" else []
+        p = park_state(coord, tid)
+        meta = ([f'<span class="warn">Parked{" until " + p["until"].strftime("%b %-d") if p["until"] else " · no deadline"}</span>']
+                if p else [])
         meta += [f'<span class="t1">{e(t["phase"])}</span>'] if t.get("phase") else []
         when = task_eta(tid) or t.get("eta", "")
         if when:
@@ -439,7 +482,7 @@ def render_page(host):
             f'<div class="idl"><span class="id">{e(tid)}</span>{title}</div>'
             + (f'<p class="st">{e(t["latest"])}</p>' if t.get("latest") else "")
             + (f'<div class="meta">{"".join(meta)}</div>' if meta else "")
-            + f"</div>{who(coord, last_update(coord, tid))}</article>"
+            + f'</div><div class="row-side">{who(coord, last_update(coord, tid))}{park_buttons(coord, tid)}</div></article>'
         )
 
     def state_groups(items, key):
@@ -455,12 +498,12 @@ def render_page(host):
             out += board_part
         return out
 
-    rest = [(coord, t) for (coord, tid), t in tasks.items() if ("task", coord, tid) not in needs]
+    rest = [(coord, t) for (coord, tid), t in tasks.items() if ("task", coord, tid) not in needs and not parked_away(coord, tid)]
     listed = sum(1 for k in needs if k[0] == "task")
     in_stream = {}  # slug -> (open tasks, tasks under Needs you)
     for (coord, tid), t in tasks.items():
         slug = stream_of(coord, tid)
-        if kind_of(t) != "done":
+        if kind_of(t) != "done" and not parked_away(coord, tid):
             total, waiting = in_stream.get(slug, (0, 0))
             in_stream[slug] = (total + 1, waiting + (("task", coord, tid) in needs))
     shown = [slug for slug, st in streams.items() if st.get("status") != "closed" or slug in in_stream]
@@ -489,6 +532,22 @@ def render_page(host):
     board = board or '<p class="t3">No tasks.</p>'
     work_note = (f"{len(rest)} tasks" + (f" in {len([x for x in shown if x])} streams" if shown else "")
                  + (f" · {listed} under Needs you" if listed else ""))
+
+    # ---- parked: out of Needs you and the board until unparked or past their deadline
+    parked_rows = []
+    for (coord, name), m in member_of.items():
+        if not parked_away(coord, name):
+            continue
+        until = park_state(coord, name)["until"]
+        t = tasks.get((coord, name)) or {"id": name, "name": m.get("task", ""), "latest": ""}
+        parked_rows.append(((until is None, until or today, name), task_row(coord, t)))
+    parked_rows.sort(key=lambda r: r[0])
+    parked_html = (
+        f'<section class="sec parked" id="parked"><div class="sec-h"><h2>Parked</h2><span class="mono sm t3">{len(parked_rows)}</span>'
+        '<span class="sm t3">Out of Needs you; a task returns there as Revisit after its date</span></div>'
+        f'<div class="card list">{"".join(r for _, r in parked_rows)}</div></section>'
+        if parked_rows else ""
+    )
 
     # ---- leases: a timeline per class, then every held and queued entry
     leases_on = roster.get("leases") == "on" or any(holders(leases, c) or queue.get(c) for c in classes)
@@ -669,7 +728,7 @@ def render_page(host):
         f'<section class="sec"><div class="sec-h"><h2>Needs you</h2><span class="mono sm {worst}">{len(need_list)}</span>'
         f'<span class="sm t3">Alarms, decisions, blocked tasks, or no update for {STALE_MINUTES} min</span></div>'
         + ("".join(need_card(n) for n in need_list) or '<div class="empty">Nothing needs you right now.</div>')
-        + f'</section><section class="sec work"><div class="sec-h"><h2>Work</h2><span class="sm t3">{e(work_note)}</span></div>{board}</section></div>'
+        + f'</section><section class="sec work"><div class="sec-h"><h2>Work</h2><span class="sm t3">{e(work_note)}</span></div>{board}</section>{parked_html}</div>'
         f'<aside class="col-side">{lease_panel}<section class="card coords"><h2>Coordinators</h2>{coord_rows}</section></aside></main>'
     )
     counts = "".join(
@@ -784,6 +843,26 @@ def queue_action(action, cls, entry_id):
     return r.returncode == 0, lines or [f"lease.py exit {r.returncode}"]
 
 
+PARK_ACTIONS = ("park", "unpark")
+NAME = re.compile(r"^[\w.:@-]{1,200}$")
+DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def park_action(action, coord, name, until):
+    """Run `lease.py park|unpark --coordinator C --name N [--until D] --notify`."""
+    if action not in PARK_ACTIONS or not NAME.match(coord) or not NAME.match(name) or (until and not DATE.match(until)):
+        return False, ["bad request"]
+    cmd = [sys.executable, "-I", LEASE, action, "--coordinator", coord, "--name", name, "--notify"]
+    if action == "park" and until:
+        cmd += ["--until", until]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, [f"lease.py failed: {exc}"]
+    lines = [x for x in (r.stdout + r.stderr).splitlines() if x.strip()]
+    return r.returncode == 0, lines or [f"lease.py exit {r.returncode}"]
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -798,7 +877,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 and self.headers.get("Content-Type", "").startswith("application/json"))
 
     def do_POST(self):
-        if self.path.split("?")[0] != "/queue":
+        path = self.path.split("?")[0]
+        if path not in ("/queue", "/park"):
             self.send_response(404)
             self.end_headers()
             return
@@ -808,7 +888,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         try:
             req = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 4096)))
-            ok, lines = queue_action(str(req.get("action", "")), str(req.get("cls", "")), str(req.get("id", "")))
+            if path == "/park":
+                ok, lines = park_action(str(req.get("action", "")), str(req.get("coord", "")), str(req.get("name", "")),
+                                        str(req.get("until") or ""))
+            else:
+                ok, lines = queue_action(str(req.get("action", "")), str(req.get("cls", "")), str(req.get("id", "")))
         except (ValueError, AttributeError):
             ok, lines = False, ["bad request"]
         self.send(json.dumps({"ok": ok, "lines": lines}).encode(), "application/json", 200 if ok else 400)
