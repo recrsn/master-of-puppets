@@ -28,8 +28,16 @@ groups by state only. The side column shows lease timelines and queues (only
 when leases are on or in use), then the coordinators with their open streams,
 links and notes. An idle coordinator shows "idle" (with its count of parked
 members), not "stale", and raises no alarm; a general-purpose one shows
-"general". A paused member's task row shows "Parked". The Ledger button
-opens the newest 20 shared-ledger entries in a drawer.
+"general". The Ledger button opens the newest 20 shared-ledger entries in a
+drawer.
+
+Parked work (members with status paused) leaves Needs you and the work board
+and is listed in the Parked section, dated parks first. A park can carry a
+deadline (`parkedUntil`); after it the task returns to Needs you as
+"Revisit · parked until <date>". Every member's card has a Park button (an
+optional date; no date means until unparked), and parked ones have Unpark.
+They run `lease.py park|unpark --notify`, so the coordinator gets a message
+from "dashboard", as with the queue buttons.
 
 Each queued lease entry has Move up and Cancel buttons (Cancel asks first).
 They run `lease.py up|unwait --notify`, which tells each affected coordinator
