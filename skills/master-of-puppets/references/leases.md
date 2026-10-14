@@ -39,9 +39,9 @@ covers it.
 
 Maximum length: `maxMinutesEffective` per class from `coordinator.py config show`. Every release records the run minutes;
 in learn mode the limit adapts to p90 of the last 10 runs + 25%, capped by
-the configured maximum, and queue ETAs use the median run. Split a longer
-request: the first part keeps the queue place, later parts join the back of
-their priority.
+the configured maximum, and queue ETAs use the median run. `wait`, `acquire`
+and `extend` refuse a longer lease with exit 2. Split a longer request: the
+first part keeps the queue place, later parts join the back of their priority.
 
 ## Adaptive capacity
 
@@ -77,7 +77,8 @@ Example: on a 24 GiB machine with a 6 GiB reserve, a 10 GiB build and an 8 GiB
 stack fill the 18 GiB budget, so the result is one of each. A 64 GiB machine
 admits more without a change.
 
-The memory budget predicts; the host check observes. Both must pass.
+The memory budget predicts; the host check observes. Both must pass, and
+`acquire` checks both itself.
 
 ## Granting
 
@@ -86,25 +87,31 @@ The memory budget predicts; the host check observes. Both must pass.
    To change an entry later, pass only `--id` and the fields that change.
    Start `--holder` with the task id (the dashboard matches on it, and the
    entry takes that task's priority). Reply LEASE QUEUED with the position.
-2. When that entry is the first ready one, run `coordinator.py host-check` **as
-   its own step** and read the verdict. Never chain it with `acquire`: you
-   will grant on a BUSY reading.
-3. BUSY: do not grant. Start `coordinator.py calm-wait` in the background (`--settle <s>` while a stack starts), tell
-   the member it waits for host pressure, and grant on CALM.
-4. CALM: `coordinator.py acquire ... --measure`. `--measure` starts `measure-peak`
-   for the lease; the granted commands come from the queue entry (or
-   `--commands`) and show in `status --brief` and on the dashboard. Exit 3 with
-   `settling` means another class's grant settles this one (for example BUILD
-   for 60 s after an E2E grant): keep it queued and retry after that time. Exit 4 means the
-   request does not fit the memory budget: keep it queued and wait for a
-   release. Exit 0: send LEASE GRANTED with the lease id, the recorded
-   commands, expiry and release command.
-5. On release: confirm with `coordinator.py status --brief` and `note` the result.
+2. When that entry is the first ready one, run `coordinator.py acquire ... --measure`.
+   It runs the host check itself (about 25 s), then checks the queue, slot cap,
+   settle time, max minutes and memory budget again under the lock.
+   `--measure` starts `measure-peak` for the lease; the granted commands come
+   from the queue entry (or `--commands`) and show in `status --brief` and on
+   the dashboard.
+3. Read the exit code:
+   - 0: send LEASE GRANTED with the lease id, the recorded commands, expiry
+     and release command.
+   - 2: the run is over the class limit. Split it (above).
+   - 3: another entry is ahead, the class is at its slot cap, or `settling`
+     (another class's grant settles this one, for example BUILD for 60 s after
+     an E2E grant). Keep it queued and retry after that time.
+   - 4: the request does not fit the memory budget. Keep it queued and wait
+     for a release.
+   - 5: the host is BUSY or free disk is below the floor. Start
+     `coordinator.py calm-wait` in the background (`--settle <s>` while a
+     stack starts), tell the member it waits for the host, and run `acquire`
+     again on CALM.
+4. On release: confirm with `coordinator.py status --brief` and `note` the result.
    After an E2E release, run
    `coordinator.py drain-check --worktree <path> [--port <n> ...] [--process <pattern> ...]`; grant
    the next E2E only when it exits 0, else ask the holder to stop what is left.
    If the next head belongs to another coordinator, tell it the slot is free.
-6. A member running commands outside the recorded scope breaks "use it or
+5. A member running commands outside the recorded scope breaks "use it or
    return it": ask it to release at once.
 
 Each class queue goes by priority, then FIFO: only the first ready entry may
@@ -165,8 +172,12 @@ in the puppet skill, section 5. The coordinator's side:
 ## Host check thresholds
 
 Calm means swap-outs below `maxSwapouts` per `swapIntervalS` in two samples,
-and a 1-minute load below cores × `loadPerCore` (defaults 200 per 12 s and
-2.5 × cores; `MAX_SWAPOUTS`, `MAX_LOAD`, `INTERVAL` override them). A single memory reading is not enough. Thresholds come from the machine config. Disk floor: when the check prints
-`disk_low=yes`, stop BUILD grants and propose removing unused
-worktrees. Remove one only with the user's approval, with
+a 1-minute load below cores × `loadPerCore` (defaults 200 per 12 s and
+2.5 × cores), and free disk at or above the floor. A single memory reading is not enough.
+Every threshold comes from the machine config; nothing overrides it.
+
+Disk: two levels (defaults 10 and 4 GiB free). Below `diskAlarmGiB`,
+`host-check` prints `disk=alarm` and the dashboard warns; grants go on.
+Below `diskFloorGiB`, it prints `disk=blocked` and `acquire` grants no class.
+At either level, propose removing unused worktrees. Remove one only with the user's approval, with
 `git worktree remove` (no force), and only when it is clean and unused.

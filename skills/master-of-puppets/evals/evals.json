@@ -20,16 +20,16 @@
     },
     {
       "id": 3,
-      "prompt": "DRY RUN. You coordinate claude-stack-a; leases are on. MACHINE_LEASE_DIR=<fixture>/state (a copy; never touch ~/.local/state/machine-leases). Do not call SendMessage, codex queue, Monitor or CronCreate; write what you would send instead. coordinator.py capacity shows totalGiB 24, reserveGiB 6, BUILD peak 10, E2E peak 8. E2E is held by codex-billing-e1 (8 GiB) until 4 minutes from now; BUILD is free. BUILD queue: codex-billing-q3 (12 min), then claude-stack-a-q-A2 (member A, 10 min). Member A writes: 'LEASE REQUEST BUILD - change scope of claude-stack-a-q-A2: add typecheck + unit tests - new estimate 28 min'. The host check prints: 'sample1 swapouts/12s=9576 sample2 swapouts/12s=0 load1=9.9 disk_free_GiB=36 memory_free=46% verdict=BUSY'. Write <out>/decisions.md (each action and why), <out>/messages.md (exact text per recipient) and <out>/commands.sh (coordinator.py commands in order).",
-      "expected_output": "Does not grant on BUSY; keeps strict FIFO; splits the 28-min request; tells codex-billing the slot is free but waits for host calm; plans a background calm wait; keeps the host check separate from acquire; plans coordinator.py measure-peak after each grant.",
+      "prompt": "DRY RUN. You coordinate claude-stack-a; leases are on. MACHINE_LEASE_DIR=<fixture>/state (a copy; never touch ~/.local/state/machine-leases). Do not call SendMessage, codex queue, Monitor or CronCreate; write what you would send instead. coordinator.py capacity shows totalGiB 24, reserveGiB 6, BUILD peak 10, E2E peak 8. E2E is held by codex-billing-e1 (8 GiB) until 4 minutes from now; BUILD is free. BUILD queue: codex-billing-q3 (12 min), then claude-stack-a-q-A2 (member A, 10 min). Member A writes: 'LEASE REQUEST BUILD - change scope of claude-stack-a-q-A2: add typecheck + unit tests - new estimate 28 min'. The host check prints: 'sample1 swapouts/12s=9576 sample2 swapouts/12s=0 load1=9.9 max_load=20 disk_free_GiB=36.0 disk_floor_GiB=4 disk_alarm_GiB=10 disk=ok memory_free=46% verdict=BUSY'. Write <out>/decisions.md (each action and why), <out>/messages.md (exact text per recipient) and <out>/commands.sh (coordinator.py commands in order).",
+      "expected_output": "Does not grant on BUSY; keeps strict FIFO; splits the 28-min request; tells codex-billing the slot is free but waits for host calm; plans a background calm wait; lets acquire run the host check (exit 5 on BUSY); plans coordinator.py measure-peak after each grant.",
       "files": [],
       "assertions": [
-        "No BUILD lease is acquired while the host check reads BUSY (fixture leases.json BUILD holders stay empty; commands.sh has no acquire before a calm re-check)",
+        "No BUILD lease is acquired while the host check reads BUSY (fixture leases.json BUILD holders stay empty; any acquire before a calm re-check is expected to exit 5)",
         "FIFO is kept: claude-stack-a-q-A2 is not moved ahead of codex-billing-q3 and no --front is used for it",
         "The 28-min request is split: one part of at most 20 min keeps A2's place and the rest joins the back of the queue",
         "codex-billing is told its entry is the head but the grant waits for a calm host",
         "A background coordinator.py calm-wait (or repeated host check) is planned before any grant",
-        "The host check and acquire are separate steps, never chained in one command",
+        "The plan treats acquire exit 5 as not granted and waits for CALM before acquire runs again",
         "coordinator.py measure-peak is planned right after each future grant",
         "Member A gets a LEASE QUEUED reply with its new position(s) and no permission to start"
       ]

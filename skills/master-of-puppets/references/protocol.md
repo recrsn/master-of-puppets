@@ -46,12 +46,12 @@ Split runs longer than the limit.
 | Heartbeat round | `STATUS? — phase, PR state, blockers, anything the user decided.` |
 | Not a member | `Run /puppet to join a coordinator first.` |
 | Lease queued | `LEASE QUEUED — <id> (<min> min, ~<GiB> GiB), <CLASS> position <n>. Ahead: <who>. ETA ~<time>.` |
-| Head, host busy | `LEASE QUEUED — <id> is at the head, but the host is swapping (<numbers>). I grant when two samples are calm.` |
+| Head, host busy | `LEASE QUEUED — <id> is at the head, but the host is busy (<numbers>). I grant when two samples are calm.` |
 | Head, no memory | `LEASE QUEUED — <id> is at the head; it needs <n> GiB and <m> GiB is free. I grant after the next release.` |
 | Grant | `LEASE GRANTED — <CLASS> <id> for <task>, until <time>. Covers: <commands>. Release: <command>.` |
 | Priority move | `LEASE QUEUED — <id> is now <CLASS> position <n>: <task> has priority <p>.` |
 | Over the limit | `LEASE QUEUED — <min> min is over the <max>-min limit, so I split it: part 1 keeps position <n>, part 2 joins the back.` |
-| Expiry | `LEASE EXPIRED — <id> passed <time>. Release now, or reply with progress and I extend it if the queue allows.` |
+| Expiry | `LEASE EXPIRED — <id> passed <time>. Release now, or reply with progress and I extend it if the queue and the class limit allow.` |
 | Handoff done, member replaced | `HANDOFF COMPLETE — <name>` (it sends LEAVE) |
 | Handoff done, member moves | `HANDOFF COMPLETE — <name> — JOIN <receiver>` |
 

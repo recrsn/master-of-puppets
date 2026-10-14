@@ -41,6 +41,7 @@ DEFAULT_REGISTRY = {
 MACHINE_DEFAULTS = {
     "reserveGiB": 6,
     "diskFloorGiB": 4,
+    "diskAlarmGiB": 10,
     "maxSwapouts": 200,
     "swapIntervalS": 12,
     "loadPerCore": 2.5,

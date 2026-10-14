@@ -4,12 +4,16 @@ memory, peer messaging, leases, the host gate, watchers, config and install.
 Members use puppet.py. Shared code is in moplib.py.
 
 Configuration (asked once through the skill's first-run setup):
-  machine  $DIR/config.json             reserveGiB, diskFloorGiB, maxSwapouts, swapIntervalS,
-                                        loadPerCore, dashboardPort, maxSlots, classes
+  machine  $DIR/config.json             reserveGiB, diskFloorGiB, diskAlarmGiB, maxSwapouts,
+                                        swapIntervalS, loadPerCore, dashboardPort, maxSlots, classes
   project  $DIR/projects/<key>.json     root, baseBranch, mergeMethod, leasesDefault and per
                                         class maxMinutes, peakMode (learn|fixed), defaultGiB, samples
 The project key comes from the repository's git common dir, so all worktrees of one
 repository share a file; nothing is written into the repository.
+
+Every limit is a number in this config, and coordinator.py enforces it: memory
+budget, slot caps, settle times, max lease minutes, swap-outs, load and the disk
+floor. Never put a limit in `memory`; set it with `config`.
 
 Lease classes are a registry in config.json: any shared action that sessions must
 take turns on (builds, local stacks, one browser window, a shared tunnel, a test
@@ -33,8 +37,10 @@ A request's GiB defaults to its project's class peak. In learn mode that is the 
 of the last 5 measured peaks (`measure-peak` writes peaks/<id>.gib; release
 records it), with the default as a floor until 3 samples exist; in fixed mode it is
 the default. Example: on a 24 GiB machine with a 6 GiB reserve, BUILD ~10 GiB and
-E2E ~8 GiB admit one of each; 64 GiB admits more. A 0 GiB class uses no budget. Swap, load and disk are a
-separate gate (`host-check`), run before every acquire.
+E2E ~8 GiB admit one of each; 64 GiB admits more. A 0 GiB class uses no budget.
+Swap, load and disk are a separate gate (`host-check`) that acquire runs itself.
+Disk: below diskAlarmGiB free the check raises the disk alarm (a warning); below
+diskFloorGiB free it blocks, and no class is granted.
 
 Admission is by priority, then FIFO, per class across coordinators: only the first
 ready entry may acquire. Every entry and task starts at priority 0; higher goes first,
@@ -55,12 +61,15 @@ Leases
   wait CLASS --coordinator C --holder NAME --id ID [--minutes N] [--gib N] [--commands TEXT] [--worktree P]
        [--priority N] [--front]
        for an existing ID every flag is optional and only the given fields change.
+       exit 2 when --minutes is over the class limit: split the run.
        --priority: default the task's priority, else 0; a change moves the entry to its
        place among the others. --front: the head, at the highest priority in the queue
   acquire CLASS --coordinator C --holder NAME --id ID --worktree P --minutes N [--gib N]
           [--commands TEXT] [--measure]
-       exit 0 granted, 3 queued behind another entry, at a slot cap or in a settle window
-       (another class's grant settles this one), 4 over the memory budget.
+       runs the host check itself (about 2 × swapIntervalS), then checks again under the lock.
+       exit 0 granted, 2 --minutes over the class limit (split the run), 3 queued behind
+       another entry, at a slot cap or in a settle window (another class's grant settles
+       this one), 4 over the memory budget, 5 host BUSY or disk below the floor.
        --commands records the granted scope; --measure starts measure-peak itself.
        The holder releases with puppet.py release.
   unwait | hold | ready CLASS --id ID
@@ -68,16 +77,18 @@ Leases
                                   it takes that entry's priority when that is higher
        unwait and up take --notify (the dashboard's queue buttons): each affected
        coordinator gets an inbox message from "dashboard", delivered directly as say does
-  extend CLASS --id ID --minutes N
-  host-check                      admission gate; exit 0 CALM, 1 BUSY; prints disk_low=yes|no
+  extend CLASS --id ID --minutes N   expires N minutes from now; exit 2 when the lease would
+                                  run longer than the class limit
+  host-check                      admission gate; exit 0 CALM, 1 BUSY (pressure or disk below
+                                  the floor); prints disk=ok|alarm|blocked
   calm-wait [--settle S] [--retry S]           one CALM line when the host is calm
   measure-peak --id ID --worktree P [--interval S]   run in the background after acquire
   drain-check --worktree P [--port N ...] [--process PATTERN ...]   exit 0 when nothing is left; never kills
 
 Config
   config show [--project-root P] | set-machine ... | set-project --root P ... | project-key P
-       machine: --reserve-gib --disk-floor-gib --max-swapouts --swap-interval-s --load-per-core
-                --dashboard-port --max-slots CLASS=N (N=0 removes the cap)
+       machine: --reserve-gib --disk-floor-gib --disk-alarm-gib --max-swapouts --swap-interval-s
+                --load-per-core --dashboard-port --max-slots CLASS=N (N=0 removes the cap)
   config set-class NAME [--description T] [--default-gib N] [--max-minutes N] [--settle OTHER=S ...]
   config remove-class NAME        refused while the class has holders or queue entries
        project: --name --base-branch --merge-method merge|squash|rebase|auto --leases-default
@@ -126,7 +137,8 @@ Memory (the skill's own memory; coordinators write it, everyone reads it)
        Machine scope: memory/machine.json. Project scope (with --project-root):
        memory/<project-key>.json, shared by every worktree of the repository.
        Project-specific rules (for example which git hooks need a lease) live here,
-       not in the skill text.
+       not in the skill text. Limits (GiB, slots, minutes, disk, swap, load) do not:
+       they are config numbers.
 
 Peer-coordinator messaging
   say --from NAME --message TEXT [--to NAME] [--no-direct]
@@ -180,10 +192,15 @@ def config_cmd(args):
         return 0
     if args.ccmd == "set-machine":
         raw = read_json(CONFIG) or {}
-        for flag, field in (("reserve_gib", "reserveGiB"), ("disk_floor_gib", "diskFloorGiB"), ("max_swapouts", "maxSwapouts"),
-                            ("swap_interval_s", "swapIntervalS"), ("load_per_core", "loadPerCore"), ("dashboard_port", "dashboardPort")):
+        for flag, field in (("reserve_gib", "reserveGiB"), ("disk_floor_gib", "diskFloorGiB"), ("disk_alarm_gib", "diskAlarmGiB"),
+                            ("max_swapouts", "maxSwapouts"), ("swap_interval_s", "swapIntervalS"),
+                            ("load_per_core", "loadPerCore"), ("dashboard_port", "dashboardPort")):
             if getattr(args, flag) is not None:
                 raw[field] = getattr(args, flag)
+        merged = {**machine, **raw}
+        if merged["diskAlarmGiB"] < merged["diskFloorGiB"]:
+            print(f"--disk-alarm-gib ({merged['diskAlarmGiB']:g}) must be at least --disk-floor-gib ({merged['diskFloorGiB']:g})")
+            return 2
         for item in args.max_slots or []:
             cls, _, n = item.partition("=")
             slots = raw.setdefault("maxSlots", {})
@@ -786,6 +803,104 @@ def queue_edit_cmd(args):
     return 0
 
 
+def length_limit(cls, key):
+    """Effective max lease minutes of class cls in project key (the registry default without one)."""
+    return max_minutes(load_project(key) if key else None, cls)
+
+
+def over_limit(cls, key, minutes):
+    """Refusal text when minutes is over the class limit, else None."""
+    limit = length_limit(cls, key)
+    if minutes > limit:
+        return f"{minutes} min is over the {limit}-min {cls} limit; split the run into parts of at most {limit} min"
+    return None
+
+
+def acquire_checks(args, state, machine):
+    """Every acquire gate except the host and the memory budget. Returns (exit, text) to refuse, else None."""
+    queue, holders = state["queue"][args.cls], state[args.cls]
+    if any(h["id"] == args.id for h in holders):
+        return 0, "already held"
+    entry = next((q for q in queue if q["id"] == args.id), {})
+    why = over_limit(args.cls, entry.get("project") or project_key(args.worktree)[0], args.minutes)
+    if why:
+        return 2, why
+    ready = [q for q in queue if not q.get("hold")]
+    if ready and ready[0]["id"] != args.id:
+        return 3, json.dumps({"queued_ahead": ready[0]})
+    cap = machine["maxSlots"].get(args.cls)
+    if cap and len(holders) >= cap:
+        return 3, json.dumps({"max_slots": cap, "held": holders})
+    for other, spec in registry(machine).items():
+        secs = (spec.get("settle") or {}).get(args.cls, 0)
+        for h in state[other] if secs else []:
+            left = secs - (now() - dt.datetime.fromisoformat(h["grantedAt"])).total_seconds()
+            if left > 0:
+                return 3, json.dumps({"settling": int(left), "after": h["id"], "class": other})
+    return None
+
+
+def acquire_cmd(args):
+    """Check the queue, cap, settle and length; run the host check without the lock; then
+    check again under the lock (another grant may have landed) and the memory budget."""
+    lock()
+    try:
+        refused = acquire_checks(args, load(), load_machine())
+    finally:
+        unlock()
+    if refused:
+        print(refused[1])
+        return refused[0]
+    calm, line = host_check()
+    if not calm:
+        print(json.dumps({"host": line}))
+        log(f"refuse {args.cls} {args.coordinator} {args.id} host BUSY")
+        return 5
+    lock()
+    try:
+        state, machine = load(), load_machine()
+        refused = acquire_checks(args, state, machine)
+        if refused:
+            print(refused[1])
+            return refused[0]
+        queue, holders = state["queue"][args.cls], state[args.cls]
+        entry = next((q for q in queue if q["id"] == args.id), {})
+        key = entry.get("project") or project_key(args.worktree)[0]
+        gib = args.gib or entry.get("gib") or class_peak(load_project(key), args.cls)
+        b = budget(state, machine)
+        if gib > b["freeGiB"]:
+            why = f"needs {gib} GiB, {b['freeGiB']} GiB free of {b['limitGiB']} GiB budget"
+            print(json.dumps({"memory": why, "held": [h["id"] for c in class_names(machine) for h in state[c]]}))
+            log(f"refuse {args.cls} {args.coordinator} {args.id} {why}")
+            return 4
+        state["queue"][args.cls] = [q for q in queue if q["id"] != args.id]
+        t = now()
+        holders.append({
+            "coordinator": args.coordinator,
+            "holder": args.holder,
+            "id": args.id,
+            "worktree": args.worktree,
+            "project": key,
+            "gib": gib,
+            "commands": args.commands or entry.get("commands"),
+            "grantedAt": t.isoformat(),
+            "expiresAt": (t + dt.timedelta(minutes=args.minutes)).isoformat(),
+        })
+        if args.measure:
+            os.makedirs(PEAKS, exist_ok=True)
+            proc = subprocess.Popen(
+                [sys.executable, "-I", os.path.abspath(__file__), "measure-peak", "--id", args.id, "--worktree", args.worktree],
+                stdin=subprocess.DEVNULL, stdout=open(os.path.join(PEAKS, f"{args.id}.log"), "a"), stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+            holders[-1]["measurePid"] = proc.pid
+        save(state, machine)
+        log(f"acquire {args.cls} {args.coordinator} {args.id} {args.holder} until {holders[-1]['expiresAt']} ({gib} GiB, {round(b['freeGiB'] - gib, 1)} GiB left)")
+        return 0
+    finally:
+        unlock()
+
+
 # ---------------------------------------------------------------- host
 
 
@@ -801,14 +916,13 @@ def swapouts():
     return int(m.group(1)) if m else 0
 
 
-def host_check(interval=None):
-    """Admission gate: two swap-out samples, then load and disk. Returns (calm, line)."""
+def host_check():
+    """Admission gate: two swap-out samples, load and the disk floor, with the machine
+    config's numbers only. Returns (calm, line)."""
     cfg = load_machine()
-    interval = interval or int(os.environ.get("INTERVAL") or cfg["swapIntervalS"])
-    max_swap = int(os.environ.get("MAX_SWAPOUTS") or cfg["maxSwapouts"])
-    cores = os.cpu_count() or 1
-    max_load = float(os.environ.get("MAX_LOAD") or cores * float(cfg["loadPerCore"]))
-    floor = float(os.environ.get("DISK_FLOOR_GIB") or cfg["diskFloorGiB"])
+    interval = int(cfg["swapIntervalS"])
+    max_swap = int(cfg["maxSwapouts"])
+    max_load = (os.cpu_count() or 1) * float(cfg["loadPerCore"])
     calm, parts = True, []
     for i in (1, 2):
         a = swapouts()
@@ -819,10 +933,13 @@ def host_check(interval=None):
     load1 = os.getloadavg()[0]
     calm = calm and load1 < max_load
     free = shutil.disk_usage("/").free / 2**30
+    disk = "blocked" if free < cfg["diskFloorGiB"] else "alarm" if free < cfg["diskAlarmGiB"] else "ok"
+    calm = calm and disk != "blocked"
     m = re.search(r"(\d+)%", run(["memory_pressure", "-Q"]))
     parts += [
-        f"load1={load1:.2f}", f"max_load={max_load:g}", f"disk_free_GiB={free:.0f}", f"disk_floor_GiB={floor:g}",
-        f"disk_low={'yes' if free < floor else 'no'}", f"memory_free={m.group(1) + '%' if m else '?'}",
+        f"load1={load1:.2f}", f"max_load={max_load:g}", f"disk_free_GiB={free:.1f}",
+        f"disk_floor_GiB={cfg['diskFloorGiB']:g}", f"disk_alarm_GiB={cfg['diskAlarmGiB']:g}",
+        f"disk={disk}", f"memory_free={m.group(1) + '%' if m else '?'}",
         f"verdict={'CALM' if calm else 'BUSY'}",
     ]
     return calm, " ".join(parts)
@@ -1108,7 +1225,8 @@ def main():
     cs.add_argument("--project-root")
     cm = csub.add_parser("set-machine")
     cm.add_argument("--reserve-gib", type=float)
-    cm.add_argument("--disk-floor-gib", type=float)
+    cm.add_argument("--disk-floor-gib", type=float, help="below this many GiB free, no lease is granted")
+    cm.add_argument("--disk-alarm-gib", type=float, help="below this many GiB free, the host check raises the disk alarm")
     cm.add_argument("--max-swapouts", type=int)
     cm.add_argument("--swap-interval-s", type=int)
     cm.add_argument("--load-per-core", type=float)
@@ -1265,6 +1383,8 @@ def main():
         return queue_edit_cmd(args)
     if args.cmd in ("park", "unpark"):
         return park_cmd(args)
+    if args.cmd == "acquire":
+        return acquire_cmd(args)
 
     lock()
     try:
@@ -1288,6 +1408,12 @@ def main():
         queue = state["queue"][args.cls]
         if args.cmd == "wait":
             existing = next((q for q in queue if q["id"] == args.id), None)
+            if args.minutes:
+                key = project_key(args.worktree)[0] if args.worktree else (existing or {}).get("project")
+                why = over_limit(args.cls, key, args.minutes)
+                if why:
+                    print(why)
+                    return 2
             if existing:
                 if args.minutes:
                     existing["minutes"] = args.minutes
@@ -1330,7 +1456,13 @@ def main():
         if args.cmd == "extend":
             for h in state[args.cls]:
                 if h["id"] == args.id:
-                    h["expiresAt"] = (now() + dt.timedelta(minutes=args.minutes)).isoformat()
+                    expires = now() + dt.timedelta(minutes=args.minutes)
+                    total = (expires - dt.datetime.fromisoformat(h["grantedAt"])).total_seconds() / 60
+                    limit = length_limit(args.cls, h.get("project"))
+                    if total > limit:
+                        print(f"the lease would run {total:.0f} min, over the {limit}-min {args.cls} limit; release it and queue the rest")
+                        return 2
+                    h["expiresAt"] = expires.isoformat()
                     save(state, machine)
                     log(f"extend {args.cls} {args.id} until {h['expiresAt']}")
                     return 0
@@ -1342,59 +1474,6 @@ def main():
                     q["hold"] = args.cmd == "hold"
             save(state, machine)
             log(f"{args.cmd} {args.cls} {args.id}")
-            return 0
-        holders = state[args.cls]
-        if args.cmd == "acquire":
-            if any(h["id"] == args.id for h in holders):
-                print("already held")
-                return 0
-            ready = [q for q in queue if not q.get("hold")]
-            if ready and ready[0]["id"] != args.id:
-                print(json.dumps({"queued_ahead": ready[0]}))
-                return 3
-            cap = machine["maxSlots"].get(args.cls)
-            if cap and len(holders) >= cap:
-                print(json.dumps({"max_slots": cap, "held": holders}))
-                return 3
-            for other, spec in registry(machine).items():
-                secs = (spec.get("settle") or {}).get(args.cls, 0)
-                for h in state[other] if secs else []:
-                    left = secs - (now() - dt.datetime.fromisoformat(h["grantedAt"])).total_seconds()
-                    if left > 0:
-                        print(json.dumps({"settling": int(left), "after": h["id"], "class": other}))
-                        return 3
-            entry = next((q for q in queue if q["id"] == args.id), {})
-            key = entry.get("project") or project_key(args.worktree)[0]
-            gib = args.gib or entry.get("gib") or class_peak(load_project(key), args.cls)
-            b = budget(state, machine)
-            if gib > b["freeGiB"]:
-                why = f"needs {gib} GiB, {b['freeGiB']} GiB free of {b['limitGiB']} GiB budget"
-                print(json.dumps({"memory": why, "held": [h["id"] for c in class_names(machine) for h in state[c]]}))
-                log(f"refuse {args.cls} {args.coordinator} {args.id} {why}")
-                return 4
-            state["queue"][args.cls] = [q for q in queue if q["id"] != args.id]
-            t = now()
-            holders.append({
-                "coordinator": args.coordinator,
-                "holder": args.holder,
-                "id": args.id,
-                "worktree": args.worktree,
-                "project": key,
-                "gib": gib,
-                "commands": args.commands or entry.get("commands"),
-                "grantedAt": t.isoformat(),
-                "expiresAt": (t + dt.timedelta(minutes=args.minutes)).isoformat(),
-            })
-            if args.measure:
-                os.makedirs(PEAKS, exist_ok=True)
-                proc = subprocess.Popen(
-                    [sys.executable, "-I", os.path.abspath(__file__), "measure-peak", "--id", args.id, "--worktree", args.worktree],
-                    stdin=subprocess.DEVNULL, stdout=open(os.path.join(PEAKS, f"{args.id}.log"), "a"), stderr=subprocess.STDOUT,
-                    start_new_session=True,
-                )
-                holders[-1]["measurePid"] = proc.pid
-            save(state, machine)
-            log(f"acquire {args.cls} {args.coordinator} {args.id} {args.holder} until {holders[-1]['expiresAt']} ({gib} GiB, {round(b['freeGiB'] - gib, 1)} GiB left)")
             return 0
     finally:
         unlock()

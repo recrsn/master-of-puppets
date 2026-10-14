@@ -278,6 +278,10 @@ BUILD lease", "this repo merges through a merge queue".
 - Remove a rule the user withdraws: `coordinator.py memory remove --id <id> [--project-root <path>]`.
 - A rule that should hold in every project is a change to the skill itself,
   not a memory entry.
+- A limit is never a memory entry. Slots, GiB, minutes, settle times, disk,
+  swap and load thresholds are config numbers that `coordinator.py` enforces:
+  set them with `coordinator.py config set-machine|set-class|set-project`
+  (`references/setup.md`), then tell your members and the other coordinators.
 - Lessons (what went wrong, why, and what to do next time) go into your own
   agent memory: Claude's memory directory, or Codex's memory. Not into the
   skill and not into `coordinator.py memory`. Turn a lesson into a rule only when

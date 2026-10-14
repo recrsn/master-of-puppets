@@ -2,7 +2,9 @@
 
 These rules apply within the user's authorized scope; explicit user instructions
 take precedence. Project and machine rules go in the skill's memory
-(SKILL.md, "Memory"), never in the skill or the helpers' docstrings.
+(SKILL.md, "Memory"), never in the skill or the helpers' docstrings. Limits
+(GiB, slots, minutes, disk, swap, load) are not rules: they are config numbers
+that `coordinator.py` enforces (`references/setup.md`).
 
 ## Coordinator conduct
 

@@ -9,10 +9,13 @@ the user asks to reconfigure.
 
 | Scope | File | Reused | Settings |
 | --- | --- | --- | --- |
-| Machine | `$DIR/config.json` | All projects on this machine | memory reserve, disk floor, pressure gate, dashboard port, optional slot caps |
+| Machine | `$DIR/config.json` | All projects on this machine | memory reserve, disk alarm, pressure gate, dashboard port, optional slot caps |
 | Project | `$DIR/projects/<key>.json` | All worktrees of one repository | base branch, merge method, leases default, per class: max lease minutes, peak mode, starting GiB |
 
-Nothing is written into the repository.
+Nothing is written into the repository. Every limit is a config number that
+`coordinator.py` enforces. When the user later changes a limit, change it here
+with `config set-machine`, `set-class` or `set-project`, never with
+`memory add`.
 
 Ask the question groups below with the agent's question tool
 (`agents.md`, "Ask setup questions"). Wait for required choices before
@@ -36,9 +39,10 @@ first and add "(Recommended)" to its label.
 1. **Memory reserve** (header "RAM floor"): GiB kept free for the OS, apps and
    agent sessions; leases never use it. Options: 6 GiB (Recommended for
    16-32 GiB), 4 GiB, 10 GiB. On 64 GiB or more, recommend about 10%.
-2. **Disk floor** (header "Disk floor"): below this, BUILD grants stop.
-   Options: 4 GiB (Recommended), 10 GiB, 20 GiB. Show the free space you
-   measured in the question.
+2. **Disk alarm** (header "Disk alarm"): below the alarm level, the host check
+   warns; below the floor, no lease is granted. Options: alarm 10 / floor 4 GiB
+   (Recommended), 20 / 10 GiB, 6 / 2 GiB. Show the free space you measured in
+   the question.
 3. **Pressure gate** (header "Host gate"): Standard: 200 swap-outs per 12 s in
    two samples, load below 2.5 × cores (Recommended). Strict: 100 and 1.5 ×
    cores. Loose: 500 and 4 × cores. Show the core count.
@@ -52,7 +56,7 @@ first and add "(Recommended)" to its label.
 Then run:
 
 ```bash
-coordinator.py config set-machine --reserve-gib <n> --disk-floor-gib <n> --max-swapouts <n> --swap-interval-s 12 --load-per-core <k> --dashboard-port 4720 [--max-slots BUILD=1 --max-slots E2E=1]
+coordinator.py config set-machine --reserve-gib <n> --disk-floor-gib <n> --disk-alarm-gib <n> --max-swapouts <n> --swap-interval-s 12 --load-per-core <k> --dashboard-port 4720 [--max-slots BUILD=1 --max-slots E2E=1]
 ```
 
 If the user names other shared actions (one browser window, a test database, a
@@ -100,4 +104,4 @@ learn mode stays at the starting values.
   `mergeMethod` in SKILL.md, "Driving a stack", step 2.
 - Leases default: at coordinator start, when no coordinator has set leases
   and the project says `on`, ask the user before you run `coordinator.py leases on`.
-- Lease limits and the disk floor: `references/leases.md`.
+- Lease limits and the disk alarm: `references/leases.md`.
