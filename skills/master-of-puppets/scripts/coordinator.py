@@ -97,7 +97,9 @@ Roster and members (coordinators write; members send messages and release their 
   member add|update --coordinator C --name NAME [--tool] [--session-id] [--worktree] [--task]
        [--pr N ...] [--repo owner/repo] [--status] [--phase] [--kind] [--latest] [--session URL]
        [--stream SLUG]   (--stream "" clears it)
-       updates the roster and the member's row in dashboard/<C>-state.json
+       updates the roster and the member's row in dashboard/<C>-state.json. Without
+       --session the row links to the session from --tool and --session-id; without
+       --repo, PR links use the worktree's GitHub origin (a warning when there is none)
   member remove --coordinator C --name NAME
   member stale --coordinator C [--minutes 30]   members (not done) with no update for N minutes
   park --coordinator C --name MEMBER [--until YYYY-MM-DD] [--notify]
@@ -502,11 +504,15 @@ def roster_cmd(args):
         print(f"{args.name} is not a member of {args.coordinator}")
         return 3
     for flag, field in (("tool", "tool"), ("session_id", "sessionId"), ("worktree", "worktree"), ("task", "task"), ("status", "status"),
-                        ("stream", "stream")):
+                        ("stream", "stream"), ("repo", "repo")):
         if getattr(args, flag, None) is not None:
             m[field] = getattr(args, flag)
     if args.pr is not None:
         m["prs"] = args.pr
+        if not m.get("repo") and m.get("worktree"):
+            m["repo"] = github_repo(m["worktree"])
+        if args.pr and not m.get("repo"):
+            print(f"warning: no GitHub repo for {args.name}; PR links need --repo owner/repo", file=sys.stderr)
     m["updatedAt"] = now().isoformat()
     save_roster(roster)
     row = {}
@@ -514,8 +520,10 @@ def roster_cmd(args):
                         ("stream", "stream")):
         if getattr(args, flag, None) is not None:
             row[field] = getattr(args, flag)
-    if args.pr is not None and args.repo:
-        row["links"] = [{"label": f"PR #{n}", "href": f"https://github.com/{args.repo}/pull/{n}"} for n in args.pr]
+    if args.session is None and (args.mcmd == "add" or args.session_id is not None or args.tool is not None):
+        row["session"] = session_link(m.get("tool"), m.get("sessionId"))
+    if (args.pr is not None or args.repo) and m.get("repo"):
+        row["links"] = [{"label": f"PR #{n}", "href": f"https://github.com/{m['repo']}/pull/{n}"} for n in m.get("prs", [])]
     if args.mcmd == "add":
         row.setdefault("phase", "Joined")
     upsert_task(args.coordinator, args.name, row)
@@ -584,6 +592,21 @@ def stream_cmd(args, roster):
 
 def state_path(coord):
     return os.path.join(DIR, "dashboard", f"{coord}-state.json")
+
+
+def session_link(tool, session_id):
+    """Deep link for the dashboard, from the tool and its session or thread id."""
+    if not session_id:
+        return None
+    return f"codex://threads/{session_id}" if tool == "codex" else f"claude://claude.ai/epitaxy/{session_id}"
+
+
+def github_repo(worktree):
+    """owner/repo of the worktree's GitHub origin remote, or None."""
+    out = subprocess.run(["git", "-C", os.path.expanduser(worktree), "remote", "get-url", "origin"],
+                         capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    hit = re.search(r"github\.com[:/]([^/\s]+/[^/\s]+?)(?:\.git)?/?$", out.stdout.strip()) if out.returncode == 0 else None
+    return hit.group(1) if hit else None
 
 
 def upsert_task(coord, task_id, fields):
@@ -1097,13 +1120,13 @@ def main():
     co.add_argument("--tool", choices=TOOLS, required=True)
     co.add_argument("--session-id", required=True)
     co.add_argument("--focus", required=True)
-    co.add_argument("--pr", type=int, action="append")
+    co.add_argument("--pr", type=int, nargs="+", action="extend", help="PR numbers, several allowed (--pr 1 2 or --pr 1 --pr 2)")
     co.add_argument("--takeover", action="store_true", help="replace a live coordinator of the same name (user approval only)")
     co.add_argument("--general", action="store_true", help="general-purpose coordinator with no fixed scope")
     hb = sub.add_parser("heartbeat")
     hb.add_argument("--name", required=True)
     hb.add_argument("--focus")
-    hb.add_argument("--pr", type=int, action="append")
+    hb.add_argument("--pr", type=int, nargs="+", action="extend", help="PR numbers, several allowed (--pr 1 2 or --pr 1 --pr 2)")
     hb.add_argument("--status", choices=("active", "idle"))
     rs = sub.add_parser("resign")
     rs.add_argument("--name", required=True)
@@ -1120,13 +1143,13 @@ def main():
         mx.add_argument("--session-id")
         mx.add_argument("--worktree")
         mx.add_argument("--task")
-        mx.add_argument("--pr", type=int, action="append", help="replaces the PR list")
-        mx.add_argument("--repo", help="owner/repo, for PR links on the dashboard")
+        mx.add_argument("--pr", type=int, nargs="+", action="extend", help="PR numbers, several allowed (--pr 1 2 or --pr 1 --pr 2); replaces the PR list")
+        mx.add_argument("--repo", help="owner/repo for PR links; default: the worktree's GitHub origin")
         mx.add_argument("--status", choices=("pending", "active", "paused", "done"))
         mx.add_argument("--phase")
         mx.add_argument("--kind", choices=("ok", "work", "warn", "done"))
         mx.add_argument("--latest")
-        mx.add_argument("--session", help="deep link for the dashboard")
+        mx.add_argument("--session", help="deep link for the dashboard; default: derived from --tool and --session-id")
         mx.add_argument("--stream", help='stream slug; "" clears it')
     mr = msub.add_parser("remove")
     mr.add_argument("--coordinator", required=True)
@@ -1139,7 +1162,7 @@ def main():
     en.add_argument("--by", help="member that asked for the task; default: the coordinator")
     en.add_argument("--task", required=True)
     en.add_argument("--name")
-    en.add_argument("--pr", type=int, action="append")
+    en.add_argument("--pr", type=int, nargs="+", action="extend", help="PR numbers, several allowed (--pr 1 2 or --pr 1 --pr 2)")
     en.add_argument("--stream", help="stream slug (stream add)")
     sm = sub.add_parser("stream")
     ssub = sm.add_subparsers(dest="scmd", required=True)
@@ -1150,7 +1173,7 @@ def main():
         if name in ("add", "update"):
             sx.add_argument("--label", help="at most 40 characters, about 4 words")
             sx.add_argument("--goal", help="one sentence, at most 140 characters")
-            sx.add_argument("--pr", type=int, action="append", help="replaces the PR list")
+            sx.add_argument("--pr", type=int, nargs="+", action="extend", help="PR numbers, several allowed (--pr 1 2 or --pr 1 --pr 2); replaces the PR list")
         if name == "update":
             sx.add_argument("--owner", help="hand the stream to this live coordinator")
     sl = ssub.add_parser("list")
