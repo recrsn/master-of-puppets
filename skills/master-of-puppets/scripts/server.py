@@ -112,6 +112,7 @@ def sample_host(prev_swapouts, interval):
     out["diskFreeGiB"] = round(du.free / 2**30, 1)
     out["diskTotalGiB"] = round(du.total / 2**30, 1)
     out["diskFloorGiB"] = cfg.get("diskFloorGiB", 4)
+    out["diskAlarmGiB"] = cfg.get("diskAlarmGiB", 10)
     return out, cur
 
 
@@ -153,8 +154,9 @@ def host_tiles(h):
          "sev": "critical" if outs is not None and outs >= max_outs else "warning" if outs is not None and outs >= max_outs / 2 else "ok"},
         {"id": "disk", "label": "Disk", "value": f"{f(h['diskFreeGiB'])} GiB free", "pct": disk_pct,
          "short": f"{f(h['diskFreeGiB'])}G free",
-         "sub": f"of {f(h['diskTotalGiB'])} GiB · floor {f(h['diskFloorGiB'])} GiB",
-         "sev": "critical" if h["diskFreeGiB"] < h["diskFloorGiB"] else "warning" if h["diskFreeGiB"] < 2 * h["diskFloorGiB"] else "ok"},
+         "sub": f"of {f(h['diskTotalGiB'])} GiB · alarm below {f(h['diskAlarmGiB'])} · blocks below {f(h['diskFloorGiB'])} GiB",
+         "sev": "critical" if h["diskFreeGiB"] < h["diskFloorGiB"]
+                else "warning" if h["diskFreeGiB"] < h["diskAlarmGiB"] else "ok"},
     ]
 
 
