@@ -2,7 +2,7 @@
 
 These rules apply within the user's authorized scope; explicit user instructions
 take precedence. Project and machine rules go in the skill's memory
-(SKILL.md, "Memory"), never in the skill or the `lease.py` docstring.
+(SKILL.md, "Memory"), never in the skill or the helpers' docstrings.
 
 ## Coordinator conduct
 

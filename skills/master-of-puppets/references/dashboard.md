@@ -36,11 +36,11 @@ and is listed in the Parked section, dated parks first. A park can carry a
 deadline (`parkedUntil`); after it the task returns to Needs you as
 "Revisit · parked until <date>". Every member's card has a Park button (an
 optional date; no date means until unparked), and parked ones have Unpark.
-They run `lease.py park|unpark --notify`, so the coordinator gets a message
+They run `coordinator.py park|unpark --notify`, so the coordinator gets a message
 from "dashboard", as with the queue buttons.
 
 Each queued lease entry has Move up and Cancel buttons (Cancel asks first).
-They run `lease.py up|unwait --notify`, which tells each affected coordinator
+They run `coordinator.py up|unwait --notify`, which tells each affected coordinator
 (`references/leases.md`); a toast shows the result and the delivery. The
 server accepts these posts only from its own page.
 
@@ -95,7 +95,7 @@ full text in your own notes if you need it.
 
 ## Your state file
 
-`$MACHINE_LEASE_DIR/dashboard/<slug>-state.json`. `lease.py member add|update|remove`,
+`$MACHINE_LEASE_DIR/dashboard/<slug>-state.json`. `coordinator.py member add|update|remove`,
 `enroll` and `decision add|clear` keep its `tasks` and `decisions` current; edit
 the other fields (notes, links, coordinator) by hand. The file name is your
 coordinator slug; it labels your section and your decisions.
@@ -124,7 +124,7 @@ coordinator slug; it labels your section and your decisions.
 }
 ```
 
-- `stream` is a stream slug from `lease.py stream add`. `enroll` and
+- `stream` is a stream slug from `coordinator.py stream add`. `enroll` and
   `member add|update --stream` set it; the roster's member entry has it too.
   Streams live in `roster.json` under `streams`, not in this file.
 - `kind` sets the work group: `warn` (Blocked, also listed under Needs you),

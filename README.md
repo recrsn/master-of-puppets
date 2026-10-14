@@ -25,14 +25,15 @@ One or more coordinator sessions take PR stacks to merged. Coordinators:
 
 A working session joins a coordinator as a member. It reports by message
 (JOIN, UPDATE, LEASE REQUEST, ENROLL REQUEST, LEAVE), follows ACTIVE and PAUSE
-directions, waits for leases with `lease.py await-grant`, releases its own
+directions, waits for leases with `puppet.py await-grant`, releases its own
 leases, and takes its own PRs to merged. The coordinator records membership
 and decisions.
 
-Two files in `master-of-puppets` do the work: `scripts/lease.py` (state, leases, messaging, waiters,
-watchers) and `scripts/server.py` (dashboard, with the page shell
-`scripts/dashboard.html`). Both use only the Python
-standard library.
+Four files in `master-of-puppets/scripts` do the work: `coordinator.py`
+(roster, members, leases, messaging, watchers, config), `puppet.py` (the
+commands a member runs: roster, memory, lease wait and release), `moplib.py`
+(the state code both share) and `server.py` (dashboard, with the page shell
+`dashboard.html`). All use only the Python standard library.
 
 ## Requirements
 
@@ -73,8 +74,9 @@ ln -s "$PWD/skills/puppet" ~/.claude/skills/puppet
 ```
 
 Shared state lives in `$MACHINE_LEASE_DIR` (default
-`~/.local/state/machine-leases`). The first coordinator installs `lease.py`
-there with `python3 -I skills/master-of-puppets/scripts/lease.py install` and
+`~/.local/state/machine-leases`). The first coordinator installs `moplib.py`,
+`coordinator.py` and `puppet.py` there with
+`python3 -I skills/master-of-puppets/scripts/coordinator.py install` and
 asks you for machine and project defaults.
 
 ## Use

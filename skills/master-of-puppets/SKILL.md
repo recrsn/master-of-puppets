@@ -26,31 +26,37 @@ not write product code.
   on only on the user's word, for example when heavy jobs overlap and the host
   swaps. See `references/leases.md`.
 
-## Two files
+## Files
 
 | File | What it does |
 | --- | --- |
-| `scripts/lease.py` | Leases, roster and members, messaging, waiters and watchers. Run with `python3 -I`; the docstring lists every command. The live copy is `$MACHINE_LEASE_DIR/lease.py` (default `~/.local/state/machine-leases`); every coordinator uses it. |
+| `scripts/coordinator.py` | Coordinator commands: roster and members, streams, leases, messaging, watchers, config and install. Run with `python3 -I`; the docstring lists every command. |
+| `scripts/puppet.py` | Member commands: roster, whoami, memory list, `await-grant` and `release` of the member's own lease. Members run only this file. |
+| `scripts/moplib.py` | State code that both CLIs import. |
 | `scripts/server.py` | The one dashboard, on `http://localhost:4720/`, with the page shell `scripts/dashboard.html`: host meters, "Needs you" first, the work board, lease timelines and coordinators; a Wall mode for a shared screen. Live by SSE. Exits with "already serving" when one runs. |
 
-Below, `lease.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/lease.py"`.
-`lease.py install` (run from the skill copy) installs it when absent. When the
-live copy differs, it prints the diff and stops: other coordinators use it
-now, so agree a change with them and the user before you replace it.
+The live copies of `coordinator.py`, `puppet.py` and `moplib.py` are in
+`$MACHINE_LEASE_DIR` (default `~/.local/state/machine-leases`); every session
+uses them. Below, `coordinator.py` means
+`python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/coordinator.py"`.
+`coordinator.py install` (run from the skill copy) installs the three files
+when absent. When a live copy differs, it prints the diff and installs none:
+other sessions use them now, so agree a change with the other coordinators
+and the user before you replace them.
 
 Read `references/setup.md` on the first run in a project,
 `references/protocol.md` before you message anyone, `references/rules.md` for
-conduct and PR rules, and `references/dashboard.md` before you write your state
-file.
+conduct and PR rules, `references/dashboard.md` before you write your state
+file, and `references/handoff.md` before you send or take a handoff.
 
 Read [references/agents.md](references/agents.md) for Claude/Codex tool
 equivalents, session identity, messaging, watchers, scheduling and PR repair.
 
 ## Before you start
 
-This skill is the coordinator role. If the live helper is missing, run
-`python3 -I <skill>/scripts/lease.py install` first. Then read `lease.py roster`
-and resolve your role with `lease.py whoami --session-id <current-id>`.
+This skill is the coordinator role. If the live helpers are missing, run
+`python3 -I <skill>/scripts/coordinator.py install` first. Then read `coordinator.py roster`
+and resolve your role with `coordinator.py whoami --session-id <current-id>`.
 Apply the following routes in order:
 
 | Situation | Action |
@@ -67,26 +73,26 @@ skill; `references/protocol.md` lists the coordinator side.
 
 ## Coordinator start
 
-1. Run `lease.py install` from the skill copy. On DIFFERS, use the live copy
-   and tell the user. Run `lease.py config show --project-root "$PWD"`; exit 3
+1. Run `coordinator.py install` from the skill copy. On DIFFERS, use the live copy
+   and tell the user. Run `coordinator.py config show --project-root "$PWD"`; exit 3
    means the machine or project is not configured yet: follow
    `references/setup.md` (detect, then ask setup questions) before step 2.
-2. Claim: `lease.py coordinate --name <slug> --tool <claude|codex> --session-id <session-or-thread-id> --focus "<stack in a few words>" --pr <n> [...]`.
+2. Claim: `coordinator.py coordinate --name <slug> --tool <claude|codex> --session-id <session-or-thread-id> --focus "<stack in a few words>" --pr <n> [...]`.
    Add `--general` when the user asked you to coordinate with no fixed stack
    or scope (a general-purpose coordinator).
    Exit 3 means the name or a PR belongs to a live coordinator: join it with `/puppet`, or
    agree a split with it by message.
-3. Read the skill's memory: `lease.py memory list --project-root "$PWD"`
+3. Read the skill's memory: `coordinator.py memory list --project-root "$PWD"`
    (machine rules, then this project's). Apply them, and put the project
    rules in every WELCOME. Read the newest `ledger.jsonl` entries and the
    other coordinators' focus.
-   Record decisions with `lease.py note --by <slug> --text "..." [--pr <n>]`:
+   Record decisions with `coordinator.py note --by <slug> --text "..." [--pr <n>]`:
    joins, ACTIVE/PAUSE, stack moves, merge SHAs, user decisions. After a
    context reset, `roster`, the ledger and your dashboard file are how you
    recover.
 4. Write `prs-<slug>.txt` in the state dir (`owner/repo#<n>` per line). Arm
-   watchers: `lease.py watch inbox --me <slug>` and `lease.py watch prs --me <slug>`;
-   add `lease.py watch expiry` when leases are on. Re-arm each one that ends.
+   watchers: `coordinator.py watch inbox --me <slug>` and `coordinator.py watch prs --me <slug>`;
+   add `coordinator.py watch expiry` when leases are on. Re-arm each one that ends.
 5. Schedule the heartbeat round (required): Claude `CronCreate`, session-only, every
    15 minutes, prompt "master-of-puppets heartbeat round for <slug>: follow
    the Heartbeat round steps". Inside `/loop` dynamic mode, use
@@ -99,7 +105,7 @@ skill; `references/protocol.md` lists the coordinator side.
    Only an idle coordinator stops it ("When your work is done").
 6. Run `python3 -I <skill>/scripts/server.py` in the background (a no-op when
    one runs) and give the user `http://localhost:4720/`.
-7. Tell the other coordinators: `lease.py say --from <slug> --message "<slug> coordinates <focus>, PRs ..."`.
+7. Tell the other coordinators: `coordinator.py say --from <slug> --message "<slug> coordinates <focus>, PRs ..."`.
 8. Tell the user: "To put an existing thread under this coordinator, run
    `/puppet` in that thread. New tasks for this stack I start and enroll
    myself." From then on, every new task is yours to enroll before it starts
@@ -108,23 +114,23 @@ skill; `references/protocol.md` lists the coordinator side.
 ## Members and tasks (coordinator only)
 
 Message members by the direct routes in `references/protocol.md`, "Routes";
-`lease.py say` is only for messages between coordinators.
+`coordinator.py say` is only for messages between coordinators.
 
 - **Streams**: group your members by goal, so the user can tell the work apart
   on the dashboard (for example "Repo access security" and "Scope UX"). A
   stream is a named goal; it may own several PR stacks. Create one per goal:
-  `lease.py stream add --coordinator <slug> --name <stream-slug> --label "<4 words>" [--goal "<one sentence>"] [--pr <n> ...]`.
+  `coordinator.py stream add --coordinator <slug> --name <stream-slug> --label "<4 words>" [--goal "<one sentence>"] [--pr <n> ...]`.
   Give every member a stream with `--stream` on `enroll` and `member add|update`.
-  Close a stream when its goal is done: `lease.py stream close`. Stream slugs are
+  Close a stream when its goal is done: `coordinator.py stream close`. Stream slugs are
   unique on the machine; only the owner changes a stream.
-- **JOIN** arrives: `lease.py member add --coordinator <slug> --name <name> --tool <t> --session-id <id> --worktree <p> --task "<task>" --pr <n> --repo <owner/repo> --session <deep link> --stream <stream-slug>`,
+- **JOIN** arrives: `coordinator.py member add --coordinator <slug> --name <name> --tool <t> --session-id <id> --worktree <p> --task "<task>" --pr <n> --repo <owner/repo> --session <deep link> --stream <stream-slug>`,
   then send WELCOME (`references/protocol.md`).
-- **UPDATE, STATUS reply or MERGED**: `lease.py member update --coordinator <slug> --name <name> --phase "<phase>" --kind ok|work|warn|done --latest "<newest fact>" [--pr ...]`.
+- **UPDATE, STATUS reply or MERGED**: `coordinator.py member update --coordinator <slug> --name <name> --phase "<phase>" --kind ok|work|warn|done --latest "<newest fact>" [--pr ...]`.
   This also updates the member's row on the dashboard. Keep `--phase` and
   `--latest` short; shorten a long UPDATE first (`references/dashboard.md`,
   "Writing for the dashboard").
 - **ENROLL REQUEST**, or a task you start yourself:
-  `lease.py enroll --coordinator <slug> --task "<one line>" --stream <stream-slug> [--by <member>] [--pr <n>]`.
+  `coordinator.py enroll --coordinator <slug> --task "<one line>" --stream <stream-slug> [--by <member>] [--pr <n>]`.
   The printed kickoff line tells the new session to run `/puppet` and join you
   under its enrolled name. Put it first in the prompt of every task you start,
   or send it back to the member that asked. Tasks your members start get one
@@ -134,7 +140,7 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
   yourself.
 - **Pending entries**: check them each round. One still pending after 30
   minutes is a task that never started (a chip not clicked) or a child that did
-  not send JOIN: ask the starter, then `lease.py member remove`.
+  not send JOIN: ask the starter, then `coordinator.py member remove`.
 - **Done** means every PR of the task is MERGED, or the user dropped the task,
   or the task changes no code (an investigation) and its answer is reported.
   Passing checks is not done. When a member reports code that is complete but
@@ -144,9 +150,10 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
   under Needs you. Never mark a member done, or tell it LEAVE is fine, while it
   has uncommitted changes or an open PR.
 - **LEAVE**: confirm the task is done (above), then
-  `lease.py member remove --coordinator <slug> --name <name>`. A LEAVE with
+  `coordinator.py member remove --coordinator <slug> --name <name>`. A LEAVE with
   uncommitted work or an open PR: ask why first, and ask the user when unsure.
-- **Decisions for the user**: `lease.py decision add --by <slug> --task <id> --text "..." [--href <link>]`;
+  A LEAVE after your HANDOFF COMPLETE is expected (`references/handoff.md`).
+- **Decisions for the user**: `coordinator.py decision add --by <slug> --task <id> --text "..." [--href <link>]`;
   `decision clear --by <slug> --task <id>` once answered.
 
 ## Driving a stack
@@ -189,15 +196,15 @@ PR another coordinator owns; message it.
 
 Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
 
-1. `lease.py heartbeat --name <slug>` (add `--focus`/`--pr` when they change);
-   read `roster`, `lease.py status --brief` and new ledger entries.
+1. `coordinator.py heartbeat --name <slug>` (add `--focus`/`--pr` when they change);
+   read `roster`, `coordinator.py status --brief` and new ledger entries.
 2. Re-arm any watcher that ended; on Codex, consume new watcher output and
    recover unread inbox/ledger entries (`references/agents.md`).
 3. Compare each stack with the latest `watch prs` lines; act on steps 3 and 4
    above. Confirm with one `gh pr view` before each stack move, not on a timer.
 4. Leases on: expiry check and grants (`references/leases.md`).
 5. Check on members; do not wait for them to report.
-   `lease.py member stale --coordinator <slug> --minutes 30` lists members with
+   `coordinator.py member stale --coordinator <slug> --minutes 30` lists members with
    no recorded update. For each one: read its PRs in the latest `watch prs`
    lines and record observations with `note`, then send `STATUS?`. Do not
    refresh member state from watcher observations: `member update` resets its
@@ -212,8 +219,8 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
 Go idle when no work can move: every member is done, has left, or is paused
 because the user parked its work. Parked work stays yours: you keep its PRs
 and paused members, and the dashboard lists them under Parked. Park and
-unpark with `lease.py park --coordinator <slug> --name <member> [--until YYYY-MM-DD]`
-and `lease.py unpark`; the user can do both from the dashboard, and you then get
+unpark with `coordinator.py park --coordinator <slug> --name <member> [--until YYYY-MM-DD]`
+and `coordinator.py unpark`; the user can do both from the dashboard, and you then get
 a "[dashboard]" message: tell the member to stop or resume. A dated park
 returns to Needs you as "Revisit" after its date: ask the user whether to
 resume it, park it again or close it. An active or pending member keeps you
@@ -221,11 +228,11 @@ active.
 
 1. **General coordinator** (`--general`): just before you go idle, ask the
    other coordinators once for work:
-   `lease.py say --from <slug> --message "WORK REQUEST — <slug> is free for a stream, a task or PRs"`.
+   `coordinator.py say --from <slug> --message "WORK REQUEST — <slug> is free for a stream, a task or PRs"`.
    Send it only this once; never repeat it. Wait until your next heartbeat
-   round. A HANDOFF reply: take the work (below) and stay active. No handoff:
+   round. A HANDOFF reply: take the work (`references/handoff.md`, step 3) and stay active. No handoff:
    go idle. A scoped coordinator sends no work request.
-2. **Go idle**: `lease.py heartbeat --name <slug> --status idle` (refused while
+2. **Go idle**: `coordinator.py heartbeat --name <slug> --status idle` (refused while
    a member is active or pending; it lists parked PRs and members). Then stop
    your heartbeat schedule and watchers, and tell the user once: "<slug> is
    idle" and what is parked, waiting for the user. The dashboard shows you as
@@ -233,20 +240,18 @@ active.
    stale or without updates, and peers do not chase it.
 3. **New work later** comes only from the user (new work, or resuming parked
    work), or from a HANDOFF in reply to your one request.
-   `lease.py heartbeat --name <slug> --status active` (an `enroll`, a
+   `coordinator.py heartbeat --name <slug> --status active` (an `enroll`, a
    `member add` or `member update --status active` also does it), then re-arm
    the watchers and the heartbeat schedule ("Coordinator start", steps 4 and 5).
 
 **A WORK REQUEST from a peer**: reply only when you have work to hand off: a
 stream without enough members, a task not yet started, or a PR without an
-active owner. Send `HANDOFF — <what> — PRs <n> — streams <slug> — members <names>`.
-When the peer agrees:
-- `lease.py stream update --coordinator <you> --name <stream> --owner <peer>`.
-- Drop the PRs with `heartbeat --name <you> --pr ...`; the peer claims them
-  with `heartbeat --name <peer> --pr ...`.
-- Tell each moved member to send JOIN to the peer; then `member remove`.
-- Both coordinators `note` the handoff.
+active owner. Offer it with the HANDOFF steps in `references/handoff.md`.
 With nothing to hand off, do not reply.
+
+**Handoffs** of a task, a stream or a whole stack, between members or
+coordinators, Claude or Codex: follow `references/handoff.md`. Only the user,
+or a HANDOFF in answer to a WORK REQUEST, starts one.
 
 ## Memory
 
@@ -258,15 +263,15 @@ BUILD lease", "this repo merges through a merge queue".
 
 - When the user states a rule for this project or machine (directly,
   or relayed as USER SYNC), record it:
-  `lease.py memory add --by <slug> --kind rule|note --text "..." [--project-root <path>]`.
+  `coordinator.py memory add --by <slug> --kind rule|note --text "..." [--project-root <path>]`.
   Omit `--project-root` for a machine-wide entry. Tell your members and the
   other coordinators, and `note` it.
-- Remove a rule the user withdraws: `lease.py memory remove --id <id> [--project-root <path>]`.
+- Remove a rule the user withdraws: `coordinator.py memory remove --id <id> [--project-root <path>]`.
 - A rule that should hold in every project is a change to the skill itself,
   not a memory entry.
 - Lessons (what went wrong, why, and what to do next time) go into your own
   agent memory: Claude's memory directory, or Codex's memory. Not into the
-  skill and not into `lease.py memory`. Turn a lesson into a rule only when
+  skill and not into `coordinator.py memory`. Turn a lesson into a rule only when
   the user asks.
 
 ## Messages
@@ -295,5 +300,5 @@ into the next real report. Auto-merge on, queued and MERGED are different states
 report the exact one. Quote raw failures. Never ask a member to weaken a test
 or rerun a flake to green. When you make a mistake, say so and how you fixed
 it. When you stop, stop your watchers and heartbeat schedule, run
-`lease.py resign --name <slug>` and tell your members
+`coordinator.py resign --name <slug>` and tell your members
 and the other coordinators.

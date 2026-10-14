@@ -12,7 +12,7 @@ cannot know: this stack, the project rules and the lease setup.
 WELCOME — <slug> coordinates <focus>. You are a member for <task> (PRs <list>).
 Follow the puppet skill.
 Shared PR rules: <state dir>/pr-rules.md (if present).
-Project rules from my memory: <output of lease.py memory list --project-root <worktree>, rules only>.
+Project rules from my memory: <output of coordinator.py memory list --project-root <worktree>, rules only>.
 Leases are <on|off>. <If on, the lease addendum follows.>
 ```
 
@@ -34,6 +34,7 @@ Split runs longer than the limit.
 | `USER SYNC — <one line>` | `note`, `member update --latest` |
 | `LEASE REQUEST ...` | see `references/leases.md` |
 | `LEAVE — <name>` | `member remove` |
+| `HANDOFF REQUEST — <name> — to <coordinator\|any> — PRs <n> — note <path>` | `PAUSE` its PRs, then offer (`references/handoff.md`) |
 
 ## Replies you send
 
@@ -50,11 +51,25 @@ Split runs longer than the limit.
 | Grant | `LEASE GRANTED — <CLASS> <id> for <task>, until <time>. Covers: <commands>. Release: <command>.` |
 | Over the limit | `LEASE QUEUED — <min> min is over the <max>-min limit, so I split it: part 1 keeps position <n>, part 2 joins the back.` |
 | Expiry | `LEASE EXPIRED — <id> passed <time>. Release now, or reply with progress and I extend it if the queue allows.` |
+| Handoff done, member replaced | `HANDOFF COMPLETE — <name>` (it sends LEAVE) |
+| Handoff done, member moves | `HANDOFF COMPLETE — <name> — JOIN <receiver>` |
+
+## Handoff messages between coordinators (`say`)
+
+See `references/handoff.md` for the steps around each one.
+
+| Message | Sent by |
+| --- | --- |
+| `HANDOFF — <what> — PRs <n> — streams <slug> — members <names> — note <path>` | sender, after it dropped its claims |
+| `CUSTODY ACCEPTED — <you> owns <what> — successor pending` | receiver, after its user said yes |
+| `HANDOFF DECLINED — <reason>` | receiver |
+| `SUCCESSOR JOINED — <name> — <tool> <session id>` | receiver |
+| `HANDOFF CLOSED — <what> — merged <sha> — cleanup <done\|left with the user: items>` | receiver |
 
 ## Routes
 
 Members and their coordinator communicate directly in both directions for
-every protocol message. Only messages between coordinators use `lease.py say`.
+every protocol message. Only messages between coordinators use `coordinator.py say`.
 The coordinator records member updates in the roster/dashboard and decisions
 in the ledger; member messages need no shared inbox copy.
 
@@ -71,7 +86,7 @@ in the ledger; member messages need no shared inbox copy.
 - Codex subagents in the same tree: `collaboration.send_message` (or
   `collaboration.followup_task` for new work). These IDs are not app thread IDs.
 - Coordinator to coordinator only:
-  `lease.py say --from <name> --to <name> --message "<text>"`
+  `coordinator.py say --from <name> --to <name> --message "<text>"`
   Send only what the other coordinator must act on: handoffs, blockers, order
   changes, rule changes. A general coordinator's one `WORK REQUEST` gets a
   `HANDOFF` reply only from a coordinator with work to spare (SKILL.md, "When
@@ -79,7 +94,7 @@ in the ledger; member messages need no shared inbox copy.
   per-step progress such as "acquired" or "released"; `events.log` already
   shows them.
   (omit `--to` to reach every live coordinator). It appends to `inbox.jsonl`
-  (`lease.py watch inbox` shows it), then delivers directly: a Claude session
+  (`coordinator.py watch inbox` shows it), then delivers directly: a Claude session
   through its inbox socket, a Codex thread through `codex queue`.
   For Desktop direct delivery, use `say --no-direct` for the inbox record,
   then `send_message_to_thread` once; do not duplicate direct delivery.
@@ -93,9 +108,11 @@ in the ledger; member messages need no shared inbox copy.
   - The socket frame names the receiver's current session id, so a stale
     roster session id breaks delivery.
 - Dashboard to coordinator: the dashboard's queue buttons run
-  `lease.py up|unwait --notify`, which records an inbox message from
+  `coordinator.py up|unwait --notify`, which records an inbox message from
   `dashboard` to each affected coordinator and delivers it directly, as `say`
   does. It reports the user's action (`references/leases.md`).
+- Never use GUI automation (pasting into another app's window) as a message
+  route.
 - If no supported direct route to a member or its coordinator is available,
   report the delivery gap. Do not use `say` as a member-message fallback, and
   do not use a fallback to bypass an authorization restriction.
