@@ -232,6 +232,18 @@ def load():
     return state
 
 
+def order(queue):
+    """Higher priority first. The sort is stable, so entries of one priority keep their order (FIFO)."""
+    queue.sort(key=lambda q: -q.get("priority", 0))
+
+
+def task_priority(roster, coord, holder):
+    """Priority of the member that a queue entry's holder names (its first word), else 0."""
+    name = holder.partition(" ")[0]
+    m = next((x for x in roster["members"].get(coord, []) if x["name"] == name), None)
+    return (m or {}).get("priority", 0)
+
+
 def save(state, machine):
     state["budget"] = budget(state, machine)
     tmp = STATE + ".tmp"

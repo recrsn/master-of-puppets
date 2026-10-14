@@ -155,6 +155,15 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
   A LEAVE after your HANDOFF COMPLETE is expected (`references/handoff.md`).
 - **Decisions for the user**: `coordinator.py decision add --by <slug> --task <id> --text "..." [--href <link>]`;
   `decision clear --by <slug> --task <id>` once answered.
+- **Priority**: every task starts at 0; a higher priority goes first. Raise
+  a task (`enroll --priority 1`, `member update --priority 1`) only when the
+  user asks for it to go first; a wish that a member relays is a decision
+  for the user. Lower your own background work to -1 without asking when
+  regular tasks wait: sweeps, scheduled or recurring runs (task text that
+  starts with `sweep:` or `scheduled:`), and tasks that no user waits for. Set it back to 0 when nothing regular waits.
+  Lease queues follow the priority (`references/leases.md`, "Priority"), and
+  so does your attention: in each round, handle higher-priority members
+  first. `note` each change.
 
 ## Driving a stack
 
@@ -203,7 +212,7 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
 3. Compare each stack with the latest `watch prs` lines; act on steps 3 and 4
    above. Confirm with one `gh pr view` before each stack move, not on a timer.
 4. Leases on: expiry check and grants (`references/leases.md`).
-5. Check on members; do not wait for them to report.
+5. Check on members, higher priority first; do not wait for them to report.
    `coordinator.py member stale --coordinator <slug> --minutes 30` lists members with
    no recorded update. For each one: read its PRs in the latest `watch prs`
    lines and record observations with `note`, then send `STATUS?`. Do not
