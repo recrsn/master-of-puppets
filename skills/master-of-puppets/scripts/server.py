@@ -15,9 +15,9 @@ heartbeat age). Every 5 s the server samples the host (CPU, load, memory, swap, 
                queues and coordinators; the ledger opens in a drawer. Wall mode: the
                same, large, for a shared screen (add ?mode=wall to the URL)
   POST /park   {"action": "park"|"unpark", "coord", "name", "until"?} from the Park and Unpark
-               buttons: runs `lease.py park|unpark ... --notify`, so the coordinator is told.
+               buttons: runs `coordinator.py park|unpark ... --notify`, so the coordinator is told.
   POST /queue  {"action": "up"|"unwait", "cls", "id"} from the page's Move up and Cancel
-               buttons: runs `lease.py <action> CLASS --id ID --notify`, which tells each
+               buttons: runs `coordinator.py <action> CLASS --id ID --notify`, which tells each
                affected coordinator. Same-origin JSON with X-Requested-By only.
   /events      text/event-stream: `update` (page changed) and `host` (JSON sample)
   /host.json   the latest host sample
@@ -825,22 +825,22 @@ def host_sampler():
         time.sleep(HOST_EVERY)
 
 
-LEASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lease.py")
+COORDINATOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coordinator.py")
 QUEUE_ACTIONS = ("up", "unwait")
 ENTRY_ID = re.compile(r"^[\w.:@-]{1,200}$")
 
 
 def queue_action(action, cls, entry_id):
-    """Run `lease.py up|unwait CLASS --id ID --notify`; returns (ok, output lines)."""
+    """Run `coordinator.py up|unwait CLASS --id ID --notify`; returns (ok, output lines)."""
     if action not in QUEUE_ACTIONS or cls not in (machine_config().get("classes") or DEFAULT_REGISTRY) or not ENTRY_ID.match(entry_id):
         return False, ["bad request"]
     try:
-        r = subprocess.run([sys.executable, "-I", LEASE, action, cls, "--id", entry_id, "--notify"],
+        r = subprocess.run([sys.executable, "-I", COORDINATOR, action, cls, "--id", entry_id, "--notify"],
                            capture_output=True, text=True, timeout=180)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return False, [f"lease.py failed: {exc}"]
+        return False, [f"coordinator.py failed: {exc}"]
     lines = [x for x in (r.stdout + r.stderr).splitlines() if x.strip()]
-    return r.returncode == 0, lines or [f"lease.py exit {r.returncode}"]
+    return r.returncode == 0, lines or [f"coordinator.py exit {r.returncode}"]
 
 
 PARK_ACTIONS = ("park", "unpark")
@@ -849,18 +849,18 @@ DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def park_action(action, coord, name, until):
-    """Run `lease.py park|unpark --coordinator C --name N [--until D] --notify`."""
+    """Run `coordinator.py park|unpark --coordinator C --name N [--until D] --notify`."""
     if action not in PARK_ACTIONS or not NAME.match(coord) or not NAME.match(name) or (until and not DATE.match(until)):
         return False, ["bad request"]
-    cmd = [sys.executable, "-I", LEASE, action, "--coordinator", coord, "--name", name, "--notify"]
+    cmd = [sys.executable, "-I", COORDINATOR, action, "--coordinator", coord, "--name", name, "--notify"]
     if action == "park" and until:
         cmd += ["--until", until]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return False, [f"lease.py failed: {exc}"]
+        return False, [f"coordinator.py failed: {exc}"]
     lines = [x for x in (r.stdout + r.stderr).splitlines() if x.strip()]
-    return r.returncode == 0, lines or [f"lease.py exit {r.returncode}"]
+    return r.returncode == 0, lines or [f"coordinator.py exit {r.returncode}"]
 
 
 class Handler(http.server.BaseHTTPRequestHandler):

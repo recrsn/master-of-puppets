@@ -3,7 +3,7 @@
 Leases make sessions take turns on shared actions: heavy jobs, or anything only
 one session may use at a time. They are machine-wide:
 every coordinator shares the same queues. They are off by default. Turn them on
-only on the user's word: `lease.py leases on --by <slug>`. Then send the lease
+only on the user's word: `coordinator.py leases on --by <slug>`. Then send the lease
 addendum (`references/protocol.md`) to your members and tell the other
 coordinators.
 
@@ -18,7 +18,7 @@ default registry has two:
   45 min; settles BUILD for 60 s.
 
 Add or change one with
-`lease.py config set-class <NAME> --description "..." --default-gib <n> --max-minutes <n> [--settle OTHER=<s>]`,
+`coordinator.py config set-class <NAME> --description "..." --default-gib <n> --max-minutes <n> [--settle OTHER=<s>]`,
 and cap it with `config set-machine --max-slots <NAME>=<n>`. A class with
 `--default-gib 0` uses no memory budget, so only its slot cap limits it. That
 fits a single resource: one Chrome window for E2E screenshots
@@ -30,21 +30,21 @@ coordinators and your members.
 
 **Project rules** can widen a class's scope, for example "a commit whose hooks
 run lint needs a BUILD lease" in one repository. They live in the skill's
-memory, not here: read them with `lease.py memory list --project-root <path>`
+memory, not here: read them with `coordinator.py memory list --project-root <path>`
 and include them in WELCOME.
 
 **No lease**: a plain dependency install, source edits, reading code,
 browser-only work against remote sites, unless a class or a project rule
 covers it.
 
-Maximum length: `maxMinutesEffective` per class from `lease.py config show`. Every release records the run minutes;
+Maximum length: `maxMinutesEffective` per class from `coordinator.py config show`. Every release records the run minutes;
 in learn mode the limit adapts to p90 of the last 10 runs + 25%, capped by
 the configured maximum, and queue ETAs use the median run. Split a longer
 request: the first part keeps the queue place, later parts join the back.
 
 ## Adaptive capacity
 
-There is no fixed slot count. `lease.py` admits a grant when the expected peak
+There is no fixed slot count. `coordinator.py acquire` admits a grant when the expected peak
 memory of all holders plus the request fits the budget:
 
 ```
@@ -57,7 +57,7 @@ sum(held GiB) + request GiB <= total RAM - reserve
   so the right project's peak applies.
 - A request may carry its own estimate: `wait|acquire ... --gib <n>`.
 - Measure every lease: right after `acquire`, start
-  `lease.py measure-peak --id <id> --worktree <worktree>` in the background. It sums the RSS
+  `coordinator.py measure-peak --id <id> --worktree <worktree>` in the background. It sums the RSS
   of processes whose working directory is in the worktree, writes the running
   peak to `peaks/<id>.gib`, and exits after release. `release` records it.
   RSS counts shared pages twice, so the figure errs high. Processes that run
@@ -65,11 +65,11 @@ sum(held GiB) + request GiB <= total RAM - reserve
   by hand when you know better.
 - Settings come from the first-run setup (`references/setup.md`): the memory
   reserve and optional slot caps per machine
-  (`lease.py config set-machine --reserve-gib <n> --max-slots BUILD=<n>`), and
+  (`coordinator.py config set-machine --reserve-gib <n> --max-slots BUILD=<n>`), and
   per project the peak mode, starting GiB and max minutes
-  (`lease.py config set-project --root <path> --class BUILD --peak learn --default-gib <n> --max-minutes <n>`).
+  (`coordinator.py config set-project --root <path> --class BUILD --peak learn --default-gib <n> --max-minutes <n>`).
   In fixed mode, samples are still recorded but not used.
-- `lease.py capacity` prints the budget, the class peaks and how many of each
+- `coordinator.py capacity` prints the budget, the class peaks and how many of each
   class fit now. The dashboard shows the same numbers.
 
 Example: on a 24 GiB machine with a 6 GiB reserve, a 10 GiB build and an 8 GiB
@@ -81,16 +81,16 @@ The memory budget predicts; the host check observes. Both must pass.
 ## Granting
 
 1. Record the request under the id the member proposed (it is already waiting
-   on it, for up to 10 minutes): `lease.py wait <CLASS> --coordinator <slug> --holder "<task> <what>" --id <member's id> --minutes <est> --commands "<exact commands>" --worktree <path> [--gib <n>]`.
+   on it, for up to 10 minutes): `coordinator.py wait <CLASS> --coordinator <slug> --holder "<task> <what>" --id <member's id> --minutes <est> --commands "<exact commands>" --worktree <path> [--gib <n>]`.
    To change an entry later, pass only `--id` and the fields that change.
    Start `--holder` with the task id (the dashboard matches on it). Reply
    LEASE QUEUED with the position.
-2. When that entry is the first ready one, run `lease.py host-check` **as
+2. When that entry is the first ready one, run `coordinator.py host-check` **as
    its own step** and read the verdict. Never chain it with `acquire`: you
    will grant on a BUSY reading.
-3. BUSY: do not grant. Start `lease.py calm-wait` in the background (`--settle <s>` while a stack starts), tell
+3. BUSY: do not grant. Start `coordinator.py calm-wait` in the background (`--settle <s>` while a stack starts), tell
    the member it waits for host pressure, and grant on CALM.
-4. CALM: `lease.py acquire ... --measure`. `--measure` starts `measure-peak`
+4. CALM: `coordinator.py acquire ... --measure`. `--measure` starts `measure-peak`
    for the lease; the granted commands come from the queue entry (or
    `--commands`) and show in `status --brief` and on the dashboard. Exit 3 with
    `settling` means another class's grant settles this one (for example BUILD
@@ -98,9 +98,9 @@ The memory budget predicts; the host check observes. Both must pass.
    request does not fit the memory budget: keep it queued and wait for a
    release. Exit 0: send LEASE GRANTED with the lease id, the recorded
    commands, expiry and release command.
-5. On release: confirm with `lease.py status --brief` and `note` the result.
+5. On release: confirm with `coordinator.py status --brief` and `note` the result.
    After an E2E release, run
-   `lease.py drain-check --worktree <path> [--port <n> ...] [--process <pattern> ...]`; grant
+   `coordinator.py drain-check --worktree <path> [--port <n> ...] [--process <pattern> ...]`; grant
    the next E2E only when it exits 0, else ask the holder to stop what is left.
    If the next head belongs to another coordinator, tell it the slot is free.
 6. A member running commands outside the recorded scope breaks "use it or
@@ -110,7 +110,7 @@ Strict FIFO per class: only the first ready entry may acquire, whoever owns
 it. No coordinator jumps the queue.
 
 Only the user changes the order: the dashboard's Move up and Cancel buttons
-run `lease.py up|unwait CLASS --id ID --notify`. Move up puts a ready entry
+run `coordinator.py up|unwait CLASS --id ID --notify`. Move up puts a ready entry
 ahead of the ready entry in front of it; Cancel removes an entry. Each affected
 coordinator gets `INBOX dashboard: ...`. Treat it as the user's direction:
 tell the affected members their new turn, or that the entry is gone. Do not

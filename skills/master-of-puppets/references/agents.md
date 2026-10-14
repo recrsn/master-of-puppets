@@ -38,7 +38,7 @@ stops. Do not replace it with a standalone cron job unless the user requests
 that mode. If scheduling is unavailable, report that gap; a shell watcher
 does not supply scheduled agent turns.
 
-Codex has no required `Monitor` tool. Run `lease.py watch inbox`, `watch prs`
+Codex has no required `Monitor` tool. Run `coordinator.py watch inbox`, `watch prs`
 and (when leases are on) `watch expiry` as long-lived commands. Save watcher
 output outside the repository and track how much was read so each heartbeat
 can consume new events. `write_stdin` reads a live `exec_command` session;

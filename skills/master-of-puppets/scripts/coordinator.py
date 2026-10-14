@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Shared coordination state for master-of-puppets: roster, ledger, inbox and leases.
+"""Coordinator commands for master-of-puppets: roster, members, streams, ledger,
+memory, peer messaging, leases, the host gate, watchers, config and install.
+Members use puppet.py. Shared code is in moplib.py.
+
+Configuration (asked once through the skill's first-run setup):
+  machine  $DIR/config.json             reserveGiB, diskFloorGiB, maxSwapouts, swapIntervalS,
+                                        loadPerCore, dashboardPort, maxSlots, classes
+  project  $DIR/projects/<key>.json     root, baseBranch, mergeMethod, leasesDefault and per
+                                        class maxMinutes, peakMode (learn|fixed), defaultGiB, samples
+The project key comes from the repository's git common dir, so all worktrees of one
+repository share a file; nothing is written into the repository.
 
 Lease classes are a registry in config.json: any shared action that sessions must
 take turns on (builds, local stacks, one browser window, a shared tunnel, a test
@@ -26,24 +36,18 @@ the default. Example: on a 24 GiB machine with a 6 GiB reserve, BUILD ~10 GiB an
 E2E ~8 GiB admit one of each; 64 GiB admits more. A 0 GiB class uses no budget. Swap, load and disk are a
 separate gate (`host-check`), run before every acquire.
 
-Configuration (asked once through the skill's first-run setup):
-  machine  $DIR/config.json             reserveGiB, diskFloorGiB, maxSwapouts, swapIntervalS,
-                                        loadPerCore, dashboardPort, maxSlots, classes
-  project  $DIR/projects/<key>.json     root, baseBranch, mergeMethod, leasesDefault and per
-                                        class maxMinutes, peakMode (learn|fixed), defaultGiB, samples
-The project key comes from the repository's git common dir, so all worktrees of one
-repository share a file; nothing is written into the repository.
-
 Admission is strict FIFO per class across coordinators: only the first ready
 entry may acquire. An expired lease (past expiresAt) still holds its memory: its
-holder releases it; a coordinator needs the user's approval for a takeover.
+holder releases it (puppet.py release); a coordinator needs the user's approval for a takeover.
 
 State lives in $MACHINE_LEASE_DIR (default ~/.local/state/machine-leases), not beside
 this file, so every coordinator that runs any copy shares one state.
 
-Usage: python3 -I lease.py <command> ...   (the skill's other file is server.py)
+Usage: python3 -I coordinator.py <command> ...
+       (the skill's other files are moplib.py, puppet.py and server.py)
 
-Leases (coordinators)
+Leases
+  leases on|off --by C            machine-wide; only on the user's word
   status [--brief] | capacity
   wait CLASS --coordinator C --holder NAME --id ID [--minutes N] [--gib N] [--commands TEXT] [--worktree P] [--front]
        for an existing ID every flag is optional and only the given fields change
@@ -52,18 +56,18 @@ Leases (coordinators)
        exit 0 granted, 3 queued behind another entry, at a slot cap or in a settle window
        (another class's grant settles this one), 4 over the memory budget.
        --commands records the granted scope; --measure starts measure-peak itself.
-  release CLASS --id ID [--peak-gib N] | unwait | hold | ready CLASS --id ID
+       The holder releases with puppet.py release.
+  unwait | hold | ready CLASS --id ID
   up CLASS --id ID                move a ready entry ahead of the ready entry in front of it
        unwait and up take --notify (the dashboard's queue buttons): each affected
        coordinator gets an inbox message from "dashboard", delivered directly as say does
   extend CLASS --id ID --minutes N
-  park --coordinator C --name MEMBER [--until YYYY-MM-DD] [--notify]
-  unpark --coordinator C --name MEMBER [--notify]
-       park sets the member to paused; the task leaves Needs you and returns there as
-       "Revisit" after --until. The dashboard's Park/Unpark buttons use --notify.
   host-check                      admission gate; exit 0 CALM, 1 BUSY; prints disk_low=yes|no
+  calm-wait [--settle S] [--retry S]           one CALM line when the host is calm
   measure-peak --id ID --worktree P [--interval S]   run in the background after acquire
   drain-check --worktree P [--port N ...] [--process PATTERN ...]   exit 0 when nothing is left; never kills
+
+Config
   config show [--project-root P] | set-machine ... | set-project --root P ... | project-key P
        machine: --reserve-gib --disk-floor-gib --max-swapouts --swap-interval-s --load-per-core
                 --dashboard-port --max-slots CLASS=N (N=0 removes the cap)
@@ -82,7 +86,6 @@ Roster and members (coordinators write; members send messages and release their 
        --status idle: no work can move. Refused (exit 3) while a member is active or
        pending. Paused members and their PRs stay C's as parked work. An idle
        coordinator is not reported stale; resuming a member wakes it.
-  leases on|off --by C            machine-wide; only on the user's word
   stream add|update --coordinator C --name SLUG [--label TEXT] [--goal TEXT] [--pr N ...]
        update --owner C2 hands the stream to live coordinator C2
   stream close|reopen --coordinator C --name SLUG | stream list [--coordinator C]
@@ -97,6 +100,10 @@ Roster and members (coordinators write; members send messages and release their 
        updates the roster and the member's row in dashboard/<C>-state.json
   member remove --coordinator C --name NAME
   member stale --coordinator C [--minutes 30]   members (not done) with no update for N minutes
+  park --coordinator C --name MEMBER [--until YYYY-MM-DD] [--notify]
+  unpark --coordinator C --name MEMBER [--notify]
+       park sets the member to paused; the task leaves Needs you and returns there as
+       "Revisit" after --until. The dashboard's Park/Unpark buttons use --notify.
   decision add --by C --text TEXT [--task ID] [--href URL] | decision clear --by C (--task ID | --all)
   note --by C --text TEXT [--pr N]   shared ledger
 
@@ -119,15 +126,9 @@ Peer-coordinator messaging
        coordinators use say. A receiver that bypasses
        permission prompts holds a socket message for the user's approval.
 
-Waiters (authorized sessions)
-  await-grant CLASS --id ID [--timeout-min N] [--appear-timeout S]
-       prints GRANTED or NOT-GRANTED <reason>. Exit 0 granted (the only grant);
-       3 left the queue without a grant; 5 timeout while still queued; 6 never queued
-       within --appear-timeout (default 600 s), so a member may start before the
-       coordinator queues the ID it proposed
-  calm-wait [--settle S] [--retry S]           one CALM line when the host is calm
+Watchers and install
   watch inbox --me C | watch expiry | watch prs --me C [--interval S]   Monitor sources
-  install                                     copy this file into the state dir if absent
+  install                     copy moplib.py, coordinator.py and puppet.py into the state dir when absent
 
 A coordinator is live while its heartbeat is newer than 40 minutes. coordinate and
 heartbeat exit 3 when a PR is owned by another live coordinator; enroll and member
@@ -135,188 +136,29 @@ exit 3 when the coordinator is not live.
 """
 import argparse
 import datetime as dt
-import hashlib
 import json
-import os
 import re
 import shutil
-import socket
 import subprocess
-import tempfile
-import uuid
-import sys
 import time
+import os
+import sys
 
-DIR = os.path.expanduser(os.environ.get("MACHINE_LEASE_DIR") or "~/.local/state/machine-leases")
-os.makedirs(DIR, exist_ok=True)
-STATE = os.path.join(DIR, "leases.json")
-CONFIG = os.path.join(DIR, "config.json")
-PROJECTS = os.path.join(DIR, "projects")
-ROSTER = os.path.join(DIR, "roster.json")
-LEDGER = os.path.join(DIR, "ledger.jsonl")
-LIVE_MINUTES = 40
-TOOLS = ("claude", "codex")
-SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}$")
-PEAKS = os.path.join(DIR, "peaks")
-LOCK = os.path.join(DIR, "lock")
-LOG = os.path.join(DIR, "events.log")
-INBOX = os.path.join(DIR, "inbox.jsonl")
-CLASS_NAME = re.compile(r"^[A-Z][A-Z0-9_-]{0,23}$")
-DEFAULT_REGISTRY = {
-    "BUILD": {"description": "builds, typecheck, lint/format, tests, codegen", "defaultGiB": 10, "maxMinutes": 20, "settle": {}},
-    "E2E": {"description": "local servers/stacks and interacting with them", "defaultGiB": 8, "maxMinutes": 45, "settle": {"BUILD": 60}},
-}
-MACHINE_DEFAULTS = {
-    "reserveGiB": 6,
-    "diskFloorGiB": 4,
-    "maxSwapouts": 200,
-    "swapIntervalS": 12,
-    "loadPerCore": 2.5,
-    "dashboardPort": 4720,
-    "maxSlots": {},
-}
-PROJECT_DEFAULTS = {"baseBranch": "main", "mergeMethod": "squash", "leasesDefault": "off"}
-SAMPLES_KEPT = 5
-SAMPLES_TRUSTED = 3
-MINUTES_KEPT = 10
+# python3 -I keeps the script's own directory off sys.path; moplib is its sibling.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
+from moplib import (
+    DIR, CONFIG, TOOLS, SLUG, PEAKS, LOG,
+    INBOX, CLASS_NAME, read_json, write_json, load_machine, registry,
+    class_names, project_key, load_project, save_project, class_peak, typical_minutes,
+    max_minutes, now, lock, unlock, log, note,
+    load_roster, save_roster, live, load, save, budget,
+    say, deliver, notify, READS, memory_path, add_read_commands,
+    read_cmd,
+)
 
 
-def total_gib():
-    out = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True).stdout.strip()
-    if out.isdigit():
-        return int(out) / 2**30
-    return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2**30
-
-
-def read_json(path):
-    try:
-        return json.load(open(path))
-    except (OSError, ValueError):
-        return None
-
-
-def write_json(path, data):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=1)
-    os.replace(tmp, path)
-
-
-def load_machine():
-    raw = read_json(CONFIG) or {}
-    cfg = {**MACHINE_DEFAULTS, **raw}
-    cfg["configured"] = bool(raw.get("configured"))
-    return cfg
-
-
-def registry(machine=None):
-    """Lease classes: config.json "classes", else the default BUILD and E2E."""
-    machine = machine or load_machine()
-    return machine.get("classes") or json.loads(json.dumps(DEFAULT_REGISTRY))
-
-
-def class_names(machine=None):
-    return list(registry(machine))
-
-
-def project_class_defaults(cls):
-    reg = registry().get(cls, {})
-    return {"maxMinutes": reg.get("maxMinutes", 20), "minutesMode": "fixed", "peakMode": "learn", "defaultGiB": reg.get("defaultGiB", 0)}
-
-
-def project_key(root):
-    """Slug of the main checkout plus a short hash, shared by every worktree of a repository."""
-    root = os.path.abspath(os.path.expanduser(root))
-    out = subprocess.run(["git", "-C", root, "rev-parse", "--git-common-dir"], capture_output=True, text=True)
-    base = root
-    if out.returncode == 0 and out.stdout.strip():
-        common = os.path.normpath(os.path.join(root, out.stdout.strip()))
-        base = os.path.dirname(common) if os.path.basename(common) == ".git" else common
-    slug = re.sub(r"[^a-z0-9]+", "-", os.path.basename(base).lower()).strip("-") or "project"
-    return f"{slug}-{hashlib.sha256(base.encode()).hexdigest()[:6]}", base
-
-
-def load_project(key, root=None):
-    raw = read_json(os.path.join(PROJECTS, f"{key}.json")) or {}
-    proj = {**PROJECT_DEFAULTS, "key": key, "root": root, **raw}
-    proj["configured"] = bool(raw.get("configured"))
-    stored = proj.get("classes", {})
-    proj["classes"] = {c: {**project_class_defaults(c), "samples": [], "runMinutes": [], **stored.get(c, {})} for c in class_names()}
-    return proj
-
-
-def save_project(proj):
-    write_json(os.path.join(PROJECTS, f"{proj['key']}.json"), proj)
-
-
-def known_projects():
-    try:
-        names = sorted(n[:-5] for n in os.listdir(PROJECTS) if n.endswith(".json"))
-    except OSError:
-        names = []
-    return [load_project(n) for n in names]
-
-
-def class_peak(proj, cls):
-    """learn: max of the last 5 samples, the default a floor until 3 exist. fixed: the default."""
-    c = proj["classes"][cls] if proj else project_class_defaults(cls)
-    samples = c.get("samples", [])
-    if c.get("peakMode") == "fixed":
-        return c["defaultGiB"]
-    if len(samples) >= SAMPLES_TRUSTED:
-        return max(samples)
-    return max([c["defaultGiB"], *samples])
-
-
-def typical_minutes(proj, cls):
-    """Median of recorded run minutes, once 3 exist; else None."""
-    runs = sorted((proj["classes"][cls] if proj else {}).get("runMinutes", []))
-    return runs[len(runs) // 2] if len(runs) >= SAMPLES_TRUSTED else None
-
-
-def max_minutes(proj, cls):
-    """learn: p90 of the last 10 runs plus 25%, at least 5, at most the configured maximum.
-    fixed (or fewer than 3 runs): the configured maximum."""
-    c = proj["classes"][cls] if proj else project_class_defaults(cls)
-    runs = sorted(c.get("runMinutes", []))
-    if c.get("minutesMode") != "learn" or len(runs) < SAMPLES_TRUSTED:
-        return c["maxMinutes"]
-    p90 = runs[max(0, -(-9 * len(runs) // 10) - 1)]
-    return int(min(c["maxMinutes"], max(5, -(-p90 * 1.25 // 1))))
-
-
-def fleet_peak(cls):
-    """Largest class peak over known projects, for the capacity display."""
-    peaks = [class_peak(p, cls) for p in known_projects()]
-    return max(peaks) if peaks else project_class_defaults(cls)["defaultGiB"]
-
-
-def budget(state, machine):
-    """Memory budget, plus per-class capacity = holders + how many more of that class fit now."""
-    total = total_gib()
-    limit = total - machine["reserveGiB"]
-    names = class_names(machine)
-    peaks = {c: fleet_peak(c) for c in names}
-    held = sum(h["gib"] for c in names for h in state[c])
-    free = limit - held
-    capacity = {}
-    for c in names:
-        cap = machine["maxSlots"].get(c)
-        if peaks[c] > 0:
-            n = len(state[c]) + max(0, int(free // peaks[c]))
-            capacity[c] = min(n, cap) if cap else n
-        else:
-            capacity[c] = cap  # None: not memory-bound and uncapped
-    return {
-        "totalGiB": round(total, 1),
-        "reserveGiB": machine["reserveGiB"],
-        "limitGiB": round(limit, 1),
-        "heldGiB": round(held, 1),
-        "freeGiB": round(free, 1),
-        "peakGiB": peaks,
-        "capacity": capacity,
-    }
+# ---------------------------------------------------------------- config
 
 
 def config_cmd(args):
@@ -416,110 +258,7 @@ def config_cmd(args):
     return 3 if missing else 0
 
 
-def now():
-    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
-
-
-def lock():
-    deadline = time.time() + 30
-    while True:
-        try:
-            os.mkdir(LOCK)
-            return
-        except FileExistsError:
-            if time.time() - os.path.getmtime(LOCK) > 60:
-                os.rmdir(LOCK)
-                continue
-            if time.time() > deadline:
-                sys.exit("lease lock busy for 30 s")
-            time.sleep(0.2)
-
-
-def unlock():
-    os.rmdir(LOCK)
-
-
-def load():
-    state = json.load(open(STATE)) if os.path.exists(STATE) else {}
-    queue = state.setdefault("queue", {})
-    for c in class_names():
-        state.setdefault(c, [])
-        queue.setdefault(c, [])
-    return state
-
-
-def save(state, machine):
-    state["budget"] = budget(state, machine)
-    tmp = STATE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(state, f, indent=1)
-    os.replace(tmp, STATE)
-
-
-def log(line):
-    with open(LOG, "a") as f:
-        f.write(f"{now().isoformat()} {line}\n")
-
-
-def say(sender, message, to=None):
-    rec = {"at": now().isoformat(), "from": sender, "message": message}
-    if to:
-        rec["to"] = to
-    with open(INBOX, "a") as f:
-        f.write(json.dumps(rec) + "\n")
-
-
-def claude_socket(session_id):
-    """Inbox socket of a live Claude Code session, via `claude agents --json` (pid) and the
-    socket directories Claude Code uses. None when the session is not running."""
-    try:
-        agents = json.loads(subprocess.run(["claude", "agents", "--json"], capture_output=True, text=True, timeout=20).stdout)
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return None
-    pid = next((a.get("pid") for a in agents if a.get("sessionId") == session_id), None)
-    if not pid:
-        return None
-    bases = [os.environ.get("XDG_RUNTIME_DIR"), os.environ.get("CLAUDE_CODE_TMPDIR"), "/tmp", tempfile.gettempdir()]
-    paths = [os.path.join(b, "cc-socks", f"{pid}.sock") for b in bases if b] + [f"/tmp/cc-socks-{os.getuid()}/{pid}.sock"]
-    return next((p for p in paths if os.path.exists(p)), None)
-
-
-def send_claude(session_id, text):
-    """Write one user frame to the session's inbox socket. Protocol (reverse-engineered, not
-    an Anthropic interface): https://github.com/PeterSR/claude-code-socket-transport#the-protocol
-    Auth: only when posting to this process's own session (its exported socket and
-    CLAUDE_CODE_MESSAGING_TOKEN). Another session's key file is never read: the receiver
-    applies its normal inbound controls, so a session that bypasses permission prompts
-    holds the message for the user's approval. session_id must be the receiver's current
-    id; a /clear mints a new one, so the member must send JOIN again after it."""
-    path = claude_socket(session_id)
-    if not path:
-        return "claude: session not running (inbox only)"
-    frame = {"msgV": 1, "msg_id": str(uuid.uuid4()), "type": "user",
-             "message": {"role": "user", "content": text}, "priority": "next", "session_id": session_id}
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(5)
-            sock.connect(path)
-            own = os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET")
-            token = os.environ.get("CLAUDE_CODE_MESSAGING_TOKEN")
-            if own and token and os.path.realpath(own) == os.path.realpath(path):
-                sock.sendall((json.dumps({"type": "auth", "token": token}) + "\n").encode())
-            sock.sendall((json.dumps(frame) + "\n").encode())
-            sock.shutdown(socket.SHUT_WR)
-    except OSError as exc:
-        return f"claude: socket {path} failed: {exc} (inbox only)"
-    return f"claude: written to {path} (the receiver may hold it for approval)"
-
-
-def send_codex(thread_id, text):
-    try:
-        r = subprocess.run(["codex", "queue", "--thread", thread_id, "--message", text], capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return f"codex: queue failed: {exc} (inbox only)"
-    if r.returncode != 0:
-        return f"codex: queue failed: {(r.stderr or r.stdout).strip()[:200]} (inbox only)"
-    return f"codex: queued to thread {thread_id}"
+# ---------------------------------------------------------------- peer messaging
 
 
 def say_cmd(args):
@@ -543,68 +282,13 @@ def say_cmd(args):
             print(f"direct: no roster entry with a session id for {args.to} (inbox only)")
     else:
         targets = [(n, c.get("tool"), c.get("sessionId")) for n, c in roster["coordinators"].items() if n != args.sender and live(c)]
-    text = f"[{args.sender} via lease.py say] {args.message}"
+    text = f"[{args.sender} via coordinator.py say] {args.message}"
     for name, tool, sid in targets:
         print(deliver(name, tool, sid, text))
     return 0
 
 
-def deliver(name, tool, session_id, text):
-    if not session_id:
-        return f"{name}: no session id (inbox only)"
-    return f"{name}: {send_codex(session_id, text) if tool == 'codex' else send_claude(session_id, text)}"
-
-
-def notify(to, message):
-    """Tell coordinator `to` about a dashboard action: an inbox record from "dashboard", then direct delivery."""
-    say("dashboard", message, to)
-    c = load_roster()["coordinators"].get(to)
-    if not c:
-        return f"{to}: not a registered coordinator (inbox only)"
-    return deliver(to, c.get("tool"), c.get("sessionId"), f"[dashboard] {message}")
-
-
-def queue_edit_cmd(args):
-    """unwait and up. With --notify, tell each affected coordinator after the lock is released."""
-    lock()
-    try:
-        state, machine = load(), load_machine()
-        queue = state["queue"][args.cls]
-        i = next((n for n, q in enumerate(queue) if q["id"] == args.id), None)
-        if i is None:
-            print(f"{args.id} is not queued for {args.cls}")
-            return 0 if args.cmd == "unwait" else 3
-        entry = queue[i]
-        if args.cmd == "unwait":
-            del queue[i]
-            done = f"removed {args.id} from the {args.cls} queue"
-            message = (f"The user cancelled {args.cls} queue entry {args.id} ({entry['holder']}) on the dashboard. "
-                       "Tell its member; queue it again only if the user agrees.")
-            to = [entry["coordinator"]]
-            log(f"unwait {args.cls} {args.id}" + (" by=dashboard" if args.notify else ""))
-        else:
-            if entry.get("hold"):
-                print(f"{args.id} is on hold; mark it ready first")
-                return 3
-            ahead = next((n for n in range(i - 1, -1, -1) if not queue[n].get("hold")), None)
-            if ahead is None:
-                print(f"{args.id} is already first among ready {args.cls} entries")
-                return 0
-            other = queue[ahead]
-            queue.insert(ahead, queue.pop(i))
-            pos = sum(1 for q in queue[: ahead + 1] if not q.get("hold"))
-            done = f"moved {args.id} to {args.cls} position {pos}, ahead of {other['id']}"
-            message = (f"The user moved {args.cls} queue entry {args.id} ({entry['holder']}) up to position {pos}, "
-                       f"ahead of {other['id']} ({other['holder']}), on the dashboard. Tell the affected members their new turn.")
-            to = list(dict.fromkeys([entry["coordinator"], other["coordinator"]]))
-            log(f"up {args.cls} {args.id} ahead of {other['id']}" + (" by=dashboard" if args.notify else ""))
-        save(state, machine)
-    finally:
-        unlock()
-    print(done)
-    for name in to if args.notify else []:
-        print(notify(name, message))
-    return 0
+# ---------------------------------------------------------------- roster, members and streams
 
 
 PARK_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -655,37 +339,6 @@ def park_cmd(args):
     return 0
 
 
-def note(by, text, pr=None):
-    rec = {"at": now().isoformat(), "by": by, "text": text}
-    if pr:
-        rec["pr"] = pr
-    with open(LEDGER, "a") as f:
-        f.write(json.dumps(rec) + "\n")
-
-
-def load_roster():
-    roster = json.load(open(ROSTER)) if os.path.exists(ROSTER) else {}
-    roster.setdefault("leases", "off")
-    roster.setdefault("coordinators", {})
-    roster.setdefault("members", {})
-    roster.setdefault("streams", {})
-    return roster
-
-
-def save_roster(roster):
-    tmp = ROSTER + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(roster, f, indent=1)
-    os.replace(tmp, ROSTER)
-
-
-def live(coord):
-    if not coord:
-        return False
-    age = now() - dt.datetime.fromisoformat(coord["heartbeat"])
-    return age < dt.timedelta(minutes=LIVE_MINUTES)
-
-
 def pr_conflicts(roster, name, prs):
     """PRs in prs already owned by another live coordinator."""
     return {
@@ -710,29 +363,9 @@ def kickoff_line(coord, name, parent):
     )
 
 
-def find_session(roster, session_id):
-    for name, c in roster["coordinators"].items():
-        if c.get("sessionId") == session_id:
-            return {"role": "coordinator", "coordinator": name, "name": name, "live": live(c)}
-    for coord, members in roster["members"].items():
-        for m in members:
-            if m.get("sessionId") == session_id:
-                return {"role": "member", "coordinator": coord, "name": m["name"], "live": live(roster["coordinators"].get(coord))}
-    return None
-
-
 def roster_cmd(args):
     roster = load_roster()
     coords = roster["coordinators"]
-    if args.cmd == "whoami":
-        me = find_session(roster, args.session_id)
-        print(json.dumps(me or {"role": "none"}))
-        return 0 if me else 3
-    if args.cmd == "roster":
-        for c in coords.values():
-            c["live"] = live(c)
-        print(json.dumps(roster, indent=1))
-        return 0
     if args.cmd == "leases":
         roster["leases"] = args.mode
         save_roster(roster)
@@ -806,7 +439,7 @@ def roster_cmd(args):
     stream = getattr(args, "stream", None)
     if stream:
         if stream not in roster["streams"]:
-            print(f"no stream named {stream}; create it with lease.py stream add")
+            print(f"no stream named {stream}; create it with coordinator.py stream add")
             return 3
         if roster["streams"][stream].get("status") == "closed":
             print(f"stream {stream} is closed; reopen it first")
@@ -975,48 +608,32 @@ def remove_task(coord, task_id):
     write_json(path, data)
 
 
-def brief(state):
-    """One line per holder and per class queue, then the budget."""
-    t = now()
-    lines = []
-    for c in class_names():
-        for h in state[c]:
-            left = int((dt.datetime.fromisoformat(h["expiresAt"]) - t).total_seconds() // 60)
-            status = f"EXPIRED {-left} min ago" if left < 0 else f"{left} min left"
-            lines.append(f"{c} held  {h['id']} ({h['coordinator']}, {h['gib']} GiB) {status} — {h['holder'][:60]}")
-            if h.get("commands"):
-                lines.append(f"           covers: {h['commands'][:120]}")
-        q = state["queue"][c]
-        ready = [x for x in q if not x.get("hold")]
-        head = f"head {ready[0]['id']} ({ready[0]['coordinator']})" if ready else "no ready entry"
-        lines.append(f"{c} queue {len(ready)} ready, {len(q) - len(ready)} on hold — {head}")
-    b = state["budget"]
-    lines.append(f"budget {b['freeGiB']} of {b['limitGiB']} GiB free · capacity {b['capacity']} · peaks {b['peakGiB']}")
-    return "\n".join(lines)
+def decision_cmd(args):
+    path = os.path.join(DIR, "dashboard", f"{args.by}-state.json")
+    data = read_json(path) or {}
+    items = data.setdefault("decisions", [])
+    if args.dcmd == "add":
+        item = {"text": args.text}
+        if args.task:
+            item["task"] = args.task
+        if args.href:
+            item["href"] = args.href
+        items.append(item)
+    else:
+        if not (args.task or args.all):
+            print("decision clear needs --task ID or --all")
+            return 2
+        data["decisions"] = [] if args.all else [d for d in items if d.get("task") != args.task]
+    data["updated"] = now().strftime("%H:%MZ")
+    write_json(path, data)
+    print(f"{len(data['decisions'])} decisions for {args.by}")
+    return 0
 
 
-MEMORY = os.path.join(DIR, "memory")
-
-
-def memory_path(project_root=None):
-    name = project_key(project_root)[0] if project_root else "machine"
-    return os.path.join(MEMORY, f"{name}.json"), name
+# ---------------------------------------------------------------- memory
 
 
 def memory_cmd(args):
-    if args.mcmd == "list":
-        scopes = [memory_path()] + ([memory_path(args.project_root)] if args.project_root else [])
-        out = {name: (read_json(path) or {}).get("entries", []) for path, name in scopes}
-        if args.json:
-            print(json.dumps(out, indent=1))
-            return 0
-        for name, entries in out.items():
-            print(f"{'Machine' if name == 'machine' else 'Project ' + name}:")
-            for x in entries:
-                print(f"  - [{x['kind']}] {x['text']}  ({x['id']}, {x['by']}, {x['at'][:10]})")
-            if not entries:
-                print("  (none)")
-        return 0
     path, name = memory_path(args.project_root)
     lock()
     try:
@@ -1040,58 +657,74 @@ def memory_cmd(args):
         unlock()
 
 
-def await_grant(args):
-    """Poll without the lock. A member may start before the coordinator queues the
-    entry, so the ID gets --appear-timeout to show up before it is judged. Prints
-    one line, GRANTED or NOT-GRANTED <reason>; only exit 0 means granted."""
-    start = time.time()
-    seen = False
-    while True:
-        state = load()
-        if any(h["id"] == args.id for h in state[args.cls]):
-            print(f"GRANTED {args.cls} {args.id}")
-            return 0
-        entry = next((q for q in state["queue"][args.cls] if q["id"] == args.id), None)
-        waited = time.time() - start
-        if entry is not None:
-            seen = True
-        elif seen:
-            print(f"NOT-GRANTED {args.cls} {args.id}: left the queue without a grant; ask your coordinator")
-            return 3
-        elif waited >= args.appear_timeout:
-            print(f"NOT-GRANTED {args.cls} {args.id}: never queued within {args.appear_timeout:g} s; check the id with your coordinator")
-            return 6
-        if waited >= args.timeout_min * 60:
-            ready = [q["id"] for q in state["queue"][args.cls] if not q.get("hold")]
-            pos = ready.index(args.id) + 1 if args.id in ready else "on hold" if entry else "not queued"
-            print(f"NOT-GRANTED {args.cls} {args.id}: timeout after {args.timeout_min:g} min; position {pos}; still queued, wait again")
-            return 5
-        time.sleep(args.interval)
+# ---------------------------------------------------------------- leases
 
 
-def decision_cmd(args):
-    path = os.path.join(DIR, "dashboard", f"{args.by}-state.json")
-    data = read_json(path) or {}
-    items = data.setdefault("decisions", [])
-    if args.dcmd == "add":
-        item = {"text": args.text}
-        if args.task:
-            item["task"] = args.task
-        if args.href:
-            item["href"] = args.href
-        items.append(item)
-    else:
-        if not (args.task or args.all):
-            print("decision clear needs --task ID or --all")
-            return 2
-        data["decisions"] = [] if args.all else [d for d in items if d.get("task") != args.task]
-    data["updated"] = now().strftime("%H:%MZ")
-    write_json(path, data)
-    print(f"{len(data['decisions'])} decisions for {args.by}")
+def brief(state):
+    """One line per holder and per class queue, then the budget."""
+    t = now()
+    lines = []
+    for c in class_names():
+        for h in state[c]:
+            left = int((dt.datetime.fromisoformat(h["expiresAt"]) - t).total_seconds() // 60)
+            status = f"EXPIRED {-left} min ago" if left < 0 else f"{left} min left"
+            lines.append(f"{c} held  {h['id']} ({h['coordinator']}, {h['gib']} GiB) {status} — {h['holder'][:60]}")
+            if h.get("commands"):
+                lines.append(f"           covers: {h['commands'][:120]}")
+        q = state["queue"][c]
+        ready = [x for x in q if not x.get("hold")]
+        head = f"head {ready[0]['id']} ({ready[0]['coordinator']})" if ready else "no ready entry"
+        lines.append(f"{c} queue {len(ready)} ready, {len(q) - len(ready)} on hold — {head}")
+    b = state["budget"]
+    lines.append(f"budget {b['freeGiB']} of {b['limitGiB']} GiB free · capacity {b['capacity']} · peaks {b['peakGiB']}")
+    return "\n".join(lines)
+
+
+def queue_edit_cmd(args):
+    """unwait and up. With --notify, tell each affected coordinator after the lock is released."""
+    lock()
+    try:
+        state, machine = load(), load_machine()
+        queue = state["queue"][args.cls]
+        i = next((n for n, q in enumerate(queue) if q["id"] == args.id), None)
+        if i is None:
+            print(f"{args.id} is not queued for {args.cls}")
+            return 0 if args.cmd == "unwait" else 3
+        entry = queue[i]
+        if args.cmd == "unwait":
+            del queue[i]
+            done = f"removed {args.id} from the {args.cls} queue"
+            message = (f"The user cancelled {args.cls} queue entry {args.id} ({entry['holder']}) on the dashboard. "
+                       "Tell its member; queue it again only if the user agrees.")
+            to = [entry["coordinator"]]
+            log(f"unwait {args.cls} {args.id}" + (" by=dashboard" if args.notify else ""))
+        else:
+            if entry.get("hold"):
+                print(f"{args.id} is on hold; mark it ready first")
+                return 3
+            ahead = next((n for n in range(i - 1, -1, -1) if not queue[n].get("hold")), None)
+            if ahead is None:
+                print(f"{args.id} is already first among ready {args.cls} entries")
+                return 0
+            other = queue[ahead]
+            queue.insert(ahead, queue.pop(i))
+            pos = sum(1 for q in queue[: ahead + 1] if not q.get("hold"))
+            done = f"moved {args.id} to {args.cls} position {pos}, ahead of {other['id']}"
+            message = (f"The user moved {args.cls} queue entry {args.id} ({entry['holder']}) up to position {pos}, "
+                       f"ahead of {other['id']} ({other['holder']}), on the dashboard. Tell the affected members their new turn.")
+            to = list(dict.fromkeys([entry["coordinator"], other["coordinator"]]))
+            log(f"up {args.cls} {args.id} ahead of {other['id']}" + (" by=dashboard" if args.notify else ""))
+        save(state, machine)
+    finally:
+        unlock()
+    print(done)
+    for name in to if args.notify else []:
+        print(notify(name, message))
     return 0
 
 
-# ---------------------------------------------------------------- host, waiters, watchers
+# ---------------------------------------------------------------- host
+
 
 def run(cmd):
     try:
@@ -1212,6 +845,9 @@ def drain_check_cmd(args):
     return 0 if not left else 1
 
 
+# ---------------------------------------------------------------- watchers and install
+
+
 def follow(paths):
     """Yield (path, line) for lines appended to the files after start."""
     files = {}
@@ -1307,27 +943,40 @@ def watch_cmd(args):
     return 0
 
 
+FILES = ("moplib.py", "coordinator.py", "puppet.py")
+
+
 def install_cmd(args):
-    """Copy this lease.py into the state dir when absent; never overwrite a different live copy."""
-    dst = os.path.join(DIR, "lease.py")
-    src = os.path.abspath(__file__)
-    if os.path.abspath(dst) == src:
+    """Copy the helpers into the state dir when absent. All or nothing: when a live copy
+    differs, print every diff and install none, so live files never mix versions."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if os.path.abspath(DIR) == here:
         print("this is the live copy")
         return 0
-    new = open(src).read()
-    if not os.path.exists(dst):
+    import difflib
+    plan, differs = [], False
+    for name in FILES:
+        src, dst = os.path.join(here, name), os.path.join(DIR, name)
+        new = open(src).read()
+        if not os.path.exists(dst):
+            plan.append((dst, new))
+            continue
+        old = open(dst).read()
+        if old == new:
+            print(f"up to date {dst}")
+            continue
+        differs = True
+        print(f"DIFFERS {dst} (not overwritten; agree the change with the other coordinators first)")
+        sys.stdout.writelines(difflib.unified_diff(old.splitlines(True), new.splitlines(True), dst, src, n=1))
+    if differs:
+        if plan:
+            print("nothing installed (" + ", ".join(os.path.basename(d) for d, _ in plan) + " too): every live copy must match first")
+        return 2
+    for dst, new in plan:
         with open(dst, "w") as f:
             f.write(new)
         print(f"installed {dst}")
-        return 0
-    old = open(dst).read()
-    if old == new:
-        print(f"up to date {dst}")
-        return 0
-    import difflib
-    print(f"DIFFERS {dst} (not overwritten; agree the change with the other coordinators first)")
-    sys.stdout.writelines(difflib.unified_diff(old.splitlines(True), new.splitlines(True), dst, src, n=1))
-    return 2
+    return 0
 
 
 def main():
@@ -1335,12 +984,6 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
     st = sub.add_parser("status")
     st.add_argument("--brief", action="store_true")
-    ag = sub.add_parser("await-grant")
-    ag.add_argument("cls", metavar="CLASS")
-    ag.add_argument("--id", required=True)
-    ag.add_argument("--timeout-min", type=float, default=30)
-    ag.add_argument("--appear-timeout", type=float, default=600, help="seconds the ID may take to be queued")
-    ag.add_argument("--interval", type=float, default=10)
     dc = sub.add_parser("decision")
     dsub = dc.add_subparsers(dest="dcmd", required=True)
     da = dsub.add_parser("add")
@@ -1363,10 +1006,6 @@ def main():
     a.add_argument("--gib", type=float, help="expected peak GiB; default: queue entry estimate, then class peak")
     a.add_argument("--commands", help="the exact granted commands; default: the queue entry's")
     a.add_argument("--measure", action="store_true", help="start measure-peak in the background for this lease")
-    r = sub.add_parser("release")
-    r.add_argument("cls", metavar="CLASS")
-    r.add_argument("--id", required=True)
-    r.add_argument("--peak-gib", type=float, help="measured peak; default: peaks/<id>.gib from measure-peak")
     w = sub.add_parser("wait")
     w.add_argument("cls", metavar="CLASS")
     w.add_argument("--coordinator", help="required for a new entry")
@@ -1440,14 +1079,12 @@ def main():
     m.add_argument("--no-direct", action="store_true", help="append to inbox.jsonl only")
     me = sub.add_parser("memory")
     mesub = me.add_subparsers(dest="mcmd", required=True)
+    add_read_commands(sub, memory=mesub)
     ma = mesub.add_parser("add")
     ma.add_argument("--by", required=True)
     ma.add_argument("--text", required=True)
     ma.add_argument("--kind", choices=("rule", "note"), default="rule")
     ma.add_argument("--project-root")
-    ml = mesub.add_parser("list")
-    ml.add_argument("--project-root")
-    ml.add_argument("--json", action="store_true")
     mr2 = mesub.add_parser("remove")
     mr2.add_argument("--id", required=True)
     mr2.add_argument("--project-root")
@@ -1455,7 +1092,6 @@ def main():
     nt.add_argument("--by", required=True)
     nt.add_argument("--text", required=True)
     nt.add_argument("--pr", type=int)
-    sub.add_parser("roster")
     co = sub.add_parser("coordinate")
     co.add_argument("--name", required=True)
     co.add_argument("--tool", choices=TOOLS, required=True)
@@ -1504,7 +1140,7 @@ def main():
     en.add_argument("--task", required=True)
     en.add_argument("--name")
     en.add_argument("--pr", type=int, action="append")
-    en.add_argument("--stream", help="stream slug (lease.py stream add)")
+    en.add_argument("--stream", help="stream slug (stream add)")
     sm = sub.add_parser("stream")
     ssub = sm.add_subparsers(dest="scmd", required=True)
     for name in ("add", "update", "close", "reopen"):
@@ -1519,8 +1155,6 @@ def main():
             sx.add_argument("--owner", help="hand the stream to this live coordinator")
     sl = ssub.add_parser("list")
     sl.add_argument("--coordinator")
-    wh = sub.add_parser("whoami")
-    wh.add_argument("--session-id", required=True)
     sub.add_parser("host-check")
     cw = sub.add_parser("calm-wait")
     cw.add_argument("--settle", type=int, default=0, help="seconds to wait first, e.g. while a stack starts")
@@ -1544,6 +1178,8 @@ def main():
         if name and name not in registry():
             p.error(f"unknown lease class {name}; known: {', '.join(class_names())} (add one with config set-class)")
 
+    if args.cmd in READS and (args.cmd != "memory" or args.mcmd == "list"):
+        return read_cmd(args)
     if args.cmd == "say":
         return say_cmd(args)
     if args.cmd == "note":
@@ -1551,8 +1187,6 @@ def main():
         return 0
     if args.cmd == "memory":
         return memory_cmd(args)
-    if args.cmd == "await-grant":
-        return await_grant(args)
     unlocked = {"host-check": host_check_cmd, "calm-wait": calm_wait_cmd, "measure-peak": measure_peak_cmd,
                 "drain-check": drain_check_cmd, "watch": watch_cmd, "install": install_cmd}
     if args.cmd in unlocked:
@@ -1568,7 +1202,7 @@ def main():
 
     lock()
     try:
-        if args.cmd in ("roster", "coordinate", "heartbeat", "resign", "leases", "member", "enroll", "whoami", "stream"):
+        if args.cmd in ("coordinate", "heartbeat", "resign", "leases", "member", "enroll", "stream"):
             return roster_cmd(args)
         if args.cmd == "config":
             return config_cmd(args)
@@ -1688,34 +1322,6 @@ def main():
             save(state, machine)
             log(f"acquire {args.cls} {args.coordinator} {args.id} {args.holder} until {holders[-1]['expiresAt']} ({gib} GiB, {round(b['freeGiB'] - gib, 1)} GiB left)")
             return 0
-        if not any(h["id"] == args.id for h in holders):
-            print(f"{args.cls} not held by {args.id}: {json.dumps(holders)}")
-            return 3
-        peak = args.peak_gib
-        peak_file = os.path.join(PEAKS, f"{args.id}.gib")
-        if peak is None and os.path.exists(peak_file):
-            try:
-                peak = float(open(peak_file).read().strip())
-            except ValueError:
-                peak = None
-        held = next(h for h in holders if h["id"] == args.id)
-        key = held["project"]
-        ran = round((now() - dt.datetime.fromisoformat(held["grantedAt"])).total_seconds() / 60, 1)
-        if key:
-            proj = load_project(key, held.get("worktree"))
-            c = proj["classes"][args.cls]
-            if peak:
-                c["samples"].append(round(peak, 1))
-                del c["samples"][:-SAMPLES_KEPT]
-            c["runMinutes"].append(ran)
-            del c["runMinutes"][:-MINUTES_KEPT]
-            save_project(proj)
-        if os.path.exists(peak_file):
-            os.remove(peak_file)
-        state[args.cls] = [h for h in holders if h["id"] != args.id]
-        save(state, machine)
-        log(f"release {args.cls} {args.id} ran {ran} min" + (f" peak {round(peak, 1)} GiB" if peak else ""))
-        return 0
     finally:
         unlock()
 

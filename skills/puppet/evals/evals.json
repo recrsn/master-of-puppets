@@ -3,15 +3,15 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "DRY RUN. A fresh Codex Desktop session runs $puppet. Its task: fix example/app#210 (base main) in worktree /work/app-210. MACHINE_LEASE_DIR=<fixture>/state (a copy; never touch ~/.local/state/machine-leases). roster.json lists two live coordinators: claude-stack-a (tool claude, focus 'settings UI stack', PRs 101-103) and codex-billing (tool codex, focus 'billing stack', PRs 205-210). Do not call SendMessage, send_message_to_thread, lease.py say or codex queue; write what you would do. Write <out>/plan.md and <out>/commands.sh.",
+      "prompt": "DRY RUN. A fresh Codex Desktop session runs $puppet. Its task: fix example/app#210 (base main) in worktree /work/app-210. MACHINE_LEASE_DIR=<fixture>/state (a copy; never touch ~/.local/state/machine-leases). roster.json lists two live coordinators: claude-stack-a (tool claude, focus 'settings UI stack', PRs 101-103) and codex-billing (tool codex, focus 'billing stack', PRs 205-210). Do not call SendMessage, send_message_to_thread, coordinator.py say or codex queue; write what you would do. Write <out>/plan.md and <out>/commands.sh.",
       "expected_output": "Reads the roster; picks codex-billing because it owns #210; sends JOIN through native send_message_to_thread with name, thread id, worktree, task, PR and base; writes no shared inbox, roster or dashboard records; waits for WELCOME and ACTIVE or PAUSE.",
       "files": [
         "state/roster.json"
       ],
       "assertions": [
-        "lease.py roster is read before any other action",
+        "puppet.py roster is read before any other action",
         "codex-billing is chosen, with the reason that it owns #210",
-        "The JOIN message reaches codex-billing through native Codex send_message_to_thread with its threadId (and hostId when known), and names the member thread id, worktree /work/app-210, task and PR 210; no lease.py say is used",
+        "The JOIN message reaches codex-billing through native Codex send_message_to_thread with its threadId (and hostId when known), and names the member thread id, worktree /work/app-210, task and PR 210; no coordinator.py say is used",
         "The session runs no roster-writing command: no coordinate, member, enroll, note or decision",
         "The session does not contact claude-stack-a or its members",
         "The plan waits for WELCOME and an ACTIVE or PAUSE direction before working on the PR; only the coordinator enables auto-merge"
@@ -20,18 +20,32 @@
     {
       "id": 2,
       "prompt": "DRY RUN. Your prompt starts: 'MASTER-OF-PUPPETS ENROLLED — claude-stack-a has enrolled you as member flaky-split-3f2a, started by fix-101. First action: run /puppet and send claude-stack-a your JOIN message as flaky-split-3f2a; then follow claude-stack-a's directions. Start every child task you create with puppet enrollment: send claude-stack-a an ENROLL REQUEST and put its kickoff line first in the new prompt.' The task below it: split the flaky settings test into its own PR. Worktree /work/app-flaky. MACHINE_LEASE_DIR=<fixture>/state (a copy). The WELCOME you then receive says leases are on (BUILD, E2E). You need to run the settings test suite. Do not call SendMessage; write what you would send. Write <out>/plan.md, <out>/messages.md and <out>/commands.sh.",
-      "expected_output": "Joins claude-stack-a as flaky-split-3f2a without asking; sends JOIN; finishes edits, then sends LEASE REQUEST BUILD with exact commands and waits with lease.py await-grant; runs only the granted commands; releases and reports LEASE RELEASED; never writes roster, ledger or dashboard state; never writes a polling loop.",
+      "expected_output": "Joins claude-stack-a as flaky-split-3f2a without asking; sends JOIN; finishes edits, then sends LEASE REQUEST BUILD with exact commands and waits with puppet.py await-grant; runs only the granted commands; releases and reports LEASE RELEASED; never writes roster, ledger or dashboard state; never writes a polling loop.",
       "files": [],
       "assertions": [
         "The coordinator and name come from the kickoff line; the session does not ask the user which coordinator to join",
         "A JOIN message to claude-stack-a names flaky-split-3f2a, the worktree /work/app-flaky and the task",
         "A LEASE REQUEST BUILD message proposes an id (claude-stack-a-q-flaky-split-3f2a-1 or similar) and gives the exact test command, an estimate and the worktree, after all edits are done",
-        "commands.sh waits with lease.py await-grant BUILD --id ... (no until/while polling loop)",
-        "commands.sh runs only the granted command, then lease.py release BUILD --id ...",
+        "commands.sh waits with puppet.py await-grant BUILD --id ... (no until/while polling loop)",
+        "commands.sh runs only the granted command, then puppet.py release BUILD --id ...",
         "A LEASE RELEASED message reports pass or fail with the raw summary",
-        "commands.sh runs no lease.py coordinate, member, enroll, note, decision, wait or acquire",
+        "commands.sh runs no coordinator.py command (coordinate, member, enroll, note, decision, wait or acquire)",
         "The command runs only after a GRANTED line (exit 0); NOT-GRANTED is never treated as a grant"
       ]
+    },
+    {
+      "prompt": "DRY RUN. You are Codex member checkpointing of coordinator codex, in worktree /work/mono-sandbox on branch sandbox, PR 61524 open. You hold BUILD lease codex-q-checkpointing-3 and run a local stack on port 3000. You have two local commits that are not pushed and one modified file. The user says: 'hand this task to the Claude coordinator, it will take it to merge'. MACHINE_LEASE_DIR=<fixture>/state (a copy). Do not call send_message_to_thread; write what you would send. Write <out>/plan.md, <out>/messages.md and <out>/commands.sh.",
+      "expected_output": "Commits or finishes the modified file and pushes so local equals remote (or tells the user what is left), stops its stack, releases its own lease, writes the note under $MACHINE_LEASE_DIR/handoffs/<slug>/HANDOFF.md with the protocol sections, sends HANDOFF REQUEST to its own coordinator codex by the direct route, stops work, and sends LEAVE only after HANDOFF COMPLETE; never messages the Claude coordinator directly and never uses say.",
+      "files": [],
+      "assertions": [
+        "The push happens before the handoff request, and the note records the pushed SHA with local equal to remote",
+        "commands.sh stops the port 3000 stack and runs puppet.py release BUILD --id codex-q-checkpointing-3 before the request",
+        "The note path is under $MACHINE_LEASE_DIR/handoffs/, not in the worktree",
+        "The note has Header, State, Decisions and limits, Verification done, Owned resources and Done when sections",
+        "HANDOFF REQUEST goes to codex, not to the Claude coordinator, and no coordinator.py say is used",
+        "LEAVE is sent only after HANDOFF COMPLETE; the worktree is not offered for reuse because the receiver is Claude"
+      ],
+      "id": 3
     }
   ]
 }

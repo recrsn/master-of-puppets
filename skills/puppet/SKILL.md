@@ -8,9 +8,10 @@ description: Join a master-of-puppets coordinator as a member ("puppet") and wor
 You are a member of a coordinator session. The coordinator owns the stack,
 the roster, the ledger, the dashboard and the leases. You do the task: code,
 tests, commits, pushes, PR fixes. You never write the roster, ledger, dashboard
-or shared inbox; you send messages, and the coordinator records them. The
-explicit exception is `lease.py release` for your own lease, which updates
-lease state and measurement history. Do not release someone else's lease.
+or shared inbox; you send messages, and the coordinator records them. There
+are two exceptions: `puppet.py release` for your own lease, which updates
+lease state and measurement history, and your handoff note (section 8). Do
+not release someone else's lease.
 
 **Every child task starts enrolled** (section 6).
 
@@ -19,7 +20,7 @@ tool equivalents and session ids, and the "Routes" section of
 [protocol.md](../master-of-puppets/references/protocol.md) for how to message
 your coordinator.
 
-Below, `lease.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/lease.py"`.
+Below, `puppet.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/puppet.py"`.
 If the file does not exist, no coordinator
 runs on this machine: tell the user, and suggest `/master-of-puppets` in the
 session that should coordinate.
@@ -28,11 +29,13 @@ session that should coordinate.
 
 - Your prompt starts with `MASTER-OF-PUPPETS ENROLLED — <coord> has enrolled
   you as member <name>`: that coordinator and that name. Do not ask.
-- Otherwise run `lease.py roster`. Pick the live coordinator whose `prs` or
+- Otherwise run `puppet.py roster`. Pick the live coordinator whose `prs` or
   `focus` covers your task. A coordinator is live while its heartbeat is newer
   than 40 minutes. When none fits, or several do, ask the user.
 - Your name: the one from the kickoff line, else your session title as a short
   slug. Your session id: `agents.md`.
+- After you join, a coordinator that looks stale (not live) is not a reason to
+  JOIN another one. Ask the user.
 
 ## 2. Join
 
@@ -44,13 +47,13 @@ JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs <n> (b
 
 Send it, and every later message (UPDATE, MERGED, USER SYNC, STATUS replies,
 ENROLL REQUEST, LEASE REQUEST, LEASE RELEASED, LEAVE), by the direct route
-for your coordinator's tool (`protocol.md`, "Routes"). Never use `lease.py say`
+for your coordinator's tool (`protocol.md`, "Routes"). Never use `coordinator.py say`
 and never write shared inbox records, even with `--no-direct`. When your
 session id changes, send JOIN again (`protocol.md`, "Routes").
 
 Wait for WELCOME. It tells you whether leases are on and gives the rules,
 including the project rules from the coordinator's memory. You can read them
-yourself with `lease.py memory list --project-root "$PWD"`; only the
+yourself with `puppet.py memory list --project-root "$PWD"`; only the
 coordinator writes them. If the user tells you a new project rule, send it as
 `USER SYNC` so the coordinator records it. Do not work a PR until the
 coordinator sends ACTIVE or PAUSE for it.
@@ -99,7 +102,7 @@ never by a relay.
    requests), and request:
    `LEASE REQUEST <CLASS> — id <id> — <exact commands> — <estimate min> — <est GiB if known> — <worktree>`.
    The classes and their scope are in WELCOME (BUILD and E2E by default).
-2. Start waiting at once: `lease.py await-grant <CLASS> --id <id>`. It allows
+2. Start waiting at once: `puppet.py await-grant <CLASS> --id <id>`. It allows
    the coordinator up to 10 minutes to queue your id. It prints one line:
    - `GRANTED` (exit 0): the only signal to run.
    - `NOT-GRANTED ... left the queue` (exit 3), `... never queued` (exit 6):
@@ -111,7 +114,7 @@ never by a relay.
    clean up owned resources, release promptly and report the raw failure;
    repair; request again.
 4. For E2E, stop the servers you started before releasing, including on
-   failure. Release: `lease.py release <CLASS> --id <id>`, then
+   failure. Release: `puppet.py release <CLASS> --id <id>`, then
    `LEASE RELEASED <id> — pass|fail — <raw summary>`. Report any cleanup
    failure so the coordinator can keep the next E2E grant blocked.
 5. Project rules in WELCOME (from the coordinator's memory) can widen what
@@ -140,3 +143,37 @@ task. Then stop your services, release any lease, send `LEAVE — <name>`.
 Do not leave with uncommitted changes or an open PR. If the coordinator says
 you are done while you have either, reply with what is left (for example
 `UPDATE — <name> — Ready to commit — no PR yet`) and stay a member.
+The one exception is a handoff (section 8): after HANDOFF COMPLETE, send
+LEAVE with the PR still open. The successor owns it.
+
+## 8. Hand off your task
+
+Only when the user tells you to. The full protocol is in
+[handoff.md](../master-of-puppets/references/handoff.md).
+
+**You hand off:**
+
+1. Push every commit. The tree is clean and local HEAD equals the remote
+   branch. Uncommitted work does not go to a session of the other tool
+   (Claude or Codex): finish and push it, or tell the user what is left.
+2. Release your leases, stop the servers you started, and ask your
+   coordinator to drop your queue entries.
+3. Write the note at `$MACHINE_LEASE_DIR/handoffs/<task-slug>/HANDOFF.md`
+   with the sections in `handoff.md`. Never keep its only copy in a worktree.
+4. Send your coordinator
+   `HANDOFF REQUEST — <name> — to <coordinator|any> — PRs <n> — note <path>`.
+   Then stop work on the task. You stay a paused member.
+5. On `HANDOFF COMPLETE — <name>`, send LEAVE. Same tool: leave the worktree
+   for the successor. Other tool: your session removes its own worktree.
+   On `HANDOFF COMPLETE — <name> — JOIN <coordinator>`, send JOIN to that
+   coordinator and continue your task.
+
+**You are the successor** (your kickoff names a handoff note):
+
+1. Read the note before anything else. Check each PR with `gh pr view` and
+   the branch head against the note.
+2. The note's worktree is from the other tool: make your own worktree from
+   `origin/<branch>`. Never work in the old one. Same tool: you may use it.
+3. Send JOIN. Request your own leases; none move with the task.
+4. You own the note's "Owned resources" and "Done when". Each destructive
+   cleanup step still needs the user's yes in your session.

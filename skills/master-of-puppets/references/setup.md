@@ -1,7 +1,7 @@
 # First-run setup
 
 Only a coordinator runs this, at "Coordinator start", when
-`lease.py config show --project-root "$PWD"` exits 3. The output's
+`coordinator.py config show --project-root "$PWD"` exits 3. The output's
 `unconfigured` list names the missing scopes: `machine`, `project` or both.
 A member never asks: it uses the existing config or the built-in defaults and
 tells its coordinator that the project is not configured. Ask again only when
@@ -52,18 +52,18 @@ first and add "(Recommended)" to its label.
 Then run:
 
 ```bash
-lease.py config set-machine --reserve-gib <n> --disk-floor-gib <n> --max-swapouts <n> --swap-interval-s 12 --load-per-core <k> --dashboard-port 4720 [--max-slots BUILD=1 --max-slots E2E=1]
+coordinator.py config set-machine --reserve-gib <n> --disk-floor-gib <n> --max-swapouts <n> --swap-interval-s 12 --load-per-core <k> --dashboard-port 4720 [--max-slots BUILD=1 --max-slots E2E=1]
 ```
 
 If the user names other shared actions (one browser window, a test database, a
-tunnel), add each with `lease.py config set-class` (`references/leases.md`).
+tunnel), add each with `coordinator.py config set-class` (`references/leases.md`).
 
 ## 3. Project questions (only when `project` is unconfigured)
 
 Ask these four questions:
 
 1. **Memory peaks** (header "Peaks"): Learn: start at BUILD 10 GiB and E2E
-   8 GiB, then measure each lease with `lease.py measure-peak` (Recommended).
+   8 GiB, then measure each lease with `coordinator.py measure-peak` (Recommended).
    Fixed at those values. Learn from smaller starting values (BUILD 6, E2E 4):
    the class default is a floor until three samples exist, so a low start
    admits more early on.
@@ -82,16 +82,16 @@ Ask these four questions:
 Then run, one call per class for class settings:
 
 ```bash
-lease.py config set-project --root "$PWD" --name "<repo>" --base-branch <b> --merge-method <m> --leases-default <on|off>
-lease.py config set-project --root "$PWD" --class BUILD --max-minutes <n> --minutes <learn|fixed> --peak <learn|fixed> --default-gib <n>
-lease.py config set-project --root "$PWD" --class E2E --max-minutes <n> --minutes <learn|fixed> --peak <learn|fixed> --default-gib <n>
+coordinator.py config set-project --root "$PWD" --name "<repo>" --base-branch <b> --merge-method <m> --leases-default <on|off>
+coordinator.py config set-project --root "$PWD" --class BUILD --max-minutes <n> --minutes <learn|fixed> --peak <learn|fixed> --default-gib <n>
+coordinator.py config set-project --root "$PWD" --class E2E --max-minutes <n> --minutes <learn|fixed> --peak <learn|fixed> --default-gib <n>
 ```
 
 ## 4. Confirm
 
-Run `lease.py config show --project-root "$PWD"` (exit 0), `note` the chosen
+Run `coordinator.py config show --project-root "$PWD"` (exit 0), `note` the chosen
 values in the ledger, and tell the user in one line. With learn mode, start
-`lease.py measure-peak` after every grant (`references/leases.md`); without samples,
+`coordinator.py measure-peak` after every grant (`references/leases.md`); without samples,
 learn mode stays at the starting values.
 
 ## Using the values
@@ -99,5 +99,5 @@ learn mode stays at the starting values.
 - Merging: use `baseBranch` where the stack steps say `main`, and
   `mergeMethod` in SKILL.md, "Driving a stack", step 2.
 - Leases default: at coordinator start, when no coordinator has set leases
-  and the project says `on`, ask the user before you run `lease.py leases on`.
+  and the project says `on`, ask the user before you run `coordinator.py leases on`.
 - Lease limits and the disk floor: `references/leases.md`.
