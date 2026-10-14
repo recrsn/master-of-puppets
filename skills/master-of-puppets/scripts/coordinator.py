@@ -36,9 +36,12 @@ the default. Example: on a 24 GiB machine with a 6 GiB reserve, BUILD ~10 GiB an
 E2E ~8 GiB admit one of each; 64 GiB admits more. A 0 GiB class uses no budget. Swap, load and disk are a
 separate gate (`host-check`), run before every acquire.
 
-Admission is strict FIFO per class across coordinators: only the first ready
-entry may acquire. An expired lease (past expiresAt) still holds its memory: its
-holder releases it (puppet.py release); a coordinator needs the user's approval for a takeover.
+Admission is by priority, then FIFO, per class across coordinators: only the first
+ready entry may acquire. Every entry and task starts at priority 0; higher goes first,
+and entries of one priority keep their order. A queue entry takes its task's priority
+(the member its holder names) unless `wait --priority` sets its own.
+An expired lease (past expiresAt) still holds its memory: its holder releases it
+(puppet.py release); a coordinator needs the user's approval for a takeover.
 
 State lives in $MACHINE_LEASE_DIR (default ~/.local/state/machine-leases), not beside
 this file, so every coordinator that runs any copy shares one state.
@@ -49,8 +52,11 @@ Usage: python3 -I coordinator.py <command> ...
 Leases
   leases on|off --by C            machine-wide; only on the user's word
   status [--brief] | capacity
-  wait CLASS --coordinator C --holder NAME --id ID [--minutes N] [--gib N] [--commands TEXT] [--worktree P] [--front]
-       for an existing ID every flag is optional and only the given fields change
+  wait CLASS --coordinator C --holder NAME --id ID [--minutes N] [--gib N] [--commands TEXT] [--worktree P]
+       [--priority N] [--front]
+       for an existing ID every flag is optional and only the given fields change.
+       --priority: default the task's priority, else 0; a change moves the entry to its
+       place among the others. --front: the head, at the highest priority in the queue
   acquire CLASS --coordinator C --holder NAME --id ID --worktree P --minutes N [--gib N]
           [--commands TEXT] [--measure]
        exit 0 granted, 3 queued behind another entry, at a slot cap or in a settle window
@@ -58,7 +64,8 @@ Leases
        --commands records the granted scope; --measure starts measure-peak itself.
        The holder releases with puppet.py release.
   unwait | hold | ready CLASS --id ID
-  up CLASS --id ID                move a ready entry ahead of the ready entry in front of it
+  up CLASS --id ID                move a ready entry ahead of the ready entry in front of it;
+                                  it takes that entry's priority when that is higher
        unwait and up take --notify (the dashboard's queue buttons): each affected
        coordinator gets an inbox message from "dashboard", delivered directly as say does
   extend CLASS --id ID --minutes N
@@ -92,11 +99,13 @@ Roster and members (coordinators write; members send messages and release their 
        a stream is a named goal (one or more PR stacks) that groups members on the
        dashboard. The slug is unique on the machine; only its coordinator changes it.
        add needs --label (at most 40 characters); --goal at most 140.
-  enroll --coordinator C --task TEXT [--by MEMBER] [--name NAME] [--pr N ...] [--stream SLUG]
+  enroll --coordinator C --task TEXT [--by MEMBER] [--name NAME] [--pr N ...] [--stream SLUG] [--priority N]
        registers a task before it starts and prints the kickoff line for its prompt
   member add|update --coordinator C --name NAME [--tool] [--session-id] [--worktree] [--task]
        [--pr N ...] [--repo owner/repo] [--status] [--phase] [--kind] [--latest] [--session URL]
-       [--stream SLUG]   (--stream "" clears it)
+       [--stream SLUG] [--priority N]   (--stream "" clears it)
+       --priority: the task's priority (default 0; higher first, below 0 for background
+       work). A change also moves the task's queued lease entries and prints their ids
        updates the roster and the member's row in dashboard/<C>-state.json. Without
        --session the row links to the session from --tool and --session-id; without
        --repo, PR links use the worktree's GitHub origin (a warning when there is none)
@@ -154,7 +163,7 @@ from moplib import (
     INBOX, CLASS_NAME, read_json, write_json, load_machine, registry,
     class_names, project_key, load_project, save_project, class_peak, typical_minutes,
     max_minutes, now, lock, unlock, log, note,
-    load_roster, save_roster, live, load, save, budget,
+    load_roster, save_roster, live, load, save, budget, order, task_priority,
     say, deliver, notify, READS, memory_path, add_read_commands,
     read_cmd,
 )
@@ -467,11 +476,13 @@ def roster_cmd(args):
             "task": args.task,
             "prs": args.pr or [],
             "stream": stream or "",
+            "priority": args.priority or 0,
             "enrolledAt": now().isoformat(),
         })
         save_roster(roster)
         upsert_task(args.coordinator, name, {"name": args.task, "phase": "Enrolled, not started", "kind": "work", "stream": stream or ""})
-        note(args.coordinator, f"{name} enrolled (started by {args.by or args.coordinator}): {args.task}")
+        note(args.coordinator, f"{name} enrolled (started by {args.by or args.coordinator}): {args.task}"
+             + (f", priority {args.priority}" if args.priority else ""))
         print(kickoff_line(args.coordinator, name, args.by))
         return 0
     if args.cmd == "member" and args.mcmd == "stale":
@@ -507,6 +518,11 @@ def roster_cmd(args):
                         ("stream", "stream"), ("repo", "repo")):
         if getattr(args, flag, None) is not None:
             m[field] = getattr(args, flag)
+    moved = None
+    if args.priority is not None and args.priority != m.get("priority", 0):
+        m["priority"] = args.priority
+        moved = reprioritize(args.coordinator, args.name, args.priority)
+        note(args.coordinator, f"{args.name} priority {args.priority}")
     if args.pr is not None:
         m["prs"] = args.pr
         if not m.get("repo") and m.get("worktree"):
@@ -529,7 +545,26 @@ def roster_cmd(args):
     upsert_task(args.coordinator, args.name, row)
     if args.mcmd == "add":
         note(args.coordinator, f"{args.name} joined: {m.get('task', '')} (PRs {' '.join('#' + str(n) for n in m.get('prs', [])) or 'none'})")
+    if moved:
+        print(json.dumps({"moved": moved}))
     return 0
+
+
+def reprioritize(coord, name, priority):
+    """Give the task's queued lease entries its new priority and re-order each queue.
+    Returns {CLASS: [ids]} of the moved entries, so the coordinator can tell their new turn."""
+    state, machine = load(), load_machine()
+    moved = {}
+    for c in class_names(machine):
+        for q in state["queue"][c]:
+            if q["coordinator"] == coord and q["holder"].partition(" ")[0] == name and q.get("priority", 0) != priority:
+                q["priority"] = priority
+                moved.setdefault(c, []).append(q["id"])
+                log(f"priority {c} {q['id']} {priority}")
+        order(state["queue"][c])
+    if moved:
+        save(state, machine)
+    return moved
 
 
 def stream_cmd(args, roster):
@@ -696,7 +731,8 @@ def brief(state):
                 lines.append(f"           covers: {h['commands'][:120]}")
         q = state["queue"][c]
         ready = [x for x in q if not x.get("hold")]
-        head = f"head {ready[0]['id']} ({ready[0]['coordinator']})" if ready else "no ready entry"
+        prio = f", priority {ready[0]['priority']}" if ready and ready[0].get("priority") else ""
+        head = f"head {ready[0]['id']} ({ready[0]['coordinator']}{prio})" if ready else "no ready entry"
         lines.append(f"{c} queue {len(ready)} ready, {len(q) - len(ready)} on hold — {head}")
     b = state["budget"]
     lines.append(f"budget {b['freeGiB']} of {b['limitGiB']} GiB free · capacity {b['capacity']} · peaks {b['peakGiB']}")
@@ -730,10 +766,14 @@ def queue_edit_cmd(args):
                 print(f"{args.id} is already first among ready {args.cls} entries")
                 return 0
             other = queue[ahead]
+            raised = other.get("priority", 0) > entry.get("priority", 0)
+            if raised:
+                entry["priority"] = other["priority"]
             queue.insert(ahead, queue.pop(i))
             pos = sum(1 for q in queue[: ahead + 1] if not q.get("hold"))
-            done = f"moved {args.id} to {args.cls} position {pos}, ahead of {other['id']}"
-            message = (f"The user moved {args.cls} queue entry {args.id} ({entry['holder']}) up to position {pos}, "
+            prio = f" at priority {entry['priority']}" if raised else ""
+            done = f"moved {args.id} to {args.cls} position {pos}{prio}, ahead of {other['id']}"
+            message = (f"The user moved {args.cls} queue entry {args.id} ({entry['holder']}) up to position {pos}{prio}, "
                        f"ahead of {other['id']} ({other['holder']}), on the dashboard. Tell the affected members their new turn.")
             to = list(dict.fromkeys([entry["coordinator"], other["coordinator"]]))
             log(f"up {args.cls} {args.id} ahead of {other['id']}" + (" by=dashboard" if args.notify else ""))
@@ -904,7 +944,7 @@ def watch_inbox(me):
             continue
         own = (
             (f[1] in ("wait", "acquire", "refuse") and len(f) > 3 and f[3] == me)
-            or (f[1] in ("release", "unwait", "hold", "ready", "extend") and f[3 if len(f) > 3 else -1].startswith(me + "-"))
+            or (f[1] in ("release", "unwait", "hold", "ready", "extend", "priority") and f[3 if len(f) > 3 else -1].startswith(me + "-"))
             or (f[1] in ("coordinate", "resign") and f[2] == me)
             or f"by={me}" in f
         )
@@ -1038,6 +1078,7 @@ def main():
     w.add_argument("--gib", type=float)
     w.add_argument("--commands", help="the exact commands the lease would cover")
     w.add_argument("--worktree", help="sets the project whose class peak applies")
+    w.add_argument("--priority", type=int, help="higher goes first; default: the task's priority, else 0")
     w.add_argument("--front", action="store_true", help="re-queue at the head (only for a run aborted by the coordinator)")
     for name in ("unwait", "up"):
         u = sub.add_parser(name)
@@ -1151,6 +1192,7 @@ def main():
         mx.add_argument("--latest")
         mx.add_argument("--session", help="deep link for the dashboard; default: derived from --tool and --session-id")
         mx.add_argument("--stream", help='stream slug; "" clears it')
+        mx.add_argument("--priority", type=int, help="task priority: 0 default, higher first, below 0 for background work")
     mr = msub.add_parser("remove")
     mr.add_argument("--coordinator", required=True)
     mr.add_argument("--name", required=True)
@@ -1164,6 +1206,7 @@ def main():
     en.add_argument("--name")
     en.add_argument("--pr", type=int, nargs="+", action="extend", help="PR numbers, several allowed (--pr 1 2 or --pr 1 --pr 2)")
     en.add_argument("--stream", help="stream slug (stream add)")
+    en.add_argument("--priority", type=int, help="task priority: 0 default, higher first, below 0 for background work")
     sm = sub.add_parser("stream")
     ssub = sm.add_subparsers(dest="scmd", required=True)
     for name in ("add", "update", "close", "reopen"):
@@ -1229,6 +1272,7 @@ def main():
             return roster_cmd(args)
         if args.cmd == "config":
             return config_cmd(args)
+        roster = load_roster()
         state = load()
         machine = load_machine()
         if args.cmd == "status":
@@ -1255,11 +1299,16 @@ def main():
                     existing["commands"] = args.commands
                 if args.worktree:
                     existing["project"] = project_key(args.worktree)[0]
+                if args.priority is not None and args.priority != existing.get("priority", 0):
+                    existing["priority"] = args.priority
+                    log(f"priority {args.cls} {args.id} {args.priority}")
             else:
                 if not (args.coordinator and args.holder):
                     print("a new queue entry needs --coordinator and --holder")
                     return 2
-                entry = {"coordinator": args.coordinator, "holder": args.holder, "id": args.id, "since": now().isoformat()}
+                priority = args.priority if args.priority is not None else task_priority(roster, args.coordinator, args.holder)
+                entry = {"coordinator": args.coordinator, "holder": args.holder, "id": args.id, "priority": priority,
+                         "since": now().isoformat()}
                 if args.minutes:
                     entry["minutes"] = args.minutes
                 if args.gib:
@@ -1269,10 +1318,12 @@ def main():
                 if args.worktree:
                     entry["project"] = project_key(args.worktree)[0]
                 if args.front:
+                    entry["priority"] = max([priority] + [q.get("priority", 0) for q in queue])
                     queue.insert(0, entry)
                 else:
                     queue.append(entry)
-                log(f"wait {args.cls} {args.coordinator} {args.id} {args.holder}")
+                log(f"wait {args.cls} {args.coordinator} {args.id} {args.holder}" + (f" priority={entry['priority']}" if entry["priority"] else ""))
+            order(queue)
             save(state, machine)
             print(f"position {[q['id'] for q in queue].index(args.id) + 1}")
             return 0

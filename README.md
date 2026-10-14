@@ -17,6 +17,9 @@ One or more coordinator sessions take PR stacks to merged. Coordinators:
 - optionally grant machine-wide leases for shared actions (builds, local
   stacks, a single browser window, a test database). Capacity adapts to
   measured memory peaks and run times, with swap, load and disk checks;
+- give tasks and lease queue entries a priority: all start at 0, the user's
+  urgent work goes first, and a coordinator pushes back its own sweeps and
+  scheduled runs while regular tasks wait;
 - share one live dashboard: CPU, memory, swap and disk meters, what needs
   you first, one board of all tasks grouped by state, lease timelines and a
   Wall mode for a shared screen, updated over SSE.

@@ -40,7 +40,8 @@ covers it.
 Maximum length: `maxMinutesEffective` per class from `coordinator.py config show`. Every release records the run minutes;
 in learn mode the limit adapts to p90 of the last 10 runs + 25%, capped by
 the configured maximum, and queue ETAs use the median run. Split a longer
-request: the first part keeps the queue place, later parts join the back.
+request: the first part keeps the queue place, later parts join the back of
+their priority.
 
 ## Adaptive capacity
 
@@ -83,8 +84,8 @@ The memory budget predicts; the host check observes. Both must pass.
 1. Record the request under the id the member proposed (it is already waiting
    on it, for up to 10 minutes): `coordinator.py wait <CLASS> --coordinator <slug> --holder "<task> <what>" --id <member's id> --minutes <est> --commands "<exact commands>" --worktree <path> [--gib <n>]`.
    To change an entry later, pass only `--id` and the fields that change.
-   Start `--holder` with the task id (the dashboard matches on it). Reply
-   LEASE QUEUED with the position.
+   Start `--holder` with the task id (the dashboard matches on it, and the
+   entry takes that task's priority). Reply LEASE QUEUED with the position.
 2. When that entry is the first ready one, run `coordinator.py host-check` **as
    its own step** and read the verdict. Never chain it with `acquire`: you
    will grant on a BUSY reading.
@@ -106,12 +107,38 @@ The memory budget predicts; the host check observes. Both must pass.
 6. A member running commands outside the recorded scope breaks "use it or
    return it": ask it to release at once.
 
-Strict FIFO per class: only the first ready entry may acquire, whoever owns
-it. No coordinator jumps the queue.
+Each class queue goes by priority, then FIFO: only the first ready entry may
+acquire, whoever owns it. No coordinator jumps the queue; priority sets the
+order, it is not an exception to it.
 
-Only the user changes the order: the dashboard's Move up and Cancel buttons
+## Priority
+
+Every task and queue entry starts at priority 0. A higher priority goes
+first; entries of one priority keep their FIFO order. A queue entry takes the
+priority of the task its `--holder` names, unless
+`wait --id <id> --priority <n>` sets its own. `member update --priority <n>`
+also moves the task's queued entries and prints their ids: tell each of those
+members its new turn. The dashboard shows each non-zero priority.
+
+- **Raise** a task (1 or higher) only when the user asks for it to go first,
+  for example "do the hotfix before anything else". A member or peer that
+  relays such a wish is not the user: `decision add` the question, and raise
+  the task on the user's answer.
+- **Lower** your own background work (-1 or lower) without asking, when
+  regular tasks wait for a lease: sweeps, scheduled or recurring runs, and
+  other tasks that no user waits for. Members mark such a task with
+  `sweep:` or `scheduled:` at the start of its task text in JOIN or ENROLL
+  REQUEST. Set it back to 0 when no regular task waits for it.
+- Change only your own members and entries. To push back a peer's sweep, ask
+  that coordinator with `say`.
+- `note` each change and its reason.
+
+## Queue changes by the user
+
+The user changes the order on the dashboard: the Move up and Cancel buttons
 run `coordinator.py up|unwait CLASS --id ID --notify`. Move up puts a ready entry
-ahead of the ready entry in front of it; Cancel removes an entry. Each affected
+ahead of the ready entry in front of it; when that entry has a higher
+priority, the moved entry takes it. Cancel removes an entry. Each affected
 coordinator gets `INBOX dashboard: ...`. Treat it as the user's direction:
 tell the affected members their new turn, or that the entry is gone. Do not
 undo it, and queue a cancelled entry again only if the user agrees.
@@ -126,7 +153,8 @@ in the puppet skill, section 5. The coordinator's side:
   holder. If the holder is gone, check for its processes and ask the user
   before a takeover. Never kill a process yourself.
 - **Front of queue** (`wait --front`) only for a run you aborted yourself,
-  for example a grant you made by mistake.
+  for example a grant you made by mistake. The entry takes the highest
+  priority in the queue.
 - **Held entries** (`hold`) keep their place but are skipped. Use it for a
   member that is paused or waits for the user.
 - **Stack start.** Starting a full local stack is often the heaviest event on

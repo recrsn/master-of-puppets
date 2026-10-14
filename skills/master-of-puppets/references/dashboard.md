@@ -39,6 +39,10 @@ optional date; no date means until unparked), and parked ones have Unpark.
 They run `coordinator.py park|unpark --notify`, so the coordinator gets a message
 from "dashboard", as with the queue buttons.
 
+A task or queue entry with a priority other than 0 shows it ("Priority 2");
+inside each state group, higher-priority tasks come first, and each lease
+queue lists entries by priority, then FIFO.
+
 Each queued lease entry has Move up and Cancel buttons (Cancel asks first).
 They run `coordinator.py up|unwait --notify`, which tells each affected coordinator
 (`references/leases.md`); a toast shows the result and the delivery. The

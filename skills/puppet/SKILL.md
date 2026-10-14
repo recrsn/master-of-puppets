@@ -45,6 +45,11 @@ Send one message to the coordinator:
 JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs <n> (base <b>) ... — <phase> — <planned heavy commands>
 ```
 
+When your task is background work (a sweep, or a run that a schedule
+started), start `<task>` with `sweep:` or `scheduled:`, in JOIN and in each
+ENROLL REQUEST for such a task. The coordinator can then put regular work
+first.
+
 Send it, and every later message (UPDATE, MERGED, USER SYNC, STATUS replies,
 ENROLL REQUEST, LEASE REQUEST, LEASE RELEASED, LEAVE), by the direct route
 for your coordinator's tool (`protocol.md`, "Routes"). Never use `coordinator.py say`
@@ -108,7 +113,9 @@ never by a relay.
    - `NOT-GRANTED ... left the queue` (exit 3), `... never queued` (exit 6):
      do not run; ask your coordinator.
    - `NOT-GRANTED ... timeout` (exit 5): still queued; run `await-grant` again.
-   Never write polling loops.
+   Never write polling loops. Your position can change: the queue goes by
+   priority, then FIFO, and your coordinator sets the priority. Keep
+   waiting; `await-grant` follows the queue.
 3. Run only the granted commands and cleanup of resources they started.
    Use it or return it: no edits or repairs while holding a lease. On failure,
    clean up owned resources, release promptly and report the raw failure;

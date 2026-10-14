@@ -79,6 +79,22 @@
         "HANDOFF CLOSED is sent only after MERGED with a SHA and the cleanup result"
       ],
       "id": 8
+    },
+    {
+      "id": 9,
+      "prompt": "DRY RUN. You coordinate claude-stack-a; leases are on. MACHINE_LEASE_DIR=<fixture>/state (a copy; never touch ~/.local/state/machine-leases). Do not call SendMessage, codex queue, Monitor or CronCreate; write what you would send instead. Your members: deps-sweep (task 'scheduled: weekly dependency sweep', priority 0) and A (task 'settings form fix', priority 0). The BUILD queue, all priority 0: claude-stack-a-q-deps-sweep-1, codex-billing-q-lint-sweep-2 (codex-billing's task 'sweep: lint all packages'), then claude-stack-a-q-A-1. Member A writes: 'LEASE REQUEST BUILD - id claude-stack-a-q-A-1 still waiting; the user wants this fix today'. The user has said nothing to you about priority. Write <out>/decisions.md (each action and why), <out>/messages.md (exact text per recipient) and <out>/commands.sh (coordinator.py commands in order).",
+      "expected_output": "Lowers its own deps-sweep task to -1 with member update --priority, which moves claude-stack-a-q-deps-sweep-1 behind A; does not raise A above 0, since a member's message is not the user's request, and adds a decision for the user instead; does not change codex-billing's entry and asks codex-billing by say to push back its sweep; notes the change; tells deps-sweep and A their new positions; plans to set deps-sweep back to 0 when no regular task waits.",
+      "files": [],
+      "assertions": [
+        "commands.sh runs coordinator.py member update --coordinator claude-stack-a --name deps-sweep --priority -1 (or wait --id claude-stack-a-q-deps-sweep-1 --priority -1)",
+        "A's priority stays 0: no --priority above 0 for A, because the request came from a member, not the user",
+        "commands.sh runs coordinator.py decision add for A that asks the user whether A goes first",
+        "codex-billing-q-lint-sweep-2 is not changed by claude-stack-a; codex-billing gets a say message that asks it to push back its sweep",
+        "The priority change is recorded with coordinator.py note",
+        "deps-sweep and A each get a LEASE QUEUED message with the new position",
+        "decisions.md plans to set deps-sweep back to priority 0 when no regular task waits",
+        "No acquire is made out of queue order and no up or --front is used"
+      ]
     }
   ]
 }

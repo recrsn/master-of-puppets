@@ -341,6 +341,12 @@ def render_page(host):
         last = m.get("updatedAt") or m.get("joinedAt") or m.get("enrolledAt")
         return parse(last) if last else None
 
+    def priority_of(coord, task_id):
+        return (member_of.get((coord, task_id)) or {}).get("priority", 0)
+
+    def priority_chip(p):
+        return f'<span class="chip" title="Higher goes first; 0 is the default">Priority {p}</span>' if p else ""
+
     streams = roster.get("streams", {})
 
     def stream_of(coord, task_id):
@@ -445,7 +451,8 @@ def render_page(host):
         return f'<div class="reasons">{"".join(f"<span>{e(r)}</span>" for r in n["reasons"])}</div>'
 
     def need_card(n):
-        idl = (stream_chip(n["stream"]) + (f'<span class="id">{e(n["id"])}</span>' if n["id"] else "")
+        idl = (stream_chip(n["stream"]) + priority_chip(priority_of(n["coord"], n["id"]) if n["id"] else 0)
+               + (f'<span class="id">{e(n["id"])}</span>' if n["id"] else "")
                + (f'<span class="ttl">{e(n["title"])}</span>' if n["title"] else ""))
         side = who(n["coord"], n["when"]) + open_button(n["href"]) + park_buttons(n["coord"], n["id"])
         return (
@@ -472,6 +479,7 @@ def render_page(host):
         p = park_state(coord, tid)
         meta = ([f'<span class="warn">Parked{" until " + p["until"].strftime("%b %-d") if p["until"] else " · no deadline"}</span>']
                 if p else [])
+        meta += [priority_chip(priority_of(coord, tid))] if priority_of(coord, tid) else []
         meta += [f'<span class="t1">{e(t["phase"])}</span>'] if t.get("phase") else []
         when = task_eta(tid) or t.get("eta", "")
         if when:
@@ -488,7 +496,8 @@ def render_page(host):
     def state_groups(items, key):
         out = ""
         for kind, dot, label in KINDS:
-            rows = [task_row(coord, t) for coord, t in items if kind_of(t) == kind]
+            group = sorted(((coord, t) for coord, t in items if kind_of(t) == kind), key=lambda x: -priority_of(x[0], x[1].get("id", "")))
+            rows = [task_row(coord, t) for coord, t in group]
             if not rows:
                 continue
             head = f'<span class="dot {dot}"></span>{label}<span class="n">{len(rows)}</span>'
@@ -646,12 +655,13 @@ def render_page(host):
             for q in queue.get(cls, []):
                 pos += 0 if q.get("hold") else 1
                 actions = (qbutton("up", cls, q["id"], "Move up") if pos > 1 and not q.get("hold") else "") + qbutton("unwait", cls, q["id"], "Cancel")
-                qrows += qrow(cls, "hold" if q.get("hold") else f"#{pos}", q, f"~{est_minutes(cls, q):g} min · {eta_text(cls, q['id'])}",
+                prio = f"priority {q['priority']} · " if q.get("priority") else ""
+                qrows += qrow(cls, "hold" if q.get("hold") else f"#{pos}", q, f"{prio}~{est_minutes(cls, q):g} min · {eta_text(cls, q['id'])}",
                               actions=actions)
         qrows = qrows or '<div class="qempty sm t3">Nothing queued.</div>'
         lease_panel = (
             f'<section class="card panel" id="leases"><div class="panel-h"><h2>Leases</h2>'
-            f'<span class="sm t3">FIFO · {fmt(budget.get("freeGiB"))} of {fmt(budget.get("limitGiB"))} GiB free</span></div>'
+            f'<span class="sm t3">Priority, then FIFO · {fmt(budget.get("freeGiB"))} of {fmt(budget.get("limitGiB"))} GiB free</span></div>'
             f'<div class="lanes">{desk_lanes}</div><div>{qrows}</div></section>'
         )
         wall_leases = f'<section class="w-leases"><h2>Leases</h2>{wall_lanes}<div class="ticks big">{tick_labels}</div></section>'
