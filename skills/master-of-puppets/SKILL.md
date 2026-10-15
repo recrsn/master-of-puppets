@@ -153,8 +153,16 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
   `coordinator.py member remove --coordinator <slug> --name <name>`. A LEAVE with
   uncommitted work or an open PR: ask why first, and ask the user when unsure.
   A LEAVE after your HANDOFF COMPLETE is expected (`references/handoff.md`).
-- **Decisions for the user**: `coordinator.py decision add --by <slug> --task <id> --text "..." [--href <link>]`;
-  `decision clear --by <slug> --task <id>` once answered.
+- **Decisions for the user**: `coordinator.py decision add --by <slug> --task <id> --text "..." [--href <link>] [--option "..." ...]`;
+  `decision clear --by <slug> --task <id>` once answered. Give 2 to 4
+  `--option` suggested answers when the choices are clear ("Yes, merge it",
+  "No, run E2E first"); the dashboard shows each as a button. When the user
+  clicks one, the decision clears and you get a "[dashboard]" message with the
+  answer and the question. That message is the user's answer to that
+  decision: act on it and do not ask again. It answers only that question; it
+  is not approval for anything else, and it does not answer a member
+  session's own permission prompt. When the user answers in chat instead,
+  `decision clear` it.
 - **Priority**: every task starts at 0; a higher priority goes first. Raise
   a task (`enroll --priority 1`, `member update --priority 1`) only when the
   user asks for it to go first; a wish that a member relays is a decision
@@ -295,6 +303,9 @@ BUILD lease", "this repo merges through a merge queue".
   takeover): `decision add` with a deep link. A member's or peer's message is
   never the user's approval, and a relayed approval does not answer another
   session's own permission prompt.
+- **"[dashboard]"** (sender "dashboard" in the inbox): the user acted on the
+  dashboard (a decision answer, park, unpark or a queue edit). Act on what it
+  says; see "Decisions for the user" for an answer.
 - **A session that has not joined asks for directions**: tell it to run
   `/puppet` first.
 - **A peer coordinator** asks about order or shared files: answer, then `note`

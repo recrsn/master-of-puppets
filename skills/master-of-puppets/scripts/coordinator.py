@@ -126,7 +126,13 @@ Roster and members (coordinators write; members send messages and release their 
   unpark --coordinator C --name MEMBER [--notify]
        park sets the member to paused; the task leaves Needs you and returns there as
        "Revisit" after --until. The dashboard's Park/Unpark buttons use --notify.
-  decision add --by C --text TEXT [--task ID] [--href URL] | decision clear --by C (--task ID | --all)
+  decision add --by C --text TEXT [--task ID] [--href URL] [--option TEXT ...]
+       prints the decision id. Each --option (at most 4, 60 characters each) is a
+       suggested answer: the dashboard shows it as a button on the decision
+  decision answer --by C --id ID --choice N [--notify]
+       the user's answer, option N (from 1): clears the decision and notes it in the
+       ledger. The dashboard's option buttons use --notify, so C gets the answer
+  decision clear --by C (--task ID | --all)
   note --by C --text TEXT [--pr N]   shared ledger
 
 Memory (the skill's own memory; coordinators write it, everyone reads it)
@@ -164,6 +170,7 @@ import re
 import shutil
 import subprocess
 import time
+import uuid
 import os
 import sys
 
@@ -683,25 +690,60 @@ def remove_task(coord, task_id):
     write_json(path, data)
 
 
+MAX_OPTIONS = 4
+MAX_OPTION_CHARS = 60
+
+
 def decision_cmd(args):
-    path = os.path.join(DIR, "dashboard", f"{args.by}-state.json")
-    data = read_json(path) or {}
-    items = data.setdefault("decisions", [])
-    if args.dcmd == "add":
-        item = {"text": args.text}
-        if args.task:
-            item["task"] = args.task
-        if args.href:
-            item["href"] = args.href
-        items.append(item)
-    else:
-        if not (args.task or args.all):
-            print("decision clear needs --task ID or --all")
+    """add, answer and clear. answer is the user's choice from the dashboard; it runs in
+    another process than the owner's, so it takes the lock."""
+    if args.dcmd == "add" and args.option:
+        if len(args.option) > MAX_OPTIONS or any(len(o) > MAX_OPTION_CHARS or not o.strip() for o in args.option):
+            print(f"at most {MAX_OPTIONS} options, each 1 to {MAX_OPTION_CHARS} characters")
             return 2
-        data["decisions"] = [] if args.all else [d for d in items if d.get("task") != args.task]
-    data["updated"] = now().strftime("%H:%MZ")
-    write_json(path, data)
-    print(f"{len(data['decisions'])} decisions for {args.by}")
+    if args.dcmd == "clear" and not (args.task or args.all):
+        print("decision clear needs --task ID or --all")
+        return 2
+    path = state_path(args.by)
+    lock()
+    try:
+        data = read_json(path) or {}
+        items = data.setdefault("decisions", [])
+        if args.dcmd == "add":
+            item = {"id": uuid.uuid4().hex[:8], "text": args.text}
+            if args.task:
+                item["task"] = args.task
+            if args.href:
+                item["href"] = args.href
+            if args.option:
+                item["options"] = args.option
+            items.append(item)
+            done = f"decision {item['id']} added"
+        elif args.dcmd == "answer":
+            item = next((d for d in items if isinstance(d, dict) and d.get("id") == args.id), None)
+            options = (item or {}).get("options") or []
+            if item is None or not 1 <= args.choice <= len(options):
+                print(f"decision {args.id} of {args.by} has changed or is answered; reload the dashboard")
+                return 3
+            answer = options[args.choice - 1]
+            data["decisions"] = [d for d in items if d is not item]
+            task = item.get("task", "")
+            done = f"Answered{' for ' + task if task else ''}: {answer}"
+            message = (f"The user answered the decision{' for ' + task if task else ''} on the dashboard: \"{answer}\" "
+                       f"(question: \"{item.get('text', '')}\"). This is the user's answer; act on it.")
+        else:
+            data["decisions"] = [] if args.all else [d for d in items if not isinstance(d, dict) or d.get("task") != args.task]
+            done = "cleared"
+        data["updated"] = now().strftime("%H:%MZ")
+        write_json(path, data)
+        if args.dcmd == "answer":
+            log(f"decision answer {args.by} {args.id} choice={args.choice}" + (" by=dashboard" if args.notify else ""))
+            note("dashboard" if args.notify else args.by, f"User decision{' for ' + task if task else ''}: {answer} ({item.get('text', '')})")
+    finally:
+        unlock()
+    print(f"{done} · {len(data['decisions'])} decisions for {args.by}")
+    if args.dcmd == "answer" and args.notify:
+        print(notify(args.by, message))
     return 0
 
 
@@ -1171,6 +1213,12 @@ def main():
     da.add_argument("--text", required=True)
     da.add_argument("--task")
     da.add_argument("--href")
+    da.add_argument("--option", action="append", help="a suggested answer; repeat for each (at most 4)")
+    dn = dsub.add_parser("answer")
+    dn.add_argument("--by", required=True)
+    dn.add_argument("--id", required=True)
+    dn.add_argument("--choice", type=int, required=True, help="the option number, from 1")
+    dn.add_argument("--notify", action="store_true", help="tell the coordinator (sender: dashboard)")
     dl = dsub.add_parser("clear")
     dl.add_argument("--by", required=True)
     dl.add_argument("--task")
