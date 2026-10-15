@@ -18,7 +18,11 @@ heartbeat age). Every 5 s the server samples the host (CPU, load, memory, swap, 
                buttons: runs `coordinator.py park|unpark ... --notify`, so the coordinator is told.
   POST /queue  {"action": "up"|"unwait", "cls", "id"} from the page's Move up and Cancel
                buttons: runs `coordinator.py <action> CLASS --id ID --notify`, which tells each
-               affected coordinator. Same-origin JSON with X-Requested-By only.
+               affected coordinator.
+  POST /decide {"coord", "id", "choice"} from a decision's option buttons: runs
+               `coordinator.py decision answer --by C --id ID --choice N --notify`, so the
+               coordinator gets the user's answer. Only the option number crosses the post.
+  Posts: same-origin JSON with X-Requested-By only.
   /events      text/event-stream: `update` (page changed) and `host` (JSON sample)
   /host.json   the latest host sample
   /health      "ok <version>"
@@ -410,7 +414,7 @@ def render_page(host):
                 n = task_need(coord, task, "serious", "Decision needed")
             else:
                 n = need(("decision", coord, i), "serious", "Decision needed", id=task, coord=coord, href=session_of(coord, task))
-            n["asks"].append(d.get("text", ""))
+            n["asks"].append({"text": d.get("text", ""), "coord": coord, "id": d.get("id", ""), "options": d.get("options") or []})
             if d.get("href"):
                 n["href"] = d["href"]
     for coord, mlist in members.items():
@@ -449,6 +453,16 @@ def render_page(host):
             out += f'<button type="button" class="ghost" data-park="unpark" {attrs}>Unpark</button>'
         return out
 
+    def ask_html(a):
+        """The question, then one button per suggested answer (only for a decision with an id)."""
+        out = f'<p class="t1">{e(a["text"])}</p>' if a["text"] else ""
+        if a["id"] and a["options"]:
+            attrs = f'data-coord="{e(a["coord"])}" data-id="{e(a["id"])}"'
+            out += '<div class="opts">' + "".join(
+                f'<button type="button" class="btn" data-decide="{i}" {attrs}>{e(o)}</button>'
+                for i, o in enumerate(a["options"], 1)) + "</div>"
+        return out
+
     def reasons_html(n):
         return f'<div class="reasons">{"".join(f"<span>{e(r)}</span>" for r in n["reasons"])}</div>'
 
@@ -460,7 +474,7 @@ def render_page(host):
         return (
             f'<article class="need{" critical" if n["sev"] == "critical" else ""}"><div class="need-main">{reasons_html(n)}'
             + (f'<div class="idl">{idl}</div>' if idl else "")
-            + "".join(f'<p class="t1">{e(a)}</p>' for a in n["asks"] if a)
+            + "".join(ask_html(a) for a in n["asks"])
             + (f'<p class="st">{e(n["status"])}</p>' if n["status"] else "")
             + "</div>" + (f'<div class="need-side">{side}</div>' if side else "") + "</article>"
         )
@@ -875,6 +889,23 @@ def park_action(action, coord, name, until):
     return r.returncode == 0, lines or [f"coordinator.py exit {r.returncode}"]
 
 
+DECISION_ID = re.compile(r"^[0-9a-f]{8}$")
+
+
+def decide_action(coord, decision_id, choice):
+    """Run `coordinator.py decision answer --by C --id ID --choice N --notify`."""
+    if not NAME.match(coord) or not DECISION_ID.match(decision_id) or not (isinstance(choice, int) and 1 <= choice <= 9):
+        return False, ["bad request"]
+    cmd = [sys.executable, "-I", COORDINATOR, "decision", "answer", "--by", coord, "--id", decision_id,
+           "--choice", str(choice), "--notify"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, [f"coordinator.py failed: {exc}"]
+    lines = [x for x in (r.stdout + r.stderr).splitlines() if x.strip()]
+    return r.returncode == 0, lines or [f"coordinator.py exit {r.returncode}"]
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -890,7 +921,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?")[0]
-        if path not in ("/queue", "/park"):
+        if path not in ("/queue", "/park", "/decide"):
             self.send_response(404)
             self.end_headers()
             return
@@ -900,7 +931,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         try:
             req = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 4096)))
-            if path == "/park":
+            if path == "/decide":
+                choice = req.get("choice")
+                ok, lines = decide_action(str(req.get("coord", "")), str(req.get("id", "")),
+                                          choice if type(choice) is int else None)
+            elif path == "/park":
                 ok, lines = park_action(str(req.get("action", "")), str(req.get("coord", "")), str(req.get("name", "")),
                                         str(req.get("until") or ""))
             else:

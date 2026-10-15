@@ -43,6 +43,14 @@ A task or queue entry with a priority other than 0 shows it ("Priority 2");
 inside each state group, higher-priority tasks come first, and each lease
 queue lists entries by priority, then FIFO.
 
+A decision with suggested answers (`decision add --option`) shows one button
+per option on its Needs you card. A click asks first, then runs
+`coordinator.py decision answer --notify`: the decision clears, the ledger
+records the answer, and the coordinator gets a message from "dashboard" with
+the answer and the question. Only the option number crosses the post; the
+answer text comes from the state file. A decision without options has no
+buttons.
+
 Each queued lease entry has Move up and Cancel buttons (Cancel asks first).
 They run `coordinator.py up|unwait --notify`, which tells each affected coordinator
 (`references/leases.md`); a toast shows the result and the delivery. The
@@ -67,6 +75,7 @@ concise and readable. This applies to the state file, `member update`,
 | `phase` | 5 words | The current step: "In review", "Waiting for BUILD", "Auto-merge on". |
 | `latest` | 1 sentence, 20 words | The newest fact and, if useful, the next step. |
 | decision `text` | 1 question, 25 words | What the user must decide, and where (PR number). |
+| decision `--option` | 2 to 4 options, 5 words each (60 characters, enforced) | One answer the user can click: "Yes, merge it", "Hold until Monday". |
 | `notes` | 3 per coordinator, 1 sentence each | Cross-task facts the user must know. Remove a note when it is no longer true. |
 | ledger `note` | 2 sentences | What happened, the result, the next step. |
 | lease `--holder` | task id + 5 words | "S9 typecheck and unit tests". |
@@ -108,7 +117,8 @@ coordinator slug; it labels your section and your decisions.
 {
   "updated": "12:05Z",
   "coordinator": {"label": "<slug> session", "href": "claude://claude.ai/epitaxy/<sessionId>"},
-  "decisions": [{"task": "S2", "text": "Accept #123 without a local E2E?"}],
+  "decisions": [{"id": "1f3a9c2e", "task": "S2", "text": "Accept #123 without a local E2E?",
+                 "options": ["Yes, merge it", "No, run E2E first"]}],
   "notes": ["#124 and the billing stack both touch the settings schema; billing goes first."],
   "links": [{"label": "Notes", "href": "file:///path/to/scratch.md"}],
   "tasks": [
@@ -134,7 +144,9 @@ coordinator slug; it labels your section and your decisions.
 - `kind` sets the work group: `warn` (Blocked, also listed under Needs you),
   `work` (In progress), `ok` (On track), `done` (Done).
 - A decision may be a string `"S2: text"`; the task id before the colon
-  becomes a jump link to that task's session.
+  becomes a jump link to that task's session. Option buttons need the `id`
+  that `decision add` writes, so add decisions with options through
+  `decision add`, not by hand.
 - A task row's lease ETA matches lease holder names against the task id,
   so start each lease `--holder` with the task id (for example `"S9 build"`).
 - For Claude `session` deep links, use the session id that `ListAgents` shows for

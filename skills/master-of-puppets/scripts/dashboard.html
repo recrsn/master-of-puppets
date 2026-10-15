@@ -156,6 +156,7 @@ a.chip:hover{color:var(--text-color-cui-primary)}
 .q-pos{flex:none;width:76px;font-family:var(--font-cui-mono);font-size:12px;line-height:20px;color:var(--text-color-cui-tertiary)}
 .q-b{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px} .q-b b{font-weight:500}
 .q-act{display:flex;gap:4px;margin-top:4px;margin-left:-8px}
+.opts{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 2px}
 .ghost.cancel:hover{background:var(--background-color-cui-danger-subtle);color:var(--text-color-cui-danger)}
 .ghost:disabled{opacity:.5;cursor:progress}
 .row-side{margin-left:auto;display:flex;align-items:center;gap:12px}
@@ -342,6 +343,12 @@ html[data-ledger] .scrim{display:block} html[data-ledger] .drawer{display:flex}
     drawParkForm();
   };
 
+  const decide = async (btn) => {
+    const {coord, id} = btn.dataset;
+    const choice = Number(btn.dataset.decide);
+    if (confirm(`Answer "${btn.textContent}"? ${coord} gets it as your decision.`)) await post("/decide", {coord, id, choice}, btn);
+  };
+
   const sync = () => {
     for (const d of document.querySelectorAll("details[id]")) d.open = open.has(d.id);
     drawToast();
@@ -364,7 +371,10 @@ html[data-ledger] .scrim{display:block} html[data-ledger] .drawer{display:flex}
     const q = ev.target.closest("[data-q]");
     const m = ev.target.closest("[data-mode-btn]");
     const pk = ev.target.closest("[data-park]");
-    if (pk) {
+    const dc = ev.target.closest("[data-decide]");
+    if (dc) {
+      decide(dc);
+    } else if (pk) {
       parkClick(pk);
     } else if (ev.target.closest("[data-park-go]")) {
       const {coord, name, until} = parkForm;
