@@ -32,7 +32,7 @@ Split runs longer than the limit.
 | `UPDATE — <name> — <phase> — <fact>` | `member update` |
 | `ENROLL REQUEST — <task> — PR <n>` | `enroll --by <name>`, reply with the kickoff line |
 | `USER SYNC — <one line>` | `note`, `member update --latest` |
-| `LEASE REQUEST ...` | see `references/leases.md` |
+| No message: `EVENT ... request <CLASS> <slug> <id> ...` in `watch inbox` (the member ran `puppet.py request`) | check and grant (`references/leases.md`, "Granting") |
 | `LEAVE — <name>` | `member remove` |
 | `HANDOFF REQUEST — <name> — to <coordinator\|any> — PRs <n> — note <path>` | `PAUSE` its PRs, then offer (`references/handoff.md`) |
 

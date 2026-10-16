@@ -82,11 +82,24 @@ The memory budget predicts; the host check observes. Both must pass, and
 
 ## Granting
 
-1. Record the request under the id the member proposed (it is already waiting
-   on it, for up to 10 minutes): `coordinator.py wait <CLASS> --coordinator <slug> --holder "<task> <what>" --id <member's id> --minutes <est> --commands "<exact commands>" --worktree <path> [--gib <n>]`.
+1. Members queue their own requests with `puppet.py request`. It refuses
+   when leases are off, a non-member, an id without the `<slug>-q-<name>-`
+   prefix, an id that is already held and a run over the class limit, and
+   gives the entry its task's priority. A member cannot set
+   a priority, jump the queue or grant. `watch inbox` shows each request as
+   `EVENT ... request <CLASS> <slug> <id> <holder> by=<name>`, and a changed
+   one as `... request <CLASS> <slug> <id> changed ...`. Check that the
+   recorded commands fit the class. If they do not, `unwait` the entry and
+   tell the member why. A request needs no reply: `request` printed its
+   position, and `await-grant` follows the queue. Reply LEASE QUEUED only when
+   you change the entry (split, hold, priority). `watch inbox` shows only new
+   lines, so a request made while it did not run has no event: each heartbeat
+   round, `status --brief` shows it.
+   To queue for a member yourself, for example the second part of a split:
+   `coordinator.py wait <CLASS> --coordinator <slug> --holder "<task> <what>" --id <slug>-q-<name>-<n> --minutes <est> --commands "<exact commands>" --worktree <path> [--gib <n>]`.
    To change an entry later, pass only `--id` and the fields that change.
    Start `--holder` with the task id (the dashboard matches on it, and the
-   entry takes that task's priority). Reply LEASE QUEUED with the position.
+   entry takes that task's priority).
 2. When that entry is the first ready one, run `coordinator.py acquire ... --measure`.
    It runs the host check itself (about 25 s), then checks the queue, slot cap,
    settle time, max minutes and memory budget again under the lock.

@@ -148,6 +148,19 @@ def max_minutes(proj, cls):
     return int(min(c["maxMinutes"], max(5, -(-p90 * 1.25 // 1))))
 
 
+def length_limit(cls, key):
+    """Effective max lease minutes of class cls in project key (the registry default without one)."""
+    return max_minutes(load_project(key) if key else None, cls)
+
+
+def over_limit(cls, key, minutes):
+    """Refusal text when minutes is over the class limit, else None."""
+    limit = length_limit(cls, key)
+    if minutes > limit:
+        return f"{minutes} min is over the {limit}-min {cls} limit; split the run into parts of at most {limit} min"
+    return None
+
+
 # ---------------------------------------------------------------- state, ledger and roster
 
 
@@ -243,6 +256,63 @@ def task_priority(roster, coord, holder):
     name = holder.partition(" ")[0]
     m = next((x for x in roster["members"].get(coord, []) if x["name"] == name), None)
     return (m or {}).get("priority", 0)
+
+
+def queue_entry(state, roster, cls, id, coordinator=None, holder=None, minutes=None, gib=None,
+                commands=None, worktree=None, priority=None, front=False, by=None):
+    """Add queue entry id to class cls, or change the given fields of an existing one, and
+    re-order the queue. The caller holds the lock and saves. Returns (exit, text):
+    0 with the position, 2 when minutes is over the class limit or a new entry lacks
+    coordinator and holder."""
+    queue = state["queue"][cls]
+    existing = next((q for q in queue if q["id"] == id), None)
+    if minutes:
+        key = project_key(worktree)[0] if worktree else (existing or {}).get("project")
+        why = over_limit(cls, key, minutes)
+        if why:
+            return 2, why
+    if existing:
+        if minutes:
+            existing["minutes"] = minutes
+        if gib:
+            existing["gib"] = gib
+        if holder:
+            existing["holder"] = holder
+        if commands:
+            existing["commands"] = commands
+        if worktree:
+            existing["project"] = project_key(worktree)[0]
+        if priority is not None and priority != existing.get("priority", 0):
+            existing["priority"] = priority
+            log(f"priority {cls} {id} {priority}")
+        if by:
+            log(f"request {cls} {existing['coordinator']} {id} changed {existing['holder']} by={by}")
+    else:
+        if not (coordinator and holder):
+            return 2, "a new queue entry needs --coordinator and --holder"
+        if priority is None:
+            priority = task_priority(roster, coordinator, holder)
+        entry = {"coordinator": coordinator, "holder": holder, "id": id, "priority": priority,
+                 "since": now().isoformat()}
+        if minutes:
+            entry["minutes"] = minutes
+        if gib:
+            entry["gib"] = gib
+        if commands:
+            entry["commands"] = commands
+        if worktree:
+            entry["project"] = project_key(worktree)[0]
+        if front:
+            entry["priority"] = max([priority] + [q.get("priority", 0) for q in queue])
+            queue.insert(0, entry)
+        else:
+            queue.append(entry)
+        # A member's own request logs "request", so the coordinator's watch inbox shows it.
+        verb = "request" if by else "wait"
+        log(f"{verb} {cls} {coordinator} {id} {holder}" + (f" priority={entry['priority']}" if entry["priority"] else "")
+            + (f" by={by}" if by else ""))
+    order(queue)
+    return 0, f"position {[q['id'] for q in queue].index(id) + 1}"
 
 
 def save(state, machine):

@@ -14,9 +14,10 @@ not write product code.
   slug name and a focus (its stack), and owns its PRs. They share one roster,
   one ledger, the lease queues and one dashboard, and agree cross-stack
   questions (merge order, shared files) by message.
-- **The coordinator records; members report.** Members send messages and
-  release their own leases. The coordinator records every enrollment, member
-  and task update in the roster and on the dashboard.
+- **The coordinator records; members report.** Members send messages, queue
+  their own lease requests and release their own leases. Only a coordinator
+  grants. The coordinator records every enrollment, member and task update in
+  the roster and on the dashboard.
 - **Enrollment is voluntary, except for children.** A session joins by running
   `/puppet` (the member skill). Every independent session that a coordinator
   or member starts is enrolled before dispatch; subagents stay part of their
@@ -31,7 +32,7 @@ not write product code.
 | File | What it does |
 | --- | --- |
 | `scripts/coordinator.py` | Coordinator commands: roster and members, streams, leases, messaging, watchers, config and install. Run with `python3 -I`; the docstring lists every command. |
-| `scripts/puppet.py` | Member commands: roster, whoami, memory list, `await-grant` and `release` of the member's own lease. Members run only this file. |
+| `scripts/puppet.py` | Member commands: roster, whoami, memory list, and for the member's own lease `request`, `await-grant` and `release`. It cannot grant. Members run only this file. |
 | `scripts/moplib.py` | State code that both CLIs import. |
 | `scripts/server.py` | The one dashboard, on `http://localhost:4720/`, with the page shell `scripts/dashboard.html`: host meters, "Needs you" first, the work board, lease timelines and coordinators; a Wall mode for a shared screen. Live by SSE. Exits with "already serving" when one runs. |
 
@@ -219,7 +220,9 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    recover unread inbox/ledger entries (`references/agents.md`).
 3. Compare each stack with the latest `watch prs` lines; act on steps 3 and 4
    above. Confirm with one `gh pr view` before each stack move, not on a timer.
-4. Leases on: expiry check and grants (`references/leases.md`).
+4. Leases on: expiry check and grants (`references/leases.md`). Run
+   `coordinator.py status --brief`: a ready entry of yours that you have not
+   acted on is a member request that `watch inbox` did not show you.
 5. Check on members, higher priority first; do not wait for them to report.
    `coordinator.py member stale --coordinator <slug> --minutes 30` lists members with
    no recorded update. For each one: read its PRs in the latest `watch prs`
