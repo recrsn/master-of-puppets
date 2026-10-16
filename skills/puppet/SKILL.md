@@ -1,6 +1,6 @@
 ---
 name: puppet
-description: Join a master-of-puppets coordinator as a member ("puppet") and work your task under its directions until your PRs merge. Members report by message and release their own leases; the coordinator records membership and decisions. Use this at once when a prompt starts with "MASTER-OF-PUPPETS ENROLLED". Also use it when the user says "puppet", "join the coordinator", "join master of puppets", "enroll this session", "ask the coordinator for a lease", or "report to the coordinator".
+description: Join a master-of-puppets coordinator as a member ("puppet") and work your task under its directions until your PRs merge. Members report by message, and request and release their own leases; only the coordinator grants, and it records membership and decisions. Use this at once when a prompt starts with "MASTER-OF-PUPPETS ENROLLED". Also use it when the user says "puppet", "join the coordinator", "join master of puppets", "enroll this session", "request a lease", "ask the coordinator for a lease", or "report to the coordinator".
 ---
 
 # Puppet
@@ -9,9 +9,10 @@ You are a member of a coordinator session. The coordinator owns the stack,
 the roster, the ledger, the dashboard and the leases. You do the task: code,
 tests, commits, pushes, PR fixes. You never write the roster, ledger, dashboard
 or shared inbox; you send messages, and the coordinator records them. There
-are two exceptions: `puppet.py release` for your own lease, which updates
-lease state and measurement history, and your handoff note (section 8). Do
-not release someone else's lease.
+are three exceptions: `puppet.py request` and `puppet.py release` for your
+own lease, which update the lease queue, lease state and measurement history,
+and your handoff note (section 8). You cannot grant a lease; only your
+coordinator does. Do not request, change or release someone else's lease.
 
 **Every child task starts enrolled** (section 6).
 
@@ -51,7 +52,7 @@ ENROLL REQUEST for such a task. The coordinator can then put regular work
 first.
 
 Send it, and every later message (UPDATE, MERGED, USER SYNC, STATUS replies,
-ENROLL REQUEST, LEASE REQUEST, LEASE RELEASED, LEAVE), by the direct route
+ENROLL REQUEST, LEASE RELEASED, LEAVE), by the direct route
 for your coordinator's tool (`protocol.md`, "Routes"). Never use `coordinator.py say`
 and never write shared inbox records, even with `--no-direct`. When your
 session id changes, send JOIN again (`protocol.md`, "Routes").
@@ -104,12 +105,23 @@ never by a relay.
 ## 5. Leases (only when WELCOME says leases are on)
 
 1. Finish all edits first. Pick an id, `<coord>-q-<name>-<n>` (n counts your
-   requests), and request:
-   `LEASE REQUEST <CLASS> — id <id> — <exact commands> — <estimate min> — <est GiB if known> — <worktree>`.
+   requests), and queue it yourself; no message is needed:
+   `puppet.py request <CLASS> --coordinator <coord> --name <name> --id <id> --minutes <estimate> --commands "<exact commands>" --worktree <worktree> [--gib <n>] [--what "<short label>"]`.
    The classes and their scope are in WELCOME (BUILD and E2E by default).
-2. Start waiting at once: `puppet.py await-grant <CLASS> --id <id>`. It allows
-   the coordinator up to 10 minutes to queue your id. It prints one line:
-   - `GRANTED` (exit 0): the only signal to run.
+   It prints your position. Your coordinator sees the request and grants it.
+   - Exit 2: the run is over the class limit. Split it into parts that fit
+     and request each part when the one before it is done.
+   - Exit 3: refused (leases off, not a member, a foreign id, or the id is
+     already held). Fix what it names; ask your coordinator when you cannot.
+   To change your request (commands, estimate), run `request` again with the
+   same id; your coordinator sees the change. You cannot set a priority or
+   jump the queue. When the user wants your task to go first, send it as
+   `USER SYNC`; the coordinator decides. To drop a queued request, ask your
+   coordinator.
+2. Start waiting at once: `puppet.py await-grant <CLASS> --id <id>`. It prints
+   one line:
+   - `GRANTED` (exit 0): the only signal to run. Your coordinator also sends
+     LEASE GRANTED with the expiry.
    - `NOT-GRANTED ... left the queue` (exit 3), `... never queued` (exit 6):
      do not run; ask your coordinator.
    - `NOT-GRANTED ... timeout` (exit 5): still queued; run `await-grant` again.
@@ -119,7 +131,7 @@ never by a relay.
 3. Run only the granted commands and cleanup of resources they started.
    Use it or return it: no edits or repairs while holding a lease. On failure,
    clean up owned resources, release promptly and report the raw failure;
-   repair; request again.
+   repair; request again with a new id.
 4. For E2E, stop the servers you started before releasing, including on
    failure. Release: `puppet.py release <CLASS> --id <id>`, then
    `LEASE RELEASED <id> — pass|fail — <raw summary>`. Report any cleanup

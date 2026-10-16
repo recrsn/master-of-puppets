@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Member ("puppet") commands for master-of-puppets. A member reads the roster and
-the skill's memory, waits for its lease grant and releases its own lease. It never
+the skill's memory, queues its own lease request, waits for the grant and releases
+its own lease. Only a coordinator grants (coordinator.py acquire). A member never
 writes the roster, ledger, dashboard or shared inbox; it messages its coordinator,
 which records everything with coordinator.py. Shared code is in moplib.py.
 
@@ -11,11 +12,17 @@ Usage: python3 -I puppet.py <command> ...
   roster | whoami --session-id ID
        coordinators (with live: heartbeat newer than 40 minutes), members and streams
   memory list [--project-root P] [--json]      machine rules and notes, then the project's
+  request CLASS --coordinator C --name NAME --id ID --minutes N --commands TEXT --worktree P
+          [--gib N] [--what TEXT]
+       queue your own lease request; prints its position. The ID must start with C-q-NAME-,
+       and NAME must be a member of C. The entry takes your task's priority; only your
+       coordinator or the user changes it. A repeat with the same ID changes the given fields.
+       exit 0 queued, 2 over the class limit (split the run), 3 refused: leases off, not a
+       member of C, a foreign ID, or the ID is already held
   await-grant CLASS --id ID [--timeout-min N] [--appear-timeout S]
        prints GRANTED or NOT-GRANTED <reason>. Exit 0 granted (the only grant);
        3 left the queue without a grant; 5 timeout while still queued; 6 never queued
-       within --appear-timeout (default 600 s), so a member may start before the
-       coordinator queues the ID it proposed
+       within --appear-timeout (default 600 s)
   release CLASS --id ID [--peak-gib N]
        release your own lease, never another's; records its run minutes and peak
 """
@@ -32,17 +39,48 @@ sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import (
     PEAKS, SAMPLES_KEPT, MINUTES_KEPT, load_machine, registry, class_names,
     load_project, save_project, now, lock, unlock, log,
-    load, save, READS, add_read_commands, read_cmd,
+    load, save, load_roster, queue_entry, READS, add_read_commands, read_cmd,
 )
 
 
 # ---------------------------------------------------------------- leases
 
 
+def request(args):
+    """Queue the member's own entry. The member cannot grant, set a priority or jump the
+    queue; its coordinator sees the "request" event in watch inbox and grants."""
+    lock()
+    try:
+        roster, state, machine = load_roster(), load(), load_machine()
+        if roster["leases"] != "on":
+            print("leases are off; run the commands without a lease")
+            return 3
+        if not any(m["name"] == args.name for m in roster["members"].get(args.coordinator, [])):
+            print(f"{args.name} is not a member of {args.coordinator}; send JOIN first")
+            return 3
+        prefix = f"{args.coordinator}-q-{args.name}-"
+        if not args.id.startswith(prefix):
+            print(f"{args.id} is not yours; use an ID that starts with {prefix}")
+            return 3
+        if any(h["id"] == args.id for h in state[args.cls]):
+            print(f"{args.id} is already held; release it or use a new ID")
+            return 3
+        queued = any(q["id"] == args.id for q in state["queue"][args.cls])
+        holder = f"{args.name} {args.what or args.commands}" if args.what or not queued else None
+        code, text = queue_entry(state, roster, args.cls, args.id, args.coordinator, holder, args.minutes,
+                                 args.gib, args.commands, args.worktree, by=args.name)
+        if code == 0:
+            save(state, machine)
+        print(text)
+        return code
+    finally:
+        unlock()
+
+
 def await_grant(args):
-    """Poll without the lock. A member may start before the coordinator queues the
-    entry, so the ID gets --appear-timeout to show up before it is judged. Prints
-    one line, GRANTED or NOT-GRANTED <reason>; only exit 0 means granted."""
+    """Poll without the lock. The coordinator may queue the ID for the member, so the
+    ID gets --appear-timeout to show up before it is judged. Prints one line,
+    GRANTED or NOT-GRANTED <reason>; only exit 0 means granted."""
     start = time.time()
     seen = False
     while True:
@@ -110,6 +148,16 @@ def main():
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
     add_read_commands(sub)
+    rq = sub.add_parser("request")
+    rq.add_argument("cls", metavar="CLASS")
+    rq.add_argument("--coordinator", required=True)
+    rq.add_argument("--name", required=True, help="your member name")
+    rq.add_argument("--id", required=True, help="<coordinator>-q-<name>-<n>")
+    rq.add_argument("--minutes", type=int, required=True, help="your estimate")
+    rq.add_argument("--commands", required=True, help="the exact commands the lease would cover")
+    rq.add_argument("--worktree", required=True, help="sets the project whose class peak applies")
+    rq.add_argument("--gib", type=float, help="expected peak GiB, if known")
+    rq.add_argument("--what", help="short label for the dashboard; default: the commands")
     ag = sub.add_parser("await-grant")
     ag.add_argument("cls", metavar="CLASS")
     ag.add_argument("--id", required=True)
@@ -126,6 +174,8 @@ def main():
         p.error(f"unknown lease class {name}; known: {', '.join(class_names())}")
     if args.cmd in READS:
         return read_cmd(args)
+    if args.cmd == "request":
+        return request(args)
     if args.cmd == "await-grant":
         return await_grant(args)
     return release(args)

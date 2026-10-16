@@ -27,10 +27,11 @@ One or more coordinator sessions take PR stacks to merged. Coordinators:
 ### `puppet`
 
 A working session joins a coordinator as a member. It reports by message
-(JOIN, UPDATE, LEASE REQUEST, ENROLL REQUEST, LEAVE), follows ACTIVE and PAUSE
-directions, waits for leases with `puppet.py await-grant`, releases its own
-leases, and takes its own PRs to merged. The coordinator records membership
-and decisions.
+(JOIN, UPDATE, ENROLL REQUEST, LEAVE), follows ACTIVE and PAUSE directions,
+queues its own lease requests with `puppet.py request`, waits with
+`puppet.py await-grant`, releases its own leases, and takes its own PRs to
+merged. Only a coordinator grants. The coordinator records membership and
+decisions.
 
 Four files in `master-of-puppets/scripts` do the work: `coordinator.py`
 (roster, members, leases, messaging, watchers, config), `puppet.py` (the

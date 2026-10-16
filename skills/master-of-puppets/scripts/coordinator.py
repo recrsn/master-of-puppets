@@ -63,7 +63,9 @@ Leases
        for an existing ID every flag is optional and only the given fields change.
        exit 2 when --minutes is over the class limit: split the run.
        --priority: default the task's priority, else 0; a change moves the entry to its
-       place among the others. --front: the head, at the highest priority in the queue
+       place among the others. --front: the head, at the highest priority in the queue.
+       Members queue their own requests with puppet.py request; watch inbox shows each
+       as a "request" event. Only acquire grants.
   acquire CLASS --coordinator C --holder NAME --id ID --worktree P --minutes N [--gib N]
           [--commands TEXT] [--measure]
        runs the host check itself (about 2 × swapIntervalS), then checks again under the lock.
@@ -96,7 +98,7 @@ Config
        release records run minutes; with --minutes learn the limit is p90 of the last 10
        runs + 25% (at least 5, at most --max-minutes); config show prints maxMinutesEffective.
 
-Roster and members (coordinators write; members send messages and release their own leases)
+Roster and members (coordinators write; members send messages, and request and release their own leases)
   roster | whoami --session-id ID
   coordinate --name C --tool claude|codex --session-id ID --focus TEXT [--pr N ...] [--takeover] [--general]
        --general: a general-purpose coordinator with no fixed scope
@@ -181,8 +183,8 @@ from moplib import (
     DIR, CONFIG, TOOLS, SLUG, PEAKS, LOG,
     INBOX, CLASS_NAME, read_json, write_json, load_machine, registry,
     class_names, project_key, load_project, save_project, class_peak, typical_minutes,
-    max_minutes, now, lock, unlock, log, note,
-    load_roster, save_roster, live, load, save, budget, order, task_priority,
+    max_minutes, length_limit, over_limit, now, lock, unlock, log, note,
+    load_roster, save_roster, live, load, save, budget, order, queue_entry,
     say, deliver, notify, READS, memory_path, add_read_commands,
     read_cmd,
 )
@@ -845,19 +847,6 @@ def queue_edit_cmd(args):
     return 0
 
 
-def length_limit(cls, key):
-    """Effective max lease minutes of class cls in project key (the registry default without one)."""
-    return max_minutes(load_project(key) if key else None, cls)
-
-
-def over_limit(cls, key, minutes):
-    """Refusal text when minutes is over the class limit, else None."""
-    limit = length_limit(cls, key)
-    if minutes > limit:
-        return f"{minutes} min is over the {limit}-min {cls} limit; split the run into parts of at most {limit} min"
-    return None
-
-
 def acquire_checks(args, state, machine):
     """Every acquire gate except the host and the memory budget. Returns (exit, text) to refuse, else None."""
     queue, holders = state["queue"][args.cls], state[args.cls]
@@ -1455,52 +1444,12 @@ def main():
             return 0
         queue = state["queue"][args.cls]
         if args.cmd == "wait":
-            existing = next((q for q in queue if q["id"] == args.id), None)
-            if args.minutes:
-                key = project_key(args.worktree)[0] if args.worktree else (existing or {}).get("project")
-                why = over_limit(args.cls, key, args.minutes)
-                if why:
-                    print(why)
-                    return 2
-            if existing:
-                if args.minutes:
-                    existing["minutes"] = args.minutes
-                if args.gib:
-                    existing["gib"] = args.gib
-                if args.holder:
-                    existing["holder"] = args.holder
-                if args.commands:
-                    existing["commands"] = args.commands
-                if args.worktree:
-                    existing["project"] = project_key(args.worktree)[0]
-                if args.priority is not None and args.priority != existing.get("priority", 0):
-                    existing["priority"] = args.priority
-                    log(f"priority {args.cls} {args.id} {args.priority}")
-            else:
-                if not (args.coordinator and args.holder):
-                    print("a new queue entry needs --coordinator and --holder")
-                    return 2
-                priority = args.priority if args.priority is not None else task_priority(roster, args.coordinator, args.holder)
-                entry = {"coordinator": args.coordinator, "holder": args.holder, "id": args.id, "priority": priority,
-                         "since": now().isoformat()}
-                if args.minutes:
-                    entry["minutes"] = args.minutes
-                if args.gib:
-                    entry["gib"] = args.gib
-                if args.commands:
-                    entry["commands"] = args.commands
-                if args.worktree:
-                    entry["project"] = project_key(args.worktree)[0]
-                if args.front:
-                    entry["priority"] = max([priority] + [q.get("priority", 0) for q in queue])
-                    queue.insert(0, entry)
-                else:
-                    queue.append(entry)
-                log(f"wait {args.cls} {args.coordinator} {args.id} {args.holder}" + (f" priority={entry['priority']}" if entry["priority"] else ""))
-            order(queue)
-            save(state, machine)
-            print(f"position {[q['id'] for q in queue].index(args.id) + 1}")
-            return 0
+            code, text = queue_entry(state, roster, args.cls, args.id, args.coordinator, args.holder, args.minutes,
+                                     args.gib, args.commands, args.worktree, args.priority, args.front)
+            if code == 0:
+                save(state, machine)
+            print(text)
+            return code
         if args.cmd == "extend":
             for h in state[args.cls]:
                 if h["id"] == args.id:
