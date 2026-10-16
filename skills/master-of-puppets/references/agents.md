@@ -19,6 +19,7 @@ Use only capabilities present in the current session.
 | Scheduled heartbeat | `CronCreate`; `ScheduleWakeup` inside `/loop` | Desktop `automation_update` with `kind: "heartbeat"`, attached to the coordinator chat. See below. |
 | Watch a command | `Monitor` | Run the watcher through `exec_command`, then read it with `write_stdin`, or start a background process with output saved outside the repository. See below. |
 | Bind a PR and repair blockers | `ccd_pr` + Auto-fix when available | Desktop `attach_artifact` with the PR URL, then repair valid review/CI blockers in the owner chat. PR attachment does not start Auto-fix. |
+| Start or track a CodeRabbit cloud task | `coderabbit code` CLI; `Monitor` on `coordinator.py watch cloud` | `coderabbit code` CLI; `coordinator.py watch cloud` as a long-lived command. See [coderabbit-cloud.md](coderabbit-cloud.md). |
 | Open the dashboard | Browser tools | Desktop `open_in_codex` with browser target `http://localhost:4720/`. |
 
 ## Messaging

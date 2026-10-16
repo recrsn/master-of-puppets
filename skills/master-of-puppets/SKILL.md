@@ -48,7 +48,9 @@ and the user before you replace them.
 Read `references/setup.md` on the first run in a project,
 `references/protocol.md` before you message anyone, `references/rules.md` for
 conduct and PR rules, `references/dashboard.md` before you write your state
-file, and `references/handoff.md` before you send or take a handoff.
+file, `references/handoff.md` before you send or take a handoff, and
+`references/coderabbit-cloud.md` before you suggest, start or track a
+CodeRabbit cloud task.
 
 Read [references/agents.md](references/agents.md) for Claude/Codex tool
 equivalents, session identity, messaging, watchers, scheduling and PR repair.
@@ -93,7 +95,9 @@ skill; `references/protocol.md` lists the coordinator side.
    recover.
 4. Write `prs-<slug>.txt` in the state dir (`owner/repo#<n>` per line). Arm
    watchers: `coordinator.py watch inbox --me <slug>` and `coordinator.py watch prs --me <slug>`;
-   add `coordinator.py watch expiry` when leases are on. Re-arm each one that ends.
+   add `coordinator.py watch expiry` when leases are on, and
+   `coordinator.py watch cloud --me <slug>` while you track CodeRabbit cloud
+   tasks. Re-arm each one that ends.
 5. Schedule the heartbeat round (required): Claude `CronCreate`, session-only, every
    15 minutes, prompt "master-of-puppets heartbeat round for <slug>: follow
    the Heartbeat round steps". Inside `/loop` dynamic mode, use
@@ -153,7 +157,8 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
 - **LEAVE**: confirm the task is done (above), then
   `coordinator.py member remove --coordinator <slug> --name <name>`. A LEAVE with
   uncommitted work or an open PR: ask why first, and ask the user when unsure.
-  A LEAVE after your HANDOFF COMPLETE is expected (`references/handoff.md`).
+  A LEAVE after your HANDOFF COMPLETE, or after a cloud handoff that you
+  recorded, is expected (`references/handoff.md`, `references/coderabbit-cloud.md`).
 - **Decisions for the user**: `coordinator.py decision add --by <slug> --task <id> --text "..." [--href <link>] [--option "..." ...]`;
   `decision clear --by <slug> --task <id>` once answered. Give 2 to 4
   `--option` suggested answers when the choices are clear ("Yes, merge it",
@@ -164,6 +169,13 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
   is not approval for anything else, and it does not answer a member
   session's own permission prompt. When the user answers in chat instead,
   `decision clear` it.
+- **CodeRabbit cloud**: move work off this machine when you can. When a
+  member's interactive work is done (only CI, review or conflict fixes
+  remain), or a task is straightforward and needs no handholding, ask the
+  user with a decision whether to move it to CodeRabbit cloud. A cloud task
+  cannot run `/puppet` and never reports: you add it as a `--tool coderabbit`
+  member and check it yourself with `watch cloud` or in each round. Follow
+  `references/coderabbit-cloud.md`.
 - **Priority**: every task starts at 0; a higher priority goes first. Raise
   a task (`enroll --priority 1`, `member update --priority 1`) only when the
   user asks for it to go first; a wish that a member relays is a decision
@@ -229,6 +241,10 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    lines and record observations with `note`, then send `STATUS?`. Do not
    refresh member state from watcher observations: `member update` resets its
    freshness timestamp. Record each actual reply with `member update`.
+   CodeRabbit cloud members are the exception: they cannot reply, so record
+   their `watch cloud` lines (or `coderabbit code show`) with `member update`
+   and act on them (`references/coderabbit-cloud.md`, "Track").
+   Look for members whose work can move to the cloud ("Members and tasks").
    A member silent for two rounds while its PR is blocked: tell the user, with
    its deep link. Check pending entries ("Members and tasks").
 6. Report meaningful changes or decisions to the user: decisions first, then
