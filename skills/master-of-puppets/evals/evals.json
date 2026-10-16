@@ -95,6 +95,21 @@
         "decisions.md plans to set deps-sweep back to priority 0 when no regular task waits",
         "No acquire is made out of queue order and no up or --front is used"
       ]
+    },
+    {
+      "id": 10,
+      "prompt": "DRY RUN. You coordinate claude-stack-a; leases are off. MACHINE_LEASE_DIR=<fixture>/state (a copy; never touch ~/.local/state/machine-leases). Do not call SendMessage, codex queue, Monitor, CronCreate, gh write commands or any coderabbit command that bills or changes shared state; write what you would do instead. `coderabbit code ls --agent --repo .` works for this repository. Member fix-201 owns example/app#201 (ACTIVE, base main) and writes: 'UPDATE - fix-201 - PR open - code done, only two review nits and a flaky lint job remain'. Member B has task 'rename settings flag in 3 files', no PR yet, and has not started. Earlier the user answered a dashboard decision 'Yes, Autofix only' for fix-201; Autofix then returned taskId t-77 and url https://app.coderabbit.ai/code/tasks/t-77. Write <out>/plan.md (ordered actions with reasons), <out>/messages.md (exact text per recipient) and <out>/commands.sh (commands in order).",
+      "expected_output": "Records the Autofix task as a coderabbit member with its task id and URL, adds it to cloud-claude-stack-a.txt, arms watch cloud and notes it; tells fix-201 it may leave once the cloud task is recorded; suggests CodeRabbit cloud for B's straightforward task with a decision for the user, not by starting a task itself; never sends STATUS? to the cloud task and never puts a kickoff line in a cloud prompt.",
+      "files": [],
+      "assertions": [
+        "commands.sh runs coordinator.py member add with --tool coderabbit --session-id t-77 and --session https://app.coderabbit.ai/code/tasks/t-77 and --pr 201",
+        "commands.sh appends 't-77 <member name>' to cloud-claude-stack-a.txt in the state dir and arms coordinator.py watch cloud --me claude-stack-a",
+        "The cloud task is recorded with coordinator.py note",
+        "commands.sh runs coordinator.py decision add asking the user whether B's task moves to CodeRabbit cloud, with suggested --option answers",
+        "No coderabbit code new, handoff or autofix on command is run for B before the user answers",
+        "No STATUS? message is sent to the cloud task, and no cloud prompt contains a MASTER-OF-PUPPETS ENROLLED kickoff line",
+        "fix-201 is told it may send LEAVE after the cloud task is recorded, with its PR still open"
+      ]
     }
   ]
 }

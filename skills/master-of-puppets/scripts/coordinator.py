@@ -158,7 +158,10 @@ Peer-coordinator messaging
        permission prompts holds a socket message for the user's approval.
 
 Watchers and install
-  watch inbox --me C | watch expiry | watch prs --me C [--interval S]   Monitor sources
+  watch inbox --me C | watch expiry | watch prs --me C [--interval S] | watch cloud --me C [--interval S]
+       Monitor sources. watch cloud reads cloud-<C>.txt (a CodeRabbit cloud task id or URL,
+       then the member name, per line) and prints each task's state change from
+       `coderabbit code show --agent`
   install                     copy moplib.py, coordinator.py and puppet.py into the state dir when absent
 
 A coordinator is live while its heartbeat is newer than 40 minutes. coordinate and
@@ -180,7 +183,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import (
-    DIR, CONFIG, TOOLS, SLUG, PEAKS, LOG,
+    DIR, CONFIG, TOOLS, MEMBER_TOOLS, SLUG, PEAKS, LOG,
     INBOX, CLASS_NAME, read_json, write_json, load_machine, registry,
     class_names, project_key, load_project, save_project, class_peak, typical_minutes,
     max_minutes, length_limit, over_limit, now, lock, unlock, log, note,
@@ -659,6 +662,8 @@ def session_link(tool, session_id):
     """Deep link for the dashboard, from the tool and its session or thread id."""
     if not session_id:
         return None
+    if tool == "coderabbit":
+        return f"https://app.coderabbit.ai/code/tasks/{session_id}"
     return f"codex://threads/{session_id}" if tool == "codex" else f"claude://claude.ai/epitaxy/{session_id}"
 
 
@@ -1141,12 +1146,66 @@ def watch_prs(me, interval):
         time.sleep(interval)
 
 
+def cloud_state(task):
+    """One line of state for a CodeRabbit cloud task, from the last record of `coderabbit code show --agent`."""
+    try:
+        r = subprocess.run(["coderabbit", "code", "show", task, "--agent"], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=120,
+                           env={**os.environ, "CODERABBIT_CLI_DISABLE_AUTO_UPDATE": "true"})
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"error {exc}"[:200]
+    last = None
+    for raw in r.stdout.splitlines():
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(rec, dict) and rec.get("status") != "beta_notice":
+            last = rec
+    if not last:
+        return "error " + " ".join((r.stderr or "no record").split())[:200]
+    if last.get("type") != "complete":
+        return f"{last.get('type')} {last.get('status') or last.get('action')}: {' '.join(str(last.get('message', '')).split())[:160]}"
+    t = last.get("task") or {}
+
+    def val(v):
+        return json.dumps(v, separators=(",", ":"))[:80] if isinstance(v, (dict, list)) else str(v)
+    keys = ("status", "turnStatus", "patchStatus", "planStatus", "deliveryStatus", "pendingReason", "cancellationPending")
+    parts = [f"{k}={val(t[k])}" for k in keys if t.get(k) not in (None, "", False)]
+    if (t.get("prHealth") or {}).get("state"):
+        parts.append(f"pr={t['prHealth']['state']}")  # watch prs reports the rest; other PR health fields flap
+    goal = (t.get("goalState") or {}).get("goal") or {}
+    if goal.get("status"):
+        parts.append(f"goal={goal['status']}")
+    return " ".join(parts) or "shown"
+
+
+def watch_cloud(me, interval):
+    """State changes of the CodeRabbit cloud tasks in cloud-<me>.txt ("<task id or URL> <member>" per line).
+    Cloud tasks cannot run the puppet skill or send messages, so this is their only report."""
+    path = os.path.join(DIR, f"cloud-{me}.txt")
+    open(path, "a").close()
+    last = {}
+    while True:
+        for raw in open(path).read().splitlines():
+            f = raw.split()
+            if not f or f[0].startswith("#"):
+                continue
+            line = cloud_state(f[0].rstrip("/").rsplit("/", 1)[-1])
+            if last.get(f[0]) != line:
+                print(f"CLOUD {f[0]} {f[1] if len(f) > 1 else '-'} {line}", flush=True)
+                last[f[0]] = line
+        time.sleep(interval)
+
+
 def watch_cmd(args):
     try:
         if args.what == "inbox":
             watch_inbox(args.me)
         elif args.what == "expiry":
             watch_expiry()
+        elif args.what == "cloud":
+            watch_cloud(args.me, args.interval)
         else:
             watch_prs(args.me, args.interval)
     except KeyboardInterrupt:
@@ -1335,7 +1394,7 @@ def main():
         mx = msub.add_parser(name)
         mx.add_argument("--coordinator", required=True)
         mx.add_argument("--name", required=True)
-        mx.add_argument("--tool", choices=TOOLS)
+        mx.add_argument("--tool", choices=MEMBER_TOOLS)
         mx.add_argument("--session-id")
         mx.add_argument("--worktree")
         mx.add_argument("--task")
@@ -1389,9 +1448,9 @@ def main():
     dr.add_argument("--port", type=int, action="append", help="also check for listeners on this port")
     dr.add_argument("--process", action="append", help="also count processes matching this pattern (pgrep -f)")
     wa = sub.add_parser("watch")
-    wa.add_argument("what", choices=("inbox", "expiry", "prs"))
-    wa.add_argument("--me", help="coordinator name (inbox, prs)")
-    wa.add_argument("--interval", type=int, default=180, help="seconds between PR polls")
+    wa.add_argument("what", choices=("inbox", "expiry", "prs", "cloud"))
+    wa.add_argument("--me", help="coordinator name (inbox, prs, cloud)")
+    wa.add_argument("--interval", type=int, default=180, help="seconds between PR or cloud task polls")
     sub.add_parser("install")
     args = p.parse_args()
     for attr in ("cls", "pcls"):
@@ -1412,7 +1471,7 @@ def main():
                 "drain-check": drain_check_cmd, "watch": watch_cmd, "install": install_cmd}
     if args.cmd in unlocked:
         if args.cmd == "watch" and args.what != "expiry" and not args.me:
-            p.error("watch inbox|prs needs --me <coordinator>")
+            p.error("watch inbox|prs|cloud needs --me <coordinator>")
         return unlocked[args.cmd](args)
     if args.cmd == "decision":
         return decision_cmd(args)

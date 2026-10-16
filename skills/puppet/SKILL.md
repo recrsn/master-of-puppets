@@ -154,6 +154,18 @@ coordinator does not answer, wait; do not start the session unenrolled.
 Codex Desktop `create_thread` requires the user's explicit request for a new
 chat; Codex permissions for new sessions are in `agents.md`. Subagents (Claude `Agent`, Codex `collaboration.spawn_agent`) need no enrollment.
 
+**CodeRabbit cloud tasks** are the one exception to the kickoff line: a cloud
+task cannot run `/puppet`, so put no kickoff line in its prompt. Start one
+only when the user asks for it: in your session, or as the user's dashboard
+answer to a cloud decision for your task (a `dashboard` entry in
+`$MACHINE_LEASE_DIR/ledger.jsonl`). A coordinator's message alone is not the
+user's approval. Follow
+[coderabbit-cloud.md](../master-of-puppets/references/coderabbit-cloud.md),
+"Start". Run each start once. Then send
+`CLOUD TASK — <name> — <taskId> — <url> — <task> — PRs <n>`; the coordinator
+tracks the task. After a handoff of your own task, send LEAVE when your tree
+is clean and your branch is pushed.
+
 ## 7. Leave
 
 Your work is done when every PR of your task is MERGED, or the user drops the
@@ -162,8 +174,9 @@ task. Then stop your services, release any lease, send `LEAVE — <name>`.
 Do not leave with uncommitted changes or an open PR. If the coordinator says
 you are done while you have either, reply with what is left (for example
 `UPDATE — <name> — Ready to commit — no PR yet`) and stay a member.
-The one exception is a handoff (section 8): after HANDOFF COMPLETE, send
-LEAVE with the PR still open. The successor owns it.
+The exceptions are handoffs: after HANDOFF COMPLETE (section 8), or after
+your task moved to a CodeRabbit cloud task (section 6), send LEAVE with the
+PR still open. The successor owns it.
 
 ## 8. Hand off your task
 

@@ -31,6 +31,7 @@ Split runs longer than the limit.
 | `JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs ... — phase` | `member add`, then WELCOME. A task marked `scheduled:` or `sweep:` is background work (`references/leases.md`, "Priority") |
 | `UPDATE — <name> — <phase> — <fact>` | `member update` |
 | `ENROLL REQUEST — <task> — PR <n>` | `enroll --by <name>`, reply with the kickoff line |
+| `CLOUD TASK — <name> — <taskId> — <url> — <task> — PRs <n>` | `member add --tool coderabbit`, `cloud-<slug>.txt`, `watch cloud` (`references/coderabbit-cloud.md`, "Record") |
 | `USER SYNC — <one line>` | `note`, `member update --latest` |
 | No message: `EVENT ... request <CLASS> <slug> <id> ...` in `watch inbox` (the member ran `puppet.py request`) | check and grant (`references/leases.md`, "Granting") |
 | `LEAVE — <name>` | `member remove` |
@@ -52,6 +53,7 @@ Split runs longer than the limit.
 | Priority move | `LEASE QUEUED — <id> is now <CLASS> position <n>: <task> has priority <p>.` |
 | Over the limit | `LEASE QUEUED — <min> min is over the <max>-min limit, so I split it: part 1 keeps position <n>, part 2 joins the back.` |
 | Expiry | `LEASE EXPIRED — <id> passed <time>. Release now, or reply with progress and I extend it if the queue and the class limit allow.` |
+| Cloud handoff, user said yes | `CLOUD HANDOFF — <name> — the user chose it on the dashboard` (`references/coderabbit-cloud.md`) |
 | Handoff done, member replaced | `HANDOFF COMPLETE — <name>` (it sends LEAVE) |
 | Handoff done, member moves | `HANDOFF COMPLETE — <name> — JOIN <receiver>` |
 

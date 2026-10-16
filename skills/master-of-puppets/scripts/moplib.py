@@ -28,6 +28,7 @@ ROSTER = os.path.join(DIR, "roster.json")
 LEDGER = os.path.join(DIR, "ledger.jsonl")
 LIVE_MINUTES = 40
 TOOLS = ("claude", "codex")
+MEMBER_TOOLS = TOOLS + ("coderabbit",)  # a CodeRabbit cloud task: tracked, never messaged
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}$")
 PEAKS = os.path.join(DIR, "peaks")
 LOCK = os.path.join(DIR, "lock")

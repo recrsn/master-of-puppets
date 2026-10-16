@@ -227,7 +227,8 @@ def host_wall(t):
 def open_button(href):
     if not href or href.startswith("#"):
         return ""
-    label = "Open session" if href.startswith(("claude://", "codex://")) else "Open"
+    label = ("Open session" if href.startswith(("claude://", "codex://"))
+             else "Open task" if "/code/tasks/" in href else "Open")
     return f'<a class="btn" href="{e(href)}">{label}</a>'
 
 
