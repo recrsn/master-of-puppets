@@ -14,7 +14,7 @@ Use only capabilities present in the current session.
 | Message a subagent | Agent/team messaging | `collaboration.send_message`; `collaboration.followup_task` to give an idle child new work. These address subagents in the current tree, not independent app chats. |
 | List or wait for subagents | Agent/team tools | `collaboration.list_agents` / `collaboration.wait_agent`. |
 | Start a subagent | `Agent` | `collaboration.spawn_agent` when delegation is authorized. Children stay part of the parent's enrollment. |
-| Start an independent session | Session/task creation tools | Desktop `create_thread` only when the user explicitly requests a new chat; CLI `codex exec` or `codex "<prompt>"` when authorized. Enroll first. |
+| Start an independent session | Session/task creation tools; suggest a card or chip whenever the work calls for one | Ask the user first with the ask-user tool, giving the task details; on yes, Desktop `create_thread` or CLI `codex exec` / `codex "<prompt>"`. Both: the enrollment line first (puppet skill, section 6). |
 | Ask setup questions | `AskUserQuestion` | `functions.request_user_input_async`; `functions.request_user_input` only when available and allowed in the current mode. Respect the tool's question limit; ordinary chat is the fallback. |
 | Scheduled heartbeat | `CronCreate`; `ScheduleWakeup` inside `/loop` | Desktop `automation_update` with `kind: "heartbeat"`, attached to the coordinator chat. See below. |
 | Watch a command | `Monitor` | Run the watcher through `exec_command`, then read it with `write_stdin`, or start a background process with output saved outside the repository. See below. |
@@ -50,7 +50,8 @@ from the durable inbox/ledger: an inbox watcher starts at the end of the file.
 
 ## New Codex sessions and permissions
 
-Enroll first (puppet skill, section 6). Use the platform's supported creation
+Ask the user first and put the enrollment line first in the prompt (puppet
+skill, section 6). Use the platform's supported creation
 controls and configured permissions unless the user specifies a mode for the
 task. There is no universal Full access requirement for new sessions,
 follow-ups, heartbeats or cloud tasks. Execution permissions do not broaden

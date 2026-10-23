@@ -20,8 +20,8 @@ not write product code.
   the roster and on the dashboard.
 - **Enrollment is voluntary, except for children.** A session joins by running
   `/puppet` (the member skill). Every independent session that a coordinator
-  or member starts is enrolled before dispatch; subagents stay part of their
-  parent's enrollment.
+  or member starts has the enrollment line first in its prompt; subagents stay
+  part of their parent's enrollment.
 - **Leases are optional** and machine-wide. Classes are any shared action:
   BUILD and E2E by default, others added with `config set-class`. Turn leases
   on only on the user's word, for example when heavy jobs overlap and the host
@@ -132,24 +132,32 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
   Give every member a stream with `--stream` on `enroll` and `member add|update`.
   Close a stream when its goal is done: `coordinator.py stream close`. Stream slugs are
   unique on the machine; only the owner changes a stream.
-- **JOIN** arrives: `coordinator.py member add --coordinator <slug> --name <name> --tool <t> --session-id <id> --worktree <p> --task "<task>" --pr <n> --repo <owner/repo> --session <deep link> --stream <stream-slug>`,
+- **JOIN** arrives: `coordinator.py member add --coordinator <slug> --name <name> --tool <t> --session-id <id> --worktree <p> --task "<task>" --pr <n> --repo <owner/repo> --session <deep link> --stream <stream-slug> [--parent <parent>]`.
+  Pass `--parent` when JOIN lists one; it takes over that parent's pending
+  child entry (same session id, else the same task text, else its only
+  pending child). A JOIN with `parent none` whose session id matches a
+  pending `child-of-*` entry is incomplete: ask the member to send JOIN again
+  with its parent,
   then send WELCOME (`references/protocol.md`).
 - **UPDATE, STATUS reply or MERGED**: `coordinator.py member update --coordinator <slug> --name <name> --phase "<phase>" --kind ok|work|warn|done --latest "<newest fact>" [--pr ...]`.
   This also updates the member's row on the dashboard. Keep `--phase` and
   `--latest` short; shorten a long UPDATE first (`references/dashboard.md`,
   "Writing for the dashboard").
-- **ENROLL REQUEST**, or a task you start yourself:
-  `coordinator.py enroll --coordinator <slug> --task "<one line>" --stream <stream-slug> [--by <member>] [--pr <n>]`.
+- **A task you start yourself**:
+  `coordinator.py enroll --coordinator <slug> --task "<one line>" --stream <stream-slug> [--pr <n>]`.
   The printed kickoff line tells the new session to run `/puppet` and join you
-  under its enrolled name. Put it first in the prompt of every task you start,
-  or send it back to the member that asked. Tasks your members start get one
-  the same way, through their ENROLL REQUEST, at any depth. The routes this
-  covers, and the subagent exception, are in the puppet skill, section 6; they
-  apply to you too. Nothing enforces this; check each session-starting prompt
-  yourself.
+  under its enrolled name. Put it first in the prompt of every task you start.
+  Members start their own child tasks without asking you: they write the
+  enrollment line themselves (puppet skill, section 6), and the child sends
+  JOIN with its parent.
+- **CHILD TASK STARTED** arrives:
+  `coordinator.py child --coordinator <slug> --parent <member> --task "<child task>" --tool <t> --session-id <id> [--pr <n>] [--stream <parent's stream>]`.
+  It records the child as pending under its parent until the child's JOIN. The routes, the Claude and Codex rules and the subagent exception are
+  in that section; they apply to you too. Nothing enforces this; check each
+  session-starting prompt yourself.
 - **Pending entries**: check them each round. One still pending after 30
   minutes is a task that never started (a chip not clicked) or a child that did
-  not send JOIN: ask the starter, then `coordinator.py member remove`.
+  not send JOIN after CHILD TASK STARTED: ask the starter, then `coordinator.py member remove`.
 - **Done** means every PR of the task is MERGED, or the user dropped the task,
   or the task changes no code (an investigation) and its answer is reported.
   Passing checks is not done. When a member reports code that is complete but

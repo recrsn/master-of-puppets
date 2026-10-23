@@ -147,8 +147,8 @@ members its new turn. The dashboard shows each non-zero priority.
 - **Lower** your own background work (-1 or lower) without asking, when
   regular tasks wait for a lease: sweeps, scheduled or recurring runs, and
   other tasks that no user waits for. Members mark such a task with
-  `sweep:` or `scheduled:` at the start of its task text in JOIN or ENROLL
-  REQUEST. Set it back to 0 when no regular task waits for it.
+  `sweep:` or `scheduled:` at the start of its task text in JOIN or in the
+  enrollment line. Set it back to 0 when no regular task waits for it.
 - Change only your own members and entries. To push back a peer's sweep, ask
   that coordinator with `say`.
 - `note` each change and its reason.
