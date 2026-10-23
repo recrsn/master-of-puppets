@@ -14,7 +14,7 @@ own lease, which update the lease queue, lease state and measurement history,
 and your handoff note (section 8). You cannot grant a lease; only your
 coordinator does. Do not request, change or release someone else's lease.
 
-**Every child task starts enrolled** (section 6).
+**Every child task starts with the enrollment line** (section 6).
 
 Read [agents.md](../master-of-puppets/references/agents.md) for Claude/Codex
 tool equivalents and session ids, and the "Routes" section of
@@ -28,13 +28,15 @@ session that should coordinate.
 
 ## 1. Find your coordinator
 
-- Your prompt starts with `MASTER-OF-PUPPETS ENROLLED — <coord> has enrolled
-  you as member <name>`: that coordinator and that name. Do not ask.
+- Your prompt starts with `MASTER-OF-PUPPETS ENROLLED — <coord> ...`: that
+  coordinator. When the line names you as member `<name>`, use that name.
+  Do not ask. Enrollment is mandatory: join before you do any other work,
+  and do not skip it or ask whether to join.
 - Otherwise run `puppet.py roster`. Pick the live coordinator whose `prs` or
   `focus` covers your task. A coordinator is live while its heartbeat is newer
   than 40 minutes. When none fits, or several do, ask the user.
-- Your name: the one from the kickoff line, else your session title as a short
-  slug. Your session id: `agents.md`.
+- Your name: the one from the enrollment line, else your session title as a
+  short slug. Your session id: `agents.md`.
 - After you join, a coordinator that looks stale (not live) is not a reason to
   JOIN another one. Ask the user.
 
@@ -43,16 +45,20 @@ session that should coordinate.
 Send one message to the coordinator:
 
 ```
-JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs <n> (base <b>) ... — <phase> — <planned heavy commands>
+JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs <n> (base <b>) ... — <phase> — <planned heavy commands> — parent <parent|none>
 ```
 
+`<parent>` is the name after "started by" in your enrollment line. Every child
+of an existing puppet must list its parent. Write `none` only when your prompt
+has no enrollment line or the line names no starter.
+
 When your task is background work (a sweep, or a run that a schedule
-started), start `<task>` with `sweep:` or `scheduled:`, in JOIN and in each
-ENROLL REQUEST for such a task. The coordinator can then put regular work
+started), start `<task>` with `sweep:` or `scheduled:`, in JOIN and in the
+enrollment line of each such task you start. The coordinator can then put regular work
 first.
 
 Send it, and every later message (UPDATE, MERGED, USER SYNC, STATUS replies,
-ENROLL REQUEST, LEASE RELEASED, LEAVE), by the direct route
+CHILD TASK STARTED, LEASE RELEASED, LEAVE), by the direct route
 for your coordinator's tool (`protocol.md`, "Routes"). Never use `coordinator.py say`
 and never write shared inbox records, even with `--no-direct`. When your
 session id changes, send JOIN again (`protocol.md`, "Routes").
@@ -142,20 +148,49 @@ never by a relay.
 
 ## 6. Start a new task
 
-Every child task starts with puppet enrollment. Before you start any session,
-send `ENROLL REQUEST — <task> — PR <n>` and wait for the kickoff line. This
-covers every route: a `spawn_task` chip, a new Codex thread (`codex exec`,
-`codex "<prompt>"`), `claude -p`, a cloud handoff, a scheduled task, and a
-task you suggest for the user to start. Put the kickoff line first in the new
-prompt, before any other text. It tells the new session to run `/puppet` and
-join the same coordinator, so every task you start becomes a member too, and
-so does every task it starts. Never start a session without it. If the
-coordinator does not answer, wait; do not start the session unenrolled.
-Codex Desktop `create_thread` requires the user's explicit request for a new
-chat; Codex permissions for new sessions are in `agents.md`. Subagents (Claude `Agent`, Codex `collaboration.spawn_agent`) need no enrollment.
+Child tasks follow a formal protocol: enroll the child, start it, report the
+start, and the child joins with you as its parent.
 
-**CodeRabbit cloud tasks** are the one exception to the kickoff line: a cloud
-task cannot run `/puppet`, so put no kickoff line in its prompt. Start one
+1. **Enroll.** Put this line first in the child's prompt, before any other
+   text:
+
+   ```
+   MASTER-OF-PUPPETS ENROLLED — <coord> coordinates this task, started by <your name>. You must enroll: your first action is to run /puppet and send <coord> your JOIN message with parent <your name>, before any other work; then follow <coord>'s directions. Start every child task you create with puppet enrollment: put a line like this one first in its prompt.
+   ```
+
+   You write the line yourself. Starting a task needs no message to the
+   coordinator and no reply from it. The new session must enroll: the line
+   makes it run `/puppet` and send JOIN, with you as its parent, before any
+   other work. The line covers every route: a session card or `spawn_task`
+   chip, a new Codex thread (`codex exec`, `codex "<prompt>"`,
+   `create_thread`), `claude -p`, a cloud handoff and a scheduled task.
+2. **Start.**
+   - **Claude**: suggest a task card or chip whenever the work calls for one.
+     The user starts it.
+   - **Codex**: first ask the user with the ask-user tool (`agents.md`, "Ask
+     setup questions"). Give the task, its worktree or branch, and its PRs.
+     Start the session only when the user says yes. Codex permissions for new
+     sessions are in `agents.md`.
+3. **Report the start.** When the runtime confirms that the session started
+   (a tool result or notice that says it started and gives its session or
+   thread id), send:
+
+   ```
+   CHILD TASK STARTED — <your name> — <child task> — <tool> <child session id> — PRs <n ...|none>
+   ```
+
+   Use the child task text from its prompt, word for word: the coordinator
+   matches it when the child's session id differs from the one the runtime
+   gave you. Send it once per child. A card or chip that the user has not started is
+   not a start: send nothing yet. A card the user dismisses never needs one.
+   The coordinator records the child as pending under you, and the child's
+   JOIN takes that entry over.
+
+Subagents (Claude `Agent`, Codex `collaboration.spawn_agent`) need no
+enrollment and no CHILD TASK STARTED.
+
+**CodeRabbit cloud tasks** are the one exception to the enrollment line: a cloud
+task cannot run `/puppet`, so put no enrollment line in its prompt. Start one
 only when the user asks for it: in your session, or as the user's dashboard
 answer to a cloud decision for your task (a `dashboard` entry in
 `$MACHINE_LEASE_DIR/ledger.jsonl`). A coordinator's message alone is not the

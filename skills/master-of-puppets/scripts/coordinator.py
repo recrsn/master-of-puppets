@@ -114,9 +114,14 @@ Roster and members (coordinators write; members send messages, and request and r
        add needs --label (at most 40 characters); --goal at most 140.
   enroll --coordinator C --task TEXT [--by MEMBER] [--name NAME] [--pr N ...] [--stream SLUG] [--priority N]
        registers a task before it starts and prints the kickoff line for its prompt
+  child --coordinator C --parent MEMBER --task TEXT --tool T --session-id ID [--pr N ...] [--stream SLUG]
+       records a child task that MEMBER started (CHILD TASK STARTED) as pending under its
+       parent, until the child's JOIN (member add --parent) takes the entry over
   member add|update --coordinator C --name NAME [--tool] [--session-id] [--worktree] [--task]
        [--pr N ...] [--repo owner/repo] [--status] [--phase] [--kind] [--latest] [--session URL]
-       [--stream SLUG] [--priority N]   (--stream "" clears it)
+       [--stream SLUG] [--priority N] [--parent MEMBER]   (--stream "" clears it)
+       --parent: the member that started this one. On add, it takes over that parent's
+       pending child entry with the same --session-id, else the same --task, else its only one
        --priority: the task's priority (default 0; higher first, below 0 for background
        work). A change also moves the task's queued lease entries and prints their ids
        updates the roster and the member's row in dashboard/<C>-state.json. Without
@@ -399,11 +404,12 @@ KICKOFF_MARK = "MASTER-OF-PUPPETS ENROLLED"
 
 def kickoff_line(coord, name, parent):
     by = f", started by {parent}" if parent and parent != coord else ""
+    with_parent = f" with parent {parent}" if parent and parent != coord else ""
     return (
         f"{KICKOFF_MARK} — {coord} has enrolled you as member {name}{by}. "
-        f"First action: run /puppet and send {coord} your JOIN message as {name}; "
+        f"You must enroll: your first action is to run /puppet and send {coord} your JOIN message as {name}{with_parent}, before any other work; "
         f"then follow {coord}'s directions. Start every child task you create with "
-        f"puppet enrollment: send {coord} an ENROLL REQUEST and put its kickoff line first in the new prompt."
+        f"puppet enrollment: put a line like this one first in its prompt (the puppet skill, section 6)."
     )
 
 
@@ -494,7 +500,7 @@ def roster_cmd(args):
         alive = {n: c["focus"] for n, c in coords.items() if live(c)}
         print(json.dumps({"no_live_coordinator": args.coordinator, "live": alive}))
         return 3
-    wakes = args.cmd == "enroll" or (args.cmd == "member" and (args.mcmd == "add" or (args.mcmd == "update" and args.status in ("active", "pending"))))
+    wakes = args.cmd in ("enroll", "child") or (args.cmd == "member" and (args.mcmd == "add" or (args.mcmd == "update" and args.status in ("active", "pending"))))
     if wakes and cur.get("status") == "idle":
         cur["status"] = "active"
         log(f"active {args.coordinator}")
@@ -518,6 +524,32 @@ def roster_cmd(args):
              + (f", priority {args.priority}" if args.priority else ""))
         print(kickoff_line(args.coordinator, name, args.by))
         return 0
+    if args.cmd == "child":
+        if not any(x["name"] == args.parent and x.get("status") != "pending" for x in members):
+            print(f"{args.parent} is not a joined member of {args.coordinator}")
+            return 3
+        name = f"child-of-{args.parent}-{os.urandom(2).hex()}"
+        for x in [x for x in members if x.get("status") == "pending" and x.get("sessionId") == args.session_id]:
+            members.remove(x)
+            remove_task(args.coordinator, x["name"])
+        members.append({
+            "name": name,
+            "status": "pending",
+            "parent": args.parent,
+            "task": args.task,
+            "tool": args.tool,
+            "sessionId": args.session_id,
+            "prs": args.pr or [],
+            "stream": stream or "",
+            "priority": 0,
+            "enrolledAt": now().isoformat(),
+        })
+        save_roster(roster)
+        upsert_task(args.coordinator, name, {"name": args.task, "phase": "Started, not joined", "kind": "work", "stream": stream or "",
+                                             "session": session_link(args.tool, args.session_id)})
+        note(args.coordinator, f"{args.parent} started child task {name}: {args.task}")
+        print(name)
+        return 0
     if args.cmd == "member" and args.mcmd == "stale":
         cutoff = now() - dt.timedelta(minutes=args.minutes)
         rows = []
@@ -538,7 +570,20 @@ def roster_cmd(args):
         remove_task(args.coordinator, args.name)
         note(args.coordinator, f"{args.name} left")
         return 0
+    if args.parent is not None and args.parent != args.coordinator and not any(
+            x["name"] == args.parent and x["name"] != args.name for x in members):
+        print(f"{args.parent} is not a member of {args.coordinator}")
+        return 3
     if args.mcmd == "add":
+        if m is None and args.parent:
+            kids = [x for x in members if x.get("status") == "pending" and x.get("parent") == args.parent]
+            same = [x for x in kids if args.session_id and x.get("sessionId") == args.session_id]
+            same = same or [x for x in kids if args.task and x.get("task") == args.task]
+            m = same[0] if same else kids[0] if len(kids) == 1 else None
+            if m is not None:
+                remove_task(args.coordinator, m["name"])
+                m["name"] = args.name
+                m["joinedAt"] = now().isoformat()
         if m is None:
             m = {"name": args.name, "joinedAt": now().isoformat()}
             members.append(m)
@@ -548,7 +593,7 @@ def roster_cmd(args):
         print(f"{args.name} is not a member of {args.coordinator}")
         return 3
     for flag, field in (("tool", "tool"), ("session_id", "sessionId"), ("worktree", "worktree"), ("task", "task"), ("status", "status"),
-                        ("stream", "stream"), ("repo", "repo")):
+                        ("stream", "stream"), ("repo", "repo"), ("parent", "parent")):
         if getattr(args, flag, None) is not None:
             m[field] = getattr(args, flag)
     moved = None
@@ -577,7 +622,8 @@ def roster_cmd(args):
         row.setdefault("phase", "Joined")
     upsert_task(args.coordinator, args.name, row)
     if args.mcmd == "add":
-        note(args.coordinator, f"{args.name} joined: {m.get('task', '')} (PRs {' '.join('#' + str(n) for n in m.get('prs', [])) or 'none'})")
+        by = f", child of {m['parent']}" if m.get("parent") and m["parent"] != args.coordinator else ""
+        note(args.coordinator, f"{args.name} joined{by}: {m.get('task', '')} (PRs {' '.join('#' + str(n) for n in m.get('prs', [])) or 'none'})")
     if moved:
         print(json.dumps({"moved": moved}))
     return 0
@@ -1423,6 +1469,7 @@ def main():
         mx.add_argument("--session", help="deep link for the dashboard; default: derived from --tool and --session-id")
         mx.add_argument("--stream", help='stream slug; "" clears it')
         mx.add_argument("--priority", type=int, help="task priority: 0 default, higher first, below 0 for background work")
+        mx.add_argument("--parent", help="the member that started this one (JOIN parent field)")
     mr = msub.add_parser("remove")
     mr.add_argument("--coordinator", required=True)
     mr.add_argument("--name", required=True)
@@ -1431,12 +1478,20 @@ def main():
     ms.add_argument("--minutes", type=int, default=30)
     en = sub.add_parser("enroll")
     en.add_argument("--coordinator", required=True)
-    en.add_argument("--by", help="member that asked for the task; default: the coordinator")
+    en.add_argument("--by", help="member on whose behalf you start the task (it becomes the parent); default: the coordinator")
     en.add_argument("--task", required=True)
     en.add_argument("--name")
     en.add_argument("--pr", type=int, nargs="+", action="extend", help="PR numbers, several allowed (--pr 1 2 or --pr 1 --pr 2)")
     en.add_argument("--stream", help="stream slug (stream add)")
     en.add_argument("--priority", type=int, help="task priority: 0 default, higher first, below 0 for background work")
+    ch = sub.add_parser("child")
+    ch.add_argument("--coordinator", required=True)
+    ch.add_argument("--parent", required=True, help="the member that sent CHILD TASK STARTED")
+    ch.add_argument("--task", required=True)
+    ch.add_argument("--tool", required=True, choices=MEMBER_TOOLS)
+    ch.add_argument("--session-id", required=True, help="the child's session or thread id from the start confirmation")
+    ch.add_argument("--pr", type=int, nargs="+", action="extend", help="PR numbers, several allowed (--pr 1 2 or --pr 1 --pr 2)")
+    ch.add_argument("--stream", help="stream slug (stream add)")
     sm = sub.add_parser("stream")
     ssub = sm.add_subparsers(dest="scmd", required=True)
     for name in ("add", "update", "close", "reopen"):
@@ -1504,7 +1559,7 @@ def main():
 
     lock()
     try:
-        if args.cmd in ("coordinate", "heartbeat", "resign", "leases", "member", "enroll", "stream"):
+        if args.cmd in ("coordinate", "heartbeat", "resign", "leases", "member", "enroll", "child", "stream"):
             return roster_cmd(args)
         if args.cmd == "config":
             return config_cmd(args)

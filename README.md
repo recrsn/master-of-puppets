@@ -27,7 +27,7 @@ One or more coordinator sessions take PR stacks to merged. Coordinators:
 ### `puppet`
 
 A working session joins a coordinator as a member. It reports by message
-(JOIN, UPDATE, ENROLL REQUEST, LEAVE), follows ACTIVE and PAUSE directions,
+(JOIN, UPDATE, CHILD TASK STARTED, LEAVE), follows ACTIVE and PAUSE directions,
 queues its own lease requests with `puppet.py request`, waits with
 `puppet.py await-grant`, releases its own leases, and takes its own PRs to
 merged. Only a coordinator grants. The coordinator records membership and
