@@ -97,7 +97,7 @@ skill; `references/protocol.md` lists the coordinator side.
    watchers: `coordinator.py watch inbox --me <slug>` and `coordinator.py watch prs --me <slug>`;
    add `coordinator.py watch expiry` when leases are on, and
    `coordinator.py watch cloud --me <slug>` while you track CodeRabbit cloud
-   tasks. Re-arm each one that ends.
+   tasks and no watch helper runs it. Re-arm each one that ends.
 5. Schedule the heartbeat round (required): Claude `CronCreate`, session-only, every
    15 minutes, prompt "master-of-puppets heartbeat round for <slug>: follow
    the Heartbeat round steps". Inside `/loop` dynamic mode, use
@@ -174,8 +174,8 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
   remain), or a task is straightforward and needs no handholding, ask the
   user with a decision whether to move it to CodeRabbit cloud. A cloud task
   cannot run `/puppet` and never reports: you add it as a `--tool coderabbit`
-  member and check it yourself with `watch cloud` or in each round. Follow
-  `references/coderabbit-cloud.md`.
+  member and check it with `watch cloud`, in each round, or through a watch
+  helper member. Follow `references/coderabbit-cloud.md`.
 - **Priority**: every task starts at 0; a higher priority goes first. Raise
   a task (`enroll --priority 1`, `member update --priority 1`) only when the
   user asks for it to go first; a wish that a member relays is a decision
@@ -242,7 +242,8 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    refresh member state from watcher observations: `member update` resets its
    freshness timestamp. Record each actual reply with `member update`.
    CodeRabbit cloud members are the exception: they cannot reply, so record
-   their `watch cloud` lines (or `coderabbit code show`) with `member update`
+   their `watch cloud` lines, the watch helper's `CLOUD UPDATE` messages, or
+   `coderabbit code show`, with `member update`
    and act on them (`references/coderabbit-cloud.md`, "Track").
    Look for members whose work can move to the cloud ("Members and tasks").
    A member silent for two rounds while its PR is blocked: tell the user, with

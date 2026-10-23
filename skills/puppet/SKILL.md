@@ -166,6 +166,11 @@ user's approval. Follow
 tracks the task. After a handoff of your own task, send LEAVE when your tree
 is clean and your branch is pushed.
 
+When your task is `sweep: cloud watch for <coordinator>`, you are the watch
+helper. Follow
+[coderabbit-cloud.md](../master-of-puppets/references/coderabbit-cloud.md),
+"Watch helper".
+
 ## 7. Leave
 
 Your work is done when every PR of your task is MERGED, or the user drops the
