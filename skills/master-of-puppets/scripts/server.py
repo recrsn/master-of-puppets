@@ -634,7 +634,7 @@ def render_page(host):
                 text, color = "Expired" + queued, "danger"
             elif cur:
                 full = cap is not None and len(cur) >= max(1, cap)
-                text = (f"Held {len(cur)}/{cap}" if cap and cap > 1 else "Held") + queued
+                text = (f"Running {len(cur)}/{cap}" if cap and cap > 1 else "Running") + queued
                 color = "warn" if full and ready else "t1"
             else:
                 text, color = "Free" + queued, "t2" if ready else "ok"
@@ -667,13 +667,13 @@ def render_page(host):
             desk_lanes += f'<div class="lane-l" title="{e(desc)}"><b>{e(cls)}</b><span class="{color}">{e(text)}</span></div>{track(cls)}'
             wall_lanes += f'<div class="blane"><div class="blane-h"><b>{e(cls)}</b><span class="{color}">{e(text)}</span></div>{track(cls, True)}</div>'
             for h in holders(leases, cls):
-                qrows += qrow(cls, "held", h, f'{fmt(h.get("gib"))} GiB · {eta_text(cls, h["id"])}', h.get("commands", ""))
+                qrows += qrow(cls, "running", h, f'{fmt(h.get("gib"))} GiB · {eta_text(cls, h["id"])}', h.get("commands", ""))
             pos = 0
             for q in queue.get(cls, []):
                 pos += 0 if q.get("hold") else 1
                 actions = (qbutton("up", cls, q["id"], "Move up") if pos > 1 and not q.get("hold") else "") + qbutton("unwait", cls, q["id"], "Cancel")
                 prio = f"priority {q['priority']} · " if q.get("priority") else ""
-                qrows += qrow(cls, "hold" if q.get("hold") else f"#{pos}", q, f"{prio}~{est_minutes(cls, q):g} min · {eta_text(cls, q['id'])}",
+                qrows += qrow(cls, "on hold" if q.get("hold") else f"#{pos}", q, f"{prio}~{est_minutes(cls, q):g} min · {eta_text(cls, q['id'])}",
                               actions=actions)
         qrows = qrows or '<div class="qempty sm t3">Nothing queued.</div>'
         lease_panel = (
