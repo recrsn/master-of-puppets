@@ -107,7 +107,8 @@ seconds (`--interval`).
 
 In each heartbeat round, for each `coderabbit` member:
 
-- Read the newest `CLOUD` lines. With no watcher, run
+- Read the newest `CLOUD` lines, or the `CLOUD UPDATE` messages of your watch
+  helper ("Watch helper", below). With neither, run
   `coderabbit code show <taskId> --agent`.
 - Record each change with `member update --phase --kind --latest`. Watcher
   lines do not refresh other members, but for a cloud task they are its only
@@ -126,6 +127,44 @@ In each heartbeat round, for each `coderabbit` member:
 | Delivered | The PR goes through "Driving a stack" like any PR. `watch prs` covers it. |
 | Failed or canceled | `--kind warn`. Tell the user, with the URL. A new turn (`resume -m`) is billed: only on the user's word. |
 | `authorize_github` | Give the URL to the user. Never open it yourself. |
+
+## Watch helper
+
+The coordinator can move the cloud watch into a helper session, so that its
+own rounds stay short. The helper is a normal member: it runs `/puppet`.
+
+**Coordinator:**
+
+1. Enroll it: `coordinator.py enroll --coordinator <slug> --task "sweep: cloud watch for <slug>" --priority -1 [--stream <stream>]`.
+   Start it with the kickoff line first. Then give the path of this file,
+   "Watch helper".
+2. Stop your own `watch cloud`. Run only one watcher for each
+   `cloud-<slug>.txt`. You still write `cloud-<slug>.txt` ("Record").
+3. Record each `CLOUD UPDATE` with `member update` on the cloud member's row,
+   and act on it with the table in "Track". Every decision, answer and billed
+   action stays with you and the user.
+4. In each round, check the helper as any member. When it is silent for 30
+   minutes, send `STATUS?`. When it is gone, run `watch cloud` yourself again.
+5. When `cloud-<slug>.txt` is empty and no cloud task is pending, tell the
+   helper to leave.
+
+**Helper:**
+
+1. Run `coordinator.py watch cloud --me <coordinator slug>` (Claude:
+   `Monitor`; Codex: a long-lived command). Re-arm it when it ends. Do not
+   write `cloud-<slug>.txt` or any other shared state.
+2. Read only. Use `coderabbit code show <taskId> --agent` and `coderabbit code ls --agent`
+   to check a line. Never run a command that bills or changes shared state
+   ("Stack rules"). Never answer the cloud agent, and never send it a message.
+3. Report only a meaningful change: a turn finished, the task needs an answer
+   or a plan review, the task failed or was canceled, or it opened or
+   delivered a PR. Send it to your coordinator:
+   `CLOUD UPDATE — <member> — <taskId> — <state> — <fact>`. Do not report
+   status changes while a turn runs.
+4. When nothing meaningful changed for 30 minutes, send
+   `UPDATE — <your name> — Watching — <n> cloud tasks, no change`.
+5. Leave when your coordinator tells you to (puppet skill, section 7). You
+   have no PR, so nothing blocks the LEAVE.
 
 ## Stack rules
 

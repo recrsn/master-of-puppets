@@ -31,6 +31,7 @@ Split runs longer than the limit.
 | `JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs ... — phase` | `member add`, then WELCOME. A task marked `scheduled:` or `sweep:` is background work (`references/leases.md`, "Priority") |
 | `UPDATE — <name> — <phase> — <fact>` | `member update` |
 | `ENROLL REQUEST — <task> — PR <n>` | `enroll --by <name>`, reply with the kickoff line |
+| `CLOUD UPDATE — <member> — <taskId> — <state> — <fact>` (from the watch helper) | `member update --name <member>`, then act (`references/coderabbit-cloud.md`, "Track") |
 | `CLOUD TASK — <name> — <taskId> — <url> — <task> — PRs <n>` | `member add --tool coderabbit`, `cloud-<slug>.txt`, `watch cloud` (`references/coderabbit-cloud.md`, "Record") |
 | `USER SYNC — <one line>` | `note`, `member update --latest` |
 | No message: `EVENT ... request <CLASS> <slug> <id> ...` in `watch inbox` (the member ran `puppet.py request`) | check and grant (`references/leases.md`, "Granting") |
