@@ -39,7 +39,7 @@ sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import (
     PEAKS, SAMPLES_KEPT, MINUTES_KEPT, load_machine, registry, class_names,
     load_project, save_project, now, lock, unlock, log,
-    load, save, load_roster, queue_entry, READS, add_read_commands, read_cmd,
+    load, save, load_roster, queue_entry, READS, add_read_commands, read_cmd, version_warning,
 )
 
 
@@ -172,6 +172,8 @@ def main():
     name = getattr(args, "cls", None)
     if name and name not in registry():
         p.error(f"unknown lease class {name}; known: {', '.join(class_names())}")
+    if args.cmd in ("roster", "whoami"):
+        version_warning()
     if args.cmd in READS:
         return read_cmd(args)
     if args.cmd == "request":

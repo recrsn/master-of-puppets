@@ -81,7 +81,10 @@ Shared state lives in `$MACHINE_LEASE_DIR` (default
 `~/.local/state/machine-leases`). The first coordinator installs `moplib.py`,
 `coordinator.py` and `puppet.py` there with
 `python3 -I skills/master-of-puppets/scripts/coordinator.py install` and
-asks you for machine and project defaults.
+asks you for machine and project defaults. Every session runs these live
+copies, so all sessions use one version against the shared state. When the
+skill copy changes, the helpers warn that an update is due; after the
+coordinators agree, `install --replace` updates the live copies.
 
 ## Use
 
