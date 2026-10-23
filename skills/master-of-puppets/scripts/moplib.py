@@ -34,6 +34,9 @@ PEAKS = os.path.join(DIR, "peaks")
 LOCK = os.path.join(DIR, "lock")
 LOG = os.path.join(DIR, "events.log")
 INBOX = os.path.join(DIR, "inbox.jsonl")
+FILES = ("moplib.py", "coordinator.py", "puppet.py")  # the live helpers that install copies
+OBSOLETE = ("lease.py",)  # helpers that earlier versions installed; install removes them
+SOURCE = os.path.join(DIR, "source.json")  # the skill copy that install last copied from
 CLASS_NAME = re.compile(r"^[A-Z][A-Z0-9_-]{0,23}$")
 DEFAULT_REGISTRY = {
     "BUILD": {"description": "builds, typecheck, lint/format, tests, codegen", "defaultGiB": 10, "maxMinutes": 20, "settle": {}},
@@ -370,6 +373,45 @@ def budget(state, machine):
         "peakGiB": peaks,
         "capacity": capacity,
     }
+
+
+# ---------------------------------------------------------------- helper versions
+
+
+def helpers_differ(src):
+    """Names of the live helpers that differ from (or are missing beside) the copy in src."""
+    def read(path):
+        try:
+            with open(path, "rb") as f:
+                return f.read()
+        except OSError:
+            return None
+    return [n for n in FILES if read(os.path.join(src, n)) is None or read(os.path.join(src, n)) != read(os.path.join(DIR, n))]
+
+
+def version_warning():
+    """Tell the session on stderr when an update of the live helpers is due: the skill copy
+    differs from the live copies, or an obsolete helper is still in the state dir."""
+    here = os.path.dirname(os.path.realpath(__file__))
+    if here == os.path.realpath(DIR):
+        try:
+            with open(SOURCE) as f:
+                src = json.load(f)["path"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return
+    else:
+        src = here
+    if not os.path.isdir(src):
+        return
+    differ = helpers_differ(src)
+    obsolete = [n for n in OBSOLETE if os.path.exists(os.path.join(DIR, n))]
+    if differ:
+        print(f"warning: an update is due: the live {', '.join(differ)} in {DIR} {'differs' if len(differ) == 1 else 'differ'} from the skill copy in {src}. "
+              f"Agree it with the other coordinators and the user, then run "
+              f"python3 -I {os.path.join(src, 'coordinator.py')} install --replace", file=sys.stderr)
+    if obsolete:
+        print(f"warning: obsolete {', '.join(obsolete)} in {DIR}: do not run it; "
+              f"python3 -I {os.path.join(src, 'coordinator.py')} install removes it", file=sys.stderr)
 
 
 # ---------------------------------------------------------------- delivery

@@ -162,7 +162,11 @@ Watchers and install
        Monitor sources. watch cloud reads cloud-<C>.txt (a CodeRabbit cloud task id or URL,
        then the member name, per line) and prints each task's state change from
        `coderabbit code show --agent`
-  install                     copy moplib.py, coordinator.py and puppet.py into the state dir when absent
+  install [--replace]         copy moplib.py, coordinator.py and puppet.py into the state dir when absent.
+       A live copy that differs stops the install (all or nothing) unless --replace, which only
+       follows the agreement of the other coordinators and the user. A full install removes
+       obsolete helpers (lease.py). Each run records this skill copy in source.json; roster,
+       whoami, coordinate, heartbeat and status then warn on stderr when an update is due
 
 A coordinator is live while its heartbeat is newer than 40 minutes. coordinate and
 heartbeat exit 3 when a PR is owned by another live coordinator; enroll and member
@@ -183,7 +187,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import (
-    DIR, CONFIG, TOOLS, MEMBER_TOOLS, SLUG, PEAKS, LOG,
+    DIR, CONFIG, TOOLS, MEMBER_TOOLS, SLUG, FILES, OBSOLETE, SOURCE, version_warning, PEAKS, LOG,
     INBOX, CLASS_NAME, read_json, write_json, load_machine, registry,
     class_names, project_key, load_project, save_project, class_peak, typical_minutes,
     max_minutes, length_limit, over_limit, now, lock, unlock, log, note,
@@ -1213,17 +1217,17 @@ def watch_cmd(args):
     return 0
 
 
-FILES = ("moplib.py", "coordinator.py", "puppet.py")
-
-
 def install_cmd(args):
     """Copy the helpers into the state dir when absent. All or nothing: when a live copy
-    differs, print every diff and install none, so live files never mix versions."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    if os.path.abspath(DIR) == here:
+    differs, print every diff and install none, so live files never mix versions; with
+    --replace, replace every differing copy. After a full install, remove obsolete helpers.
+    Each run records this skill copy as the source, so later runs can warn when an update is due."""
+    here = os.path.dirname(os.path.realpath(__file__))
+    if os.path.realpath(DIR) == here:
         print("this is the live copy")
         return 0
     import difflib
+    write_json(SOURCE, {"path": here, "at": now().isoformat()})
     plan, differs = [], False
     for name in FILES:
         src, dst = os.path.join(here, name), os.path.join(DIR, name)
@@ -1235,17 +1239,29 @@ def install_cmd(args):
         if old == new:
             print(f"up to date {dst}")
             continue
+        if args.replace:
+            plan.append((dst, new))
+            continue
         differs = True
-        print(f"DIFFERS {dst} (not overwritten; agree the change with the other coordinators first)")
+        print(f"DIFFERS {dst} (not overwritten; agree the change with the other coordinators and the user, then use --replace)")
         sys.stdout.writelines(difflib.unified_diff(old.splitlines(True), new.splitlines(True), dst, src, n=1))
     if differs:
         if plan:
             print("nothing installed (" + ", ".join(os.path.basename(d) for d, _ in plan) + " too): every live copy must match first")
         return 2
     for dst, new in plan:
-        with open(dst, "w") as f:
+        tmp = f"{dst}.{os.getpid()}.tmp"
+        with open(tmp, "w") as f:
             f.write(new)
-        print(f"installed {dst}")
+        os.chmod(tmp, 0o755 if dst.endswith(("coordinator.py", "puppet.py")) else 0o644)
+        verb = "replaced" if os.path.exists(dst) else "installed"
+        os.replace(tmp, dst)  # atomic: a session that starts now reads the old or the new file, never half of one
+        print(f"{verb} {dst}")
+    for name in OBSOLETE:
+        path = os.path.join(DIR, name)
+        if os.path.exists(path):
+            os.remove(path)
+            print(f"removed obsolete {path}")
     return 0
 
 
@@ -1451,8 +1467,12 @@ def main():
     wa.add_argument("what", choices=("inbox", "expiry", "prs", "cloud"))
     wa.add_argument("--me", help="coordinator name (inbox, prs, cloud)")
     wa.add_argument("--interval", type=int, default=180, help="seconds between PR or cloud task polls")
-    sub.add_parser("install")
+    ins = sub.add_parser("install")
+    ins.add_argument("--replace", action="store_true",
+                     help="replace live copies that differ; only after the other coordinators and the user agree")
     args = p.parse_args()
+    if args.cmd in ("roster", "whoami", "coordinate", "heartbeat", "status"):
+        version_warning()
     for attr in ("cls", "pcls"):
         name = getattr(args, attr, None)
         if name and name not in registry():

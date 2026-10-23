@@ -43,7 +43,11 @@ uses them. Below, `coordinator.py` means
 `coordinator.py install` (run from the skill copy) installs the three files
 when absent. When a live copy differs, it prints the diff and installs none:
 other sessions use them now, so agree a change with the other coordinators
-and the user before you replace them.
+and the user, then replace them with `install --replace`. A full install also
+removes obsolete helpers (an old `lease.py`); never run one. `install` records
+the skill copy, and `roster`, `whoami`, `coordinate`, `heartbeat` and `status`
+then print a warning when an update is due. On that warning, tell the user
+and the other coordinators.
 
 Read `references/setup.md` on the first run in a project,
 `references/protocol.md` before you message anyone, `references/rules.md` for
@@ -77,7 +81,7 @@ skill; `references/protocol.md` lists the coordinator side.
 ## Coordinator start
 
 1. Run `coordinator.py install` from the skill copy. On DIFFERS, use the live copy
-   and tell the user. Run `coordinator.py config show --project-root "$PWD"`; exit 3
+   and tell the user; replace it only after the agreement above. Run `coordinator.py config show --project-root "$PWD"`; exit 3
    means the machine or project is not configured yet: follow
    `references/setup.md` (detect, then ask setup questions) before step 2.
 2. Claim: `coordinator.py coordinate --name <slug> --tool <claude|codex> --session-id <session-or-thread-id> --focus "<stack in a few words>" --pr <n> [...]`.
