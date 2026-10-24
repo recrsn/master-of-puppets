@@ -97,6 +97,10 @@ never by a relay.
 
 ## 4. Report
 
+These reports go to your coordinator. Keep the recurring updates and STATUS
+replies below; they do not require a matching user-facing update. For reports
+to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#reporting-to-the-user).
+
 - `UPDATE — <name> — <phase> — <newest fact>` on each change, and at least
   every 30 minutes while you work. The coordinator checks on silent members
   each round, but your report is the record. It goes on the dashboard: keep

@@ -6,6 +6,11 @@ expands the message, so put the point first.
 Members follow the `puppet` skill, so WELCOME carries only what the skill
 cannot know: this stack, the project rules and the lease setup.
 
+The messages and replies below are between sessions. Send required protocol
+replies and record updates without echoing them into user-facing chat. Follow
+[Reporting to the user](../SKILL.md#reporting-to-the-user) for when to notify
+the human; receiving a protocol message does not itself require a report.
+
 ## Welcome (send to each member after its JOIN)
 
 ```
@@ -120,6 +125,9 @@ in the ledger; member messages need no shared inbox copy.
   through its inbox socket, a Codex thread through `codex queue`.
   For Desktop direct delivery, use `say --no-direct` for the inbox record,
   then `send_message_to_thread` once; do not duplicate direct delivery.
+  Keep the shared inbox record even when direct delivery succeeds: it lets a
+  coordinator catch up after it was not running. Receiving that record later
+  is expected; handle duplicate receipt as described below.
   - The socket protocol is reverse-engineered, not an Anthropic interface
     (https://github.com/PeterSR/claude-code-socket-transport#the-protocol).
     The inbox record stays authoritative when direct delivery fails.
@@ -146,3 +154,25 @@ in the ledger; member messages need no shared inbox copy.
   session id. Codex context compaction alone is not a new thread.
 - Deep links for the dashboard: Claude `claude://claude.ai/epitaxy/<sessionId>`,
   Codex `codex://threads/<threadId>`.
+
+## Duplicate receipt and catch-up
+
+Treat direct delivery, watcher output and durable inbox recovery as views of
+the same message. Before acting, check whether you already handled that
+occurrence. Match its sender, recipient, content and available timestamp or
+record position against your chat history and durable decisions/state. Text
+alone is not enough: a later recurring UPDATE or STATUS reply may have the
+same words and still be a fresh report.
+
+Disregard an already-handled occurrence without an acknowledgement, repeated
+action, duplicate ledger/dashboard update or user notification. In particular,
+replaying an old member update must not reset the member's freshness. If the
+message adds new facts or requires action that was not completed, handle that
+part; mere prior delivery is not proof of completion. When handling is
+uncertain, reconcile the current records before repeating a side effect.
+
+Keep your inbox read position and material handling outcomes in your existing
+durable coordinator state so catch-up survives a context reset or restart.
+Advance the checkpoint after handling an entry or confirming it is a duplicate;
+retain any unfinished action. Do not delete shared inbox entries or skip
+unread entries just because direct delivery was attempted.
