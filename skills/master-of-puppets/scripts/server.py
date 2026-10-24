@@ -174,6 +174,20 @@ def host_tiles(h):
 
 # ---------------------------------------------------------------- rendering
 
+# Lucide-style 24 px stroke icons for the lease request line
+ICON = {
+    "time": '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+    "cpus": '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/>'
+            '<path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/>',
+    "gib": '<path d="M2 7a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"/><path d="M6 19v-3M10 19v-3M14 19v-3M18 19v-3M7 9v3M12 9v3M17 9v3"/>',
+}
+
+
+def icon(name, label):
+    return (f'<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+            f'stroke-linejoin="round" role="img" aria-label="{label}"><title>{label}</title>{ICON[name]}</svg>')
+
+
 def local(t):
     return t.astimezone().strftime("%H:%M")
 
@@ -628,7 +642,11 @@ def render_page(host):
                     f'data-cls="{e(cls)}" data-id="{e(entry_id)}">{label}</button>')
 
         def requested(minutes, x):
-            return " · ".join([f"{minutes:g}m"] + [f"{fmt(x[k])} {unit}" for k, unit in (("cpus", "cores"), ("gib", "GiB")) if x.get(k) is not None])
+            """Requested time, cores and memory as icon-led HTML; a figure the entry lacks is left out."""
+            parts = [(icon("time", "Requested time"), f"{minutes:g}m")]
+            parts += [(icon(k, label), f"{fmt(x[k])}{unit}") for k, label, unit in (("cpus", "Cores", ""), ("gib", "Memory", " GiB"))
+                      if x.get(k) is not None]
+            return "".join(f"<span>{svg}{e(text)}</span>" for svg, text in parts)
 
         def lane_entries(cls):
             """(pos, holder, duration, duration color, request, detail, commands, buttons) for each held and queued entry."""
@@ -661,7 +679,7 @@ def render_page(host):
             rows = "".join(
                 f'<details class="row q" id="{dom_id("q", cls, h["id"])}"><summary class="row-h"><span class="q-pos">{pos}</span>'
                 f'<span class="q-t"><span class="row-t {"t1" if pos == RUNNING else "t2"}">{e(h.get("holder", ""))}</span>'
-                f'<span class="q-req">{e(req)}</span></span>'
+                f'<span class="q-req">{req}</span></span>'
                 f'<span class="row-ago {dcolor}">{e(dur)}</span></summary><div class="row-b">'
                 + meta_line(h.get("coordinator", ""), detail)
                 + (f'<span class="mono sm t2 wrap">{e(commands)}</span>' if commands else "")
@@ -671,7 +689,7 @@ def render_page(host):
                            f'{rows}</div>')
             wall_rows = "".join(
                 f'<div class="wq"><span class="q-pos">{pos}</span><span class="q-t"><span class="row-t">{e(h.get("holder", ""))}</span>'
-                f'<span class="q-req">{e(req)}</span></span><span class="mono {dcolor}">{e(dur)}</span></div>'
+                f'<span class="q-req">{req}</span></span><span class="mono {dcolor}">{e(dur)}</span></div>'
                 for pos, h, dur, dcolor, req, *_ in entries)
             wall_lanes += f'<div class="lane"><div class="lane-h"><b>{e(cls)}</b><span class="{color}">{e(text)}</span></div>{wall_rows}</div>'
         ends = [end for cls in classes for kind, _, end in eta[cls].values() if kind == "queued"]
