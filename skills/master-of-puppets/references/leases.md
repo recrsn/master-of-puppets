@@ -140,16 +140,18 @@ The memory budget predicts; the host check observes. Both must pass, and
    processes its run still has. Ask its coordinator only when `left` is not 0
    and the lease blocks your head.
 
-**Extending.** A member extends its own lease with `puppet.py extend` while
-no ready entry waits in that class; `watch inbox` shows
-`EVENT ... extension <CLASS> <id> until <time> by=<name> coordinator=<c> reason="..."`.
-Check that the reason fits the granted commands. While an entry waits,
-`puppet.py extend` refuses (exit 3) and the member sends `LEASE EXTEND`.
-Then you decide: `coordinator.py extend <CLASS> --id <id> --minutes <n>` when
-the wait is short or the run is near its end, else tell the member to
-release. When the head belongs to another coordinator, ask it with `say`
-first. `watch expiry` reports a lease again when it expires after an
-extension.
+**Extending.** Extension is at the coordinator's discretion; only
+`coordinator.py extend` changes an expiry. A member asks with
+`puppet.py extend`, which refuses a run over the class limit and otherwise
+only logs the request. Your `watch inbox` prints
+`EXTEND <CLASS> <id> <n> min by=<name> ... reason="..."`. Decide: check that
+the reason fits the granted commands, and weigh who waits in that class
+queue and the memory the lease holds. Then run
+`coordinator.py extend <CLASS> --id <id> --minutes <n>` and reply
+LEASE EXTENDED, or reply LEASE EXTEND REFUSED. When the waiting head
+belongs to another coordinator, ask it with `say` first. Reply each time:
+the member waits for your answer. `watch expiry` reports a lease again when
+it expires after an extension.
 
 **Admission hold.** When no grant of a class may start, for example while a
 failed run's cleanup is uncertain or the disk is low:

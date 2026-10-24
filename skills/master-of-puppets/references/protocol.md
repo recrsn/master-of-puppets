@@ -35,8 +35,7 @@ Split runs longer than the limit.
 | `CLOUD TASK — <name> — <taskId> — <url> — <task> — PRs <n>` | `member add --tool coderabbit`, `cloud-<slug>.txt`, `watch cloud` (`references/coderabbit-cloud.md`, "Record") |
 | `USER SYNC — <one line>` | `note`, `member update --latest` |
 | No message: `EVENT ... request <CLASS> <slug> <id> ...` in `watch inbox` (the member ran `puppet.py request`) | check and grant (`references/leases.md`, "Granting") |
-| No message: `EVENT ... extension <CLASS> <id> until <time> by=<name> ...` in `watch inbox` (the member ran `puppet.py extend`; no entry waited) | nothing; ask the member to release when the reason does not fit the granted commands |
-| `LEASE EXTEND <id> — <n> min — <what still runs>` (`puppet.py extend` refused: another entry waits) | `coordinator.py extend` when the waiting entries can bear it, else reply to release (`references/leases.md`, "Extending") |
+| No message: `EXTEND <CLASS> <id> <n> min ...` in `watch inbox` (the member ran `puppet.py extend`) | your decision: `coordinator.py extend`, or tell it to release (`references/leases.md`, "Extending") |
 | `LEAVE — <name>` | `member remove` |
 | `HANDOFF REQUEST — <name> — to <coordinator\|any> — PRs <n> — note <path>` | `PAUSE` its PRs, then offer (`references/handoff.md`) |
 
@@ -54,9 +53,10 @@ Split runs longer than the limit.
 | Head, no memory | `LEASE QUEUED — <id> is at the head; it needs <n> GiB and <m> GiB is free. I grant after the next release.` |
 | Grant | `LEASE GRANTED — <CLASS> <id> for <task>, until <time>. Covers: <commands>. Release: <command>.` |
 | Priority move | `LEASE QUEUED — <id> is now <CLASS> position <n>: <task> has priority <p>.` |
-| Extension refused | `LEASE EXTEND — no: <who> waits for <CLASS>. Release <id> now and request the rest with a new id.` |
+| Extension granted | `LEASE EXTENDED — <id> until <time>. Covers: <commands>.` |
+| Extension refused | `LEASE EXTEND REFUSED — <id>: <reason, for example who waits for CLASS>. Release now and request the rest with a new id.` |
 | Over the limit | `LEASE QUEUED — <min> min is over the <max>-min limit, so I split it: part 1 keeps position <n>, part 2 joins the back.` |
-| Expiry | `LEASE EXPIRED — <id> passed <time>. Release now, or run puppet.py extend; if it refuses because the queue waits, send LEASE EXTEND.` |
+| Expiry | `LEASE EXPIRED — <id> passed <time>. Release now, or ask for more time with puppet.py extend; I decide.` |
 | Cloud handoff, user said yes | `CLOUD HANDOFF — <name> — the user chose it on the dashboard` (`references/coderabbit-cloud.md`) |
 | Handoff done, member replaced | `HANDOFF COMPLETE — <name>` (it sends LEAVE) |
 | Handoff done, member moves | `HANDOFF COMPLETE — <name> — JOIN <receiver>` |

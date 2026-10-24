@@ -113,14 +113,15 @@
     },
     {
       "id": 11,
-      "prompt": "DRY RUN. You coordinate claude; leases are on. MACHINE_LEASE_DIR=<fixture>/state (a copy; never touch ~/.local/state/machine-leases). Do not call SendMessage or Monitor; write what you would do instead. watch inbox printed: `EVENT 2026-10-24T09:29:20+00:00 extension BUILD claude-q-api-tests-2 until 2026-10-24T09:44:20+00:00 by=api-tests coordinator=claude reason=\"pnpm test still running\"`. Later member docs writes: `LEASE EXTEND claude-q-docs-1 — 15 min — e2e suite on port 3000`; its E2E lease has run 30 of 45 min and claude-q-ui-4 (yours, a 5-min screenshot run) waits for E2E. Write <out>/plan.md, <out>/messages.md and <out>/commands.sh.",
-      "expected_output": "Takes no action and sends no message for the extension event beyond checking the reason fits the granted commands. For LEASE EXTEND, weighs the waiting entry and either runs coordinator.py extend E2E --id claude-q-docs-1 --minutes 15 (inside the 45-min limit) and tells docs, or replies with the refusal text and asks docs to release; tells ui-4 its new turn if it waits longer.",
+      "prompt": "DRY RUN. You coordinate claude; leases are on. MACHINE_LEASE_DIR=<fixture>/state (a copy; never touch ~/.local/state/machine-leases). Do not call SendMessage or Monitor; write what you would do instead. watch inbox printed: `EXTEND BUILD claude-q-api-tests-2 8 min by=api-tests coordinator=claude reason=\"pnpm test still running\": ...`; no BUILD entry waits and the run stays inside the 20-min limit. Then: `EXTEND E2E claude-q-docs-1 15 min by=docs coordinator=claude reason=\"e2e suite on port 3000\": ...`; that E2E lease has run 30 of 45 min and claude-q-ui-4 (yours, a 5-min screenshot run) waits for E2E. Write <out>/plan.md, <out>/messages.md and <out>/commands.sh.",
+      "expected_output": "Treats each EXTEND as a request it decides. Extends claude-q-api-tests-2 with coordinator.py extend BUILD --id claude-q-api-tests-2 --minutes 8 and replies LEASE EXTENDED. For claude-q-docs-1 it weighs the waiting claude-q-ui-4 and either extends it inside the 45-min limit and tells ui-4 its new turn, or replies LEASE EXTEND REFUSED and asks docs to release. Replies to both members.",
       "files": [],
       "assertions": [
-        "No message is sent to api-tests for the extension event",
-        "commands.sh does not run coordinator.py extend for claude-q-api-tests-2",
+        "commands.sh runs coordinator.py extend BUILD --id claude-q-api-tests-2 --minutes 8",
+        "messages.md has LEASE EXTENDED for claude-q-api-tests-2 with the new expiry",
         "The decision on claude-q-docs-1 names the waiting entry claude-q-ui-4 as the reason",
-        "Any extend command is coordinator.py extend E2E --id claude-q-docs-1 --minutes 15, which stays inside the class limit"
+        "Any E2E extend command stays inside the 45-min class limit",
+        "Both members get a reply"
       ]
     }
   ]
