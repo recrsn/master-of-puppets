@@ -17,7 +17,7 @@ Pages share one shell (dashboard.html) with host values and the page links in th
   /rules       machine and project memory (rules and notes), editable
   POST /park   {"action": "park"|"unpark", "coord", "name", "until"?} from the Park and Unpark
                buttons: runs `coordinator.py park|unpark ... --notify`, so the coordinator is told.
-  POST /queue  {"action": "up"|"unwait", "cls", "id"} from the page's Move up and Cancel
+  POST /queue  {"action": "up"|"unwait"|"move", "cls", "id", "to"} from the page's Move up, Cancel and drag
                buttons: runs `coordinator.py <action> CLASS --id ID --notify`, which tells each
                affected coordinator.
   POST /decide {"coord", "id", "choice"} from a decision's option buttons: runs
@@ -691,7 +691,9 @@ def render_page(host):
                     f' · ~{fmt((budget.get("peakCpus") or {}).get(cls))} cores')
             entries = lane_entries(cls)
             rows = "".join(
-                f'<details class="row q" id="{dom_id("q", cls, h["id"])}"><summary class="row-h"><span class="q-pos">{pos}</span>'
+                f'<details class="row q" id="{dom_id("q", cls, h["id"])}"'
+                + (f' draggable="true" data-drag="{e(cls)}" data-id="{e(h["id"])}" data-pos="{pos}"' if pos.isdigit() else "")
+                + f'><summary class="row-h"><span class="q-pos">{pos}</span>'
                 f'<span class="q-t"><span class="row-t {"t1" if pos == RUNNING else "t2"}">{e(h.get("holder", ""))}</span>'
                 f'<span class="q-req">{req}</span></span>'
                 f'<span class="row-ago {dcolor}">{e(dur)}</span></summary><div class="row-b">'
@@ -1109,17 +1111,18 @@ def host_sampler():
 
 
 COORDINATOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coordinator.py")
-QUEUE_ACTIONS = ("up", "unwait")
+QUEUE_ACTIONS = ("up", "unwait", "move")
 ENTRY_ID = re.compile(r"^[\w.:@-]{1,200}$")
 
 
-def queue_action(action, cls, entry_id):
-    """Run `coordinator.py up|unwait CLASS --id ID --notify`; returns (ok, output lines)."""
-    if action not in QUEUE_ACTIONS or cls not in (machine_config().get("classes") or DEFAULT_REGISTRY) or not ENTRY_ID.match(entry_id):
+def queue_action(action, cls, entry_id, to=None):
+    """Run `coordinator.py up|unwait|move CLASS --id ID [--to N] --notify`; returns (ok, output lines)."""
+    if (action not in QUEUE_ACTIONS or cls not in (machine_config().get("classes") or DEFAULT_REGISTRY)
+            or not ENTRY_ID.match(entry_id) or (action == "move") != (type(to) is int and 1 <= to <= 999)):
         return False, ["bad request"]
+    cmd = [sys.executable, "-I", COORDINATOR, action, cls, "--id", entry_id, "--notify"] + (["--to", str(to)] if action == "move" else [])
     try:
-        r = subprocess.run([sys.executable, "-I", COORDINATOR, action, cls, "--id", entry_id, "--notify"],
-                           capture_output=True, text=True, timeout=180)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, [f"coordinator.py failed: {exc}"]
     lines = [x for x in (r.stdout + r.stderr).splitlines() if x.strip()]
@@ -1202,7 +1205,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 ok, lines = park_action(str(req.get("action", "")), str(req.get("coord", "")), str(req.get("name", "")),
                                         str(req.get("until") or ""))
             else:
-                ok, lines = queue_action(str(req.get("action", "")), str(req.get("cls", "")), str(req.get("id", "")))
+                ok, lines = queue_action(str(req.get("action", "")), str(req.get("cls", "")), str(req.get("id", "")),
+                                         req.get("to"))
         except (ValueError, AttributeError):
             ok, lines = False, ["bad request"]
         self.send(json.dumps({"ok": ok, "lines": lines}).encode(), "application/json", 200 if ok else 400)

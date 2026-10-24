@@ -731,7 +731,7 @@ def event_coordinator(f, names):
     for x in f:
         if x.startswith("coordinator="):
             return x.partition("=")[2]
-    if len(f) > 3 and f[1] in ("release", "unwait", "hold", "ready", "extend", "priority", "up"):
+    if len(f) > 3 and f[1] in ("release", "unwait", "hold", "ready", "extend", "priority", "up", "move"):
         return id_owner(f[3], names)
     if f[1] in ("coordinate", "resign", "active", "idle"):
         return f[2]

@@ -282,13 +282,16 @@ members its new turn. The dashboard shows each non-zero priority.
 ## Queue changes by the user
 
 The user changes the order on the dashboard: the Move up and Cancel buttons
-run `coordinator.py up|unwait CLASS --id ID --notify`. Move up puts a ready entry
-ahead of the ready entry in front of it; when that entry has a higher
-priority, the moved entry takes it. Cancel removes an entry. Each affected
+run `coordinator.py up|unwait CLASS --id ID --notify`, and dragging a ready
+entry onto another runs `coordinator.py move CLASS --id ID --to N --notify`.
+Move up puts a ready entry ahead of the ready entry in front of it; move puts
+it at position N among ready entries. When the new place is outside its
+priority range, the moved entry takes a priority between its new neighbours',
+so the queue stays sorted. Cancel removes an entry. Each affected
 coordinator gets `INBOX dashboard: ...`. Treat it as the user's direction:
 tell the affected members their new turn, or that the entry is gone. Do not
 undo it, and queue a cancelled entry again only if the user agrees.
-Coordinators never run `up` themselves.
+Coordinators never run `up` or `move` themselves.
 
 ## Rules members get wrong
 

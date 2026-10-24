@@ -140,6 +140,9 @@ details.more>summary::after{content:"Show " attr(data-more) " more"} details.mor
 .wq .q-req{font-size:16px;line-height:22px} .wq .ic{width:16px;height:16px}
 .row.q .row-b{padding:0 8px 8px 30px;gap:4px;font-size:12px;line-height:16px}
 .row.q .acts{margin:4px 0 0 -8px;gap:4px}
+.row.q[data-drag]>summary{cursor:grab}
+.row.q.dragging{opacity:.4}
+.row.q.drop-before{box-shadow:inset 0 2px 0 0 var(--color-cui-cr-orange-9)} .row.q.drop-after{box-shadow:inset 0 -2px 0 0 var(--color-cui-cr-orange-9)}
 .q-pos{flex:none;display:inline-flex;align-items:center;justify-content:center;width:12px;font-family:var(--font-cui-mono);font-size:12px;color:var(--text-color-cui-tertiary)}
 .dot.live{animation:blink 1.6s ease-in-out infinite}
 .wq .dot.live{width:12px;height:12px}
@@ -239,6 +242,45 @@ form.cfg:not([data-dirty]) .btn[type=submit]{opacity:.5}
       btn.disabled = false;
     }
   };
+
+  // Drag a ready queue entry onto another ready entry of its class to take that position.
+  // The page holds updates during a drag, since a body swap ends it.
+  let drag = null, held = false;
+  const dropRow = (ev) => {
+    const row = ev.target.closest?.(".row.q[data-drag]");
+    return drag && row && row.dataset.drag === drag.cls && row.dataset.id !== drag.id ? row : null;
+  };
+  const clearDrop = () => { for (const r of document.querySelectorAll(".drop-before,.drop-after")) r.classList.remove("drop-before", "drop-after"); };
+  document.addEventListener("dragstart", (ev) => {
+    const row = ev.target.closest?.(".row.q[data-drag]");
+    if (!row) return;
+    drag = {cls: row.dataset.drag, id: row.dataset.id, pos: Number(row.dataset.pos)};
+    ev.dataTransfer.effectAllowed = "move";
+    ev.dataTransfer.setData("text/plain", drag.id);
+    row.classList.add("dragging");
+  });
+  document.addEventListener("dragover", (ev) => {
+    const row = dropRow(ev);
+    if (!row) return;
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = "move";
+    clearDrop();
+    row.classList.add(Number(row.dataset.pos) < drag.pos ? "drop-before" : "drop-after");
+  });
+  document.addEventListener("dragleave", (ev) => { if (dropRow(ev)) clearDrop(); });
+  document.addEventListener("drop", (ev) => {
+    const row = dropRow(ev);
+    if (!row) return;
+    ev.preventDefault();
+    const {cls, id} = drag;
+    post("/queue", {action: "move", cls, id, to: Number(row.dataset.pos)});
+  });
+  document.addEventListener("dragend", () => {
+    clearDrop();
+    document.querySelector(".dragging")?.classList.remove("dragging");
+    drag = null;
+    if (held) { held = false; refresh(); }
+  });
 
   const post = async (url, body, btn) => {
     if (btn) btn.disabled = true;
@@ -382,7 +424,10 @@ form.cfg:not([data-dirty]) .btn[type=submit]{opacity:.5}
   const es = new EventSource("/stream");
   es.addEventListener("host", (ev) => { window.__host = JSON.parse(ev.data); paint(window.__host); });
   // A form with unsaved edits holds the page until it is saved.
-  es.addEventListener("update", () => { if (!document.querySelector("form[data-dirty]")) refresh(); });
+  es.addEventListener("update", () => {
+    if (drag) held = true;
+    else if (!document.querySelector("form[data-dirty]")) refresh();
+  });
   es.onerror = () => { document.body.dataset.stale = "1"; };
   es.onopen = () => { delete document.body.dataset.stale; };
 })();
