@@ -87,13 +87,13 @@ The memory budget predicts; the host check observes. Both must pass, and
    prefix, an id that is already held and a run over the class limit, and
    gives the entry its task's priority. A member cannot set
    a priority, jump the queue or grant. `watch inbox` shows each request as
-   `EVENT ... request <CLASS> <slug> <id> <holder> by=<name>`, and a changed
-   one as `... request <CLASS> <slug> <id> changed ...`. Check that the
+   `INBOX <name>: REQUEST <CLASS> <id> <holder> ...`, and a changed
+   one as `REQUEST <CLASS> <id> changed ...`. Check that the
    recorded commands fit the class. If they do not, `unwait` the entry and
    tell the member why. A request needs no reply: `request` printed its
    position, and `await-grant` follows the queue. Reply LEASE QUEUED only when
    you change the entry (split, hold, priority). `watch inbox` shows only new
-   lines, so a request made while it did not run has no event: each heartbeat
+   lines, so a request made while it did not run has no message: each heartbeat
    round, `status --brief` shows it.
    To queue for a member yourself, for example the second part of a split:
    `coordinator.py wait <CLASS> --coordinator <slug> --holder "<task> <what>" --id <slug>-q-<name>-<n> --minutes <est> --commands "<exact commands>" --worktree <path> [--gib <n>]`.
@@ -143,8 +143,8 @@ The memory budget predicts; the host check observes. Both must pass, and
 **Extending.** Extension is at the coordinator's discretion; only
 `coordinator.py extend` changes an expiry. A member asks with
 `puppet.py extend`, which refuses a run over the class limit and otherwise
-only logs the request. Your `watch inbox` prints
-`EXTEND <CLASS> <id> <n> min by=<name> ... reason="..."`. Decide: check that
+logs the request and sends it to your inbox. Your `watch inbox` prints
+`EXTEND <CLASS> <id> <n> min ... Reason: ...`. Decide: check that
 the reason fits the granted commands, and weigh who waits in that class
 queue and the memory the lease holds. Then run
 `coordinator.py extend <CLASS> --id <id> --minutes <n>` and reply

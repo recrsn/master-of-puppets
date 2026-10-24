@@ -322,8 +322,12 @@ def queue_entry(state, roster, cls, id, coordinator=None, holder=None, minutes=N
         if priority is not None and priority != existing.get("priority", 0):
             existing["priority"] = priority
             log(f"priority {cls} {id} {priority}" + (f" by={changed_by}" if changed_by else ""))
+            if changed_by and changed_by != existing["coordinator"]:
+                say(changed_by, f"PRIORITY {cls} {id} {priority} by={changed_by}", existing["coordinator"])
         if by:
             log(f"request {cls} {existing['coordinator']} {id} changed {existing['holder']} by={by}")
+            say(by, f"REQUEST {cls} {id} changed {existing['holder']}: check it and grant it with acquire when the host and budget allow",
+                existing["coordinator"])
     else:
         if not (coordinator and holder):
             return 2, "a new queue entry needs --coordinator and --holder"
@@ -344,10 +348,13 @@ def queue_entry(state, roster, cls, id, coordinator=None, holder=None, minutes=N
             queue.insert(0, entry)
         else:
             queue.append(entry)
-        # A member's own request logs "request", so the coordinator's watch inbox shows it.
+        # A member's own request logs "request" and lands in its coordinator's inbox.
         verb = "request" if by else "wait"
         log(f"{verb} {cls} {coordinator} {id} {holder}" + (f" priority={entry['priority']}" if entry["priority"] else "")
             + (f" by={by}" if by else ""))
+        if by:
+            say(by, f"REQUEST {cls} {id} {holder}" + (f" priority {entry['priority']}" if entry["priority"] else "")
+                + ": check it and grant it with acquire when the host and budget allow", coordinator)
     order(queue)
     return 0, f"position {[q['id'] for q in queue].index(id) + 1}"
 

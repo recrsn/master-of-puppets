@@ -34,8 +34,8 @@ Split runs longer than the limit.
 | `CLOUD UPDATE — <member> — <taskId> — <state> — <fact>` (from the watch helper) | `member update --name <member>`, then act (`references/coderabbit-cloud.md`, "Track") |
 | `CLOUD TASK — <name> — <taskId> — <url> — <task> — PRs <n>` | `member add --tool coderabbit`, `cloud-<slug>.txt`, `watch cloud` (`references/coderabbit-cloud.md`, "Record") |
 | `USER SYNC — <one line>` | `note`, `member update --latest` |
-| No message: `EVENT ... request <CLASS> <slug> <id> ...` in `watch inbox` (the member ran `puppet.py request`) | check and grant (`references/leases.md`, "Granting") |
-| No message: `EXTEND <CLASS> <id> <n> min ...` in `watch inbox` (the member ran `puppet.py extend`) | your decision: `coordinator.py extend`, or tell it to release (`references/leases.md`, "Extending") |
+| `REQUEST <CLASS> <id> ...` in `watch inbox` (sent by the member's `puppet.py request`) | check and grant (`references/leases.md`, "Granting") |
+| `EXTEND <CLASS> <id> <n> min ...` in `watch inbox` (sent by the member's `puppet.py extend`) | your decision: `coordinator.py extend`, or tell it to release (`references/leases.md`, "Extending") |
 | `LEAVE — <name>` | `member remove` |
 | `HANDOFF REQUEST — <name> — to <coordinator\|any> — PRs <n> — note <path>` | `PAUSE` its PRs, then offer (`references/handoff.md`) |
 
@@ -98,16 +98,18 @@ in the ledger; member messages need no shared inbox copy.
   coordinator's one `WORK REQUEST` gets a `HANDOFF` reply only from a
   coordinator with work to spare (SKILL.md, "When your work is done"). Do not
   send acknowledgements of acknowledgements or per-step progress such as
-  "acquired" or "released"; `events.log` already shows them.
+  "acquired" or "released"; `events.log` already shows them. No watcher reads
+  `events.log`: a change another coordinator must act on is an inbox message
+  that the command sends itself.
   These have a command; never send them by `say`:
 
   | Instead of a message about | Use |
   | --- | --- |
   | a release, its result, a drain or cleanup receipt | the release event (`events --id <id>`), `drain-check` |
-  | "your entry is the head", a priority change | `watch inbox` HEAD and PRIORITY lines |
+  | "your entry is the head", a priority change | `watch inbox` HEAD (from queue state) and PRIORITY lines |
   | an admission hold or its clearance | `admission hold\|clear` |
   | a rule or limit change | `memory add\|update\|remove` or `config set-*` with `--reason` |
-  | a helper update: AGREE, installer, "installed" | `update propose\|agree\|object\|approve\|status`, `install --replace --by` |
+  | a helper update: installer, "installed" | `update approve\|status`, `install --replace --by` |
   | a member handoff: offer, custody accepted, complete | `member transfer`, `member accept` |
   | who owns a PR, a worktree or a task | `who` |
   | which open PRs touch a file | `prs --path` |
