@@ -1,6 +1,6 @@
 ---
 name: puppet
-description: Join a master-of-puppets coordinator as a member ("puppet") and work your task under its directions until your PRs merge. Members report by message, and request, extend and release their own leases; only the coordinator grants, and it records membership and decisions. Use this at once when a prompt starts with "MASTER-OF-PUPPETS ENROLLED". Also use it when the user says "puppet", "join the coordinator", "join master of puppets", "enroll this session", "request a lease", "ask the coordinator for a lease", "extend the lease", "need more time on the lease", or "report to the coordinator".
+description: Join a master-of-puppets coordinator as a member ("puppet") and work your task under its directions until your PRs merge. Members report by message, and request, ask to extend and release their own leases; only the coordinator grants and extends, and it records membership and decisions. Use this at once when a prompt starts with "MASTER-OF-PUPPETS ENROLLED". Also use it when the user says "puppet", "join the coordinator", "join master of puppets", "enroll this session", "request a lease", "ask the coordinator for a lease", "extend the lease", "need more time on the lease", or "report to the coordinator".
 ---
 
 # Puppet
@@ -138,17 +138,17 @@ never by a relay.
    Use it or return it: no edits or repairs while holding a lease. On failure,
    clean up owned resources, release promptly and report the raw failure;
    repair; request again with a new id.
-   **More time.** When the run needs longer than the grant, extend before
-   it expires:
+   **More time.** Extension is your coordinator's decision. When the run
+   needs longer than the grant, ask before it expires:
    `puppet.py extend <CLASS> --coordinator <coord> --name <name> --id <id> --minutes <n> --reason "<what still runs>"`.
-   The lease then expires `<n>` minutes from now. Your coordinator sees the
-   event; no message is needed.
+   It changes nothing by itself; your coordinator sees the request (no
+   message is needed) and replies `LEASE EXTENDED` with the new expiry, or
+   tells you to release. Until then the old expiry holds. Start no new
+   commands meanwhile, and release at once on a no.
    - Exit 2: the whole run would be over the class limit. Release with
      `--result partial` and request the rest with a new id.
-   - Exit 3 because another entry waits: the time is your coordinator's
-     decision. Send `LEASE EXTEND <id> — <n> min — <what still runs>`, and
-     release if it says no. Do not start new commands meanwhile.
-   On `LEASE EXPIRED`, do the same: extend, or release at once.
+   - Exit 3: not a member, not your lease, or not held. Fix what it names.
+   On `LEASE EXPIRED`, ask the same way, or release at once.
 4. For E2E, stop the servers you started before releasing, including on
    failure. Release:
    `puppet.py release <CLASS> --id <id> --result pass|fail|partial --note "<one line: what passed, or the first failure>" [--port <n> ...]`.

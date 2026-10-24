@@ -166,16 +166,25 @@ def over_limit(cls, key, minutes):
     return None
 
 
-def extend_lease(held, cls, minutes):
-    """Set held's expiry to minutes from now. The caller holds the lock, saves and logs.
-    Returns (exit, text): 0 with the new expiry, 2 when the lease would then run
-    longer than the class limit."""
+def extension_refusal(held, cls, minutes):
+    """Refusal text when held, expiring minutes from now, would run longer than the class
+    limit, else None."""
     expires = now() + dt.timedelta(minutes=minutes)
     total = (expires - dt.datetime.fromisoformat(held["grantedAt"])).total_seconds() / 60
     limit = length_limit(cls, held.get("project"))
     if total > limit:
-        return 2, f"the lease would run {total:.0f} min, over the {limit}-min {cls} limit; release it and queue the rest"
-    held["expiresAt"] = expires.isoformat()
+        return f"the lease would run {total:.0f} min, over the {limit}-min {cls} limit; release it and queue the rest"
+    return None
+
+
+def extend_lease(held, cls, minutes):
+    """Set held's expiry to minutes from now. The caller holds the lock, saves and logs.
+    Returns (exit, text): 0 with the new expiry, 2 when the lease would then run
+    longer than the class limit."""
+    why = extension_refusal(held, cls, minutes)
+    if why:
+        return 2, why
+    held["expiresAt"] = (now() + dt.timedelta(minutes=minutes)).isoformat()
     return 0, held["expiresAt"]
 
 

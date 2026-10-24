@@ -83,9 +83,9 @@ Leases
        unwait and up take --notify (the dashboard's queue buttons): each affected
        coordinator gets an inbox message from "dashboard", delivered directly as say does
   extend CLASS --id ID --minutes N   expires N minutes from now; exit 2 when the lease would
-                                  run longer than the class limit. Members extend their own
-                                  lease with puppet.py extend while no entry waits; watch inbox
-                                  shows it as an "extension" event
+                                  run longer than the class limit. Extension is the coordinator's
+                                  decision: members ask with puppet.py extend, and watch inbox
+                                  shows the owner EXTEND; reply LEASE EXTENDED or ask to release
   host-check                      admission gate; exit 0 CALM, 1 BUSY (pressure or disk below
                                   the floor); prints disk=ok|alarm|blocked
   calm-wait [--settle S] [--retry S]           one CALM line when the host is calm
@@ -199,6 +199,7 @@ Watchers and install
          HEAD CLASS ID ...      an entry of C became the first ready entry: acquire it
          PRIORITY CLASS ID N by=X   another coordinator or the dashboard changed its priority
          TRANSFER NAME ...      another coordinator offers C a member: member accept
+         EXTEND CLASS ID N min ...  C's member asks for more time (puppet.py extend): extend or refuse
        watch expiry prints each expired lease once, with left=N processes in its worktree.
        watch cloud reads cloud-<C>.txt (a CodeRabbit cloud task id or URL,
        then the member name, per line) and prints each task's state change from
@@ -1508,7 +1509,8 @@ def watch_inbox(me):
     """Messages to me or to all, other coordinators' roster and lease events, and:
     HEAD when an entry of mine becomes the first ready entry of its class (acquire it),
     PRIORITY when another coordinator or the dashboard changes the priority of my entry,
-    TRANSFER when another coordinator offers me a member (member accept)."""
+    TRANSFER when another coordinator offers me a member (member accept),
+    EXTEND when my member asks for more time on its lease (puppet.py extend)."""
     heads = {}
 
     def report_heads():
@@ -1535,6 +1537,9 @@ def watch_inbox(me):
         by = next((x[3:] for x in f if x.startswith("by=")), None)
         if len(f) > 4 and f[1] == "priority" and by != me and id_owner(f[3], names) == me:
             print(f"PRIORITY {f[2]} {f[3]} {f[4]} by={by or 'unknown'}", flush=True)
+        elif len(f) > 4 and f[1] == "extend-request" and f"coordinator={me}" in f:
+            print(f"EXTEND {f[2]} {f[3]} {f[4]} min {' '.join(f[6:])}: coordinator.py extend {f[2]} --id {f[3]} --minutes {f[4]} "
+                  "when the queue allows, else ask the member to release", flush=True)
         elif len(f) > 2 and f[1] == "transfer" and f"to={me}" in f:
             src = next((x[5:] for x in f if x.startswith("from=")), "?")
             print(f"TRANSFER {' '.join(f[2:])}: take it with member accept --coordinator {me} --name {f[2]} --from {src}", flush=True)

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Member ("puppet") commands for master-of-puppets. A member reads the roster and
-the skill's memory, queues its own lease request, waits for the grant, extends and
-releases its own lease. Only a coordinator grants (coordinator.py acquire). A member never
+the skill's memory, queues its own lease request, waits for the grant, asks for more
+time and releases its own lease. Only a coordinator grants (coordinator.py acquire) and
+extends (coordinator.py extend). A member never
 writes the roster, ledger, dashboard or shared inbox; it messages its coordinator,
 which records everything with coordinator.py. Shared code is in moplib.py.
 
@@ -26,12 +27,13 @@ Usage: python3 -I puppet.py <command> ...
        3 left the queue without a grant; 5 timeout while still queued; 6 never queued
        within --appear-timeout (default 600 s)
   extend CLASS --coordinator C --name NAME --id ID --minutes N --reason TEXT
-       extend your own granted lease: it expires N minutes from now. Writes one event line,
-         extension CLASS ID until T by=NAME coordinator=C reason="TEXT"
-       which your coordinator's watch inbox shows; no message is needed.
-       exit 0 extended, 2 the lease would run longer than the class limit (release it and
-       request the rest), 3 refused: not your lease, not held, or another entry waits in the
-       CLASS queue (ask your coordinator)
+       ask your coordinator to extend your own granted lease to expire N minutes from now.
+       It does not change the expiry: the coordinator decides. Writes one event line,
+         extend-request CLASS ID N min by=NAME coordinator=C reason="TEXT"
+       which your coordinator's watch inbox shows; no message is needed. The coordinator
+       replies LEASE EXTENDED or tells you to release.
+       exit 0 asked, 2 the lease would run longer than the class limit (release it and
+       request the rest), 3 refused: not a member of C, not your lease, or not held
   release CLASS --id ID --result pass|fail|partial [--note TEXT] [--peak-gib N] [--port N ...] [--process PATTERN ...]
        release your own lease, never another's; records its run minutes and peak, then
        counts what the run left in the lease's worktree (agent session processes and bare
@@ -52,7 +54,7 @@ sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import (
     PEAKS, SAMPLES_KEPT, MINUTES_KEPT, load_machine, registry, class_names,
     load_project, save_project, now, lock, unlock, log,
-    load, save, load_roster, queue_entry, extend_lease, READS, add_read_commands, read_cmd, version_warning, drain,
+    load, save, load_roster, queue_entry, extension_refusal, READS, add_read_commands, read_cmd, version_warning, drain,
 )
 
 
@@ -120,35 +122,27 @@ def await_grant(args):
 
 
 def extend(args):
-    """Extend the member's own granted lease. While another entry waits in the class
-    queue, the extra time is the coordinator's decision, so the member must ask."""
-    lock()
-    try:
-        roster, state, machine = load_roster(), load(), load_machine()
-        if not any(m["name"] == args.name for m in roster["members"].get(args.coordinator, [])):
-            print(f"{args.name} is not a member of {args.coordinator}; send JOIN first")
-            return 3
-        held = next((h for h in state[args.cls] if h["id"] == args.id), None)
-        if held is None:
-            print(f"{args.cls} not held by {args.id}; request a new lease")
-            return 3
-        # A transferred member keeps its old ID prefix, so match the name part and the holder's coordinator.
-        if f"-q-{args.name}-" not in args.id or held["coordinator"] != args.coordinator:
-            print(f"{args.id} is not yours; extend only a lease granted to you")
-            return 3
-        waiting = [q["id"] for q in state["queue"][args.cls] if not q.get("hold")]
-        if waiting:
-            print(f"{len(waiting)} {args.cls} entries wait ({', '.join(waiting[:3])}); ask {args.coordinator} for the time, or release")
-            return 3
-        code, text = extend_lease(held, args.cls, args.minutes)
-        if code:
-            print(text)
-            return code
-        save(state, machine)
-    finally:
-        unlock()
-    log(f"extension {args.cls} {args.id} until {text} by={args.name} coordinator={args.coordinator} reason={json.dumps(args.reason)}")
-    print(f"extended {args.cls} {args.id} until {text}")
+    """Ask for more time on the member's own granted lease. Extension is the coordinator's
+    decision (coordinator.py extend), so this only checks the request and logs it."""
+    roster, state = load_roster(), load()
+    if not any(m["name"] == args.name for m in roster["members"].get(args.coordinator, [])):
+        print(f"{args.name} is not a member of {args.coordinator}; send JOIN first")
+        return 3
+    held = next((h for h in state[args.cls] if h["id"] == args.id), None)
+    if held is None:
+        print(f"{args.cls} not held by {args.id}; request a new lease")
+        return 3
+    # A transferred member keeps its old ID prefix, so match the name part and the holder's coordinator.
+    if f"-q-{args.name}-" not in args.id or held["coordinator"] != args.coordinator:
+        print(f"{args.id} is not yours; extend only a lease granted to you")
+        return 3
+    why = extension_refusal(held, args.cls, args.minutes)
+    if why:
+        print(why)
+        return 2
+    log(f"extend-request {args.cls} {args.id} {args.minutes} min by={args.name} coordinator={args.coordinator} reason={json.dumps(args.reason)}")
+    print(f"asked {args.coordinator} to extend {args.cls} {args.id} to {args.minutes} min from now; it still expires at "
+          f"{held['expiresAt'][11:16]}Z until {args.coordinator} extends it")
     return 0
 
 
@@ -224,7 +218,7 @@ def main():
     x.add_argument("--coordinator", required=True)
     x.add_argument("--name", required=True, help="your member name")
     x.add_argument("--id", required=True)
-    x.add_argument("--minutes", type=int, required=True, help="the lease expires this many minutes from now")
+    x.add_argument("--minutes", type=int, required=True, help="ask for the lease to expire this many minutes from now")
     x.add_argument("--reason", required=True, help="one short line: what is still running")
     r = sub.add_parser("release")
     r.add_argument("cls", metavar="CLASS")

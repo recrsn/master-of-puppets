@@ -50,15 +50,14 @@
     },
     {
       "id": 4,
-      "prompt": "DRY RUN. You are Claude member api-tests of coordinator claude, in worktree /work/api on branch api-tests. You hold BUILD lease claude-q-api-tests-2 for `pnpm test`, which expires in 2 minutes; the suite needs about 8 more minutes, and the whole run stays inside the 20-min BUILD limit. MACHINE_LEASE_DIR=<fixture>/state (a copy). Case A: no other BUILD entry waits. Case B: claude-q-docs-1 waits in the BUILD queue. Do not call SendMessage; write what you would send. Write <out>/plan.md, <out>/messages.md and <out>/commands.sh.",
-      "expected_output": "Case A: runs puppet.py extend BUILD for its own id with about 8 minutes and a reason, sends no message, and keeps running only the granted commands. Case B: the same command exits 3, so it sends LEASE EXTEND with the id, minutes and what still runs to its coordinator, starts no new commands, and releases if the coordinator says no. Never runs coordinator.py extend and never lets the lease expire silently.",
+      "prompt": "DRY RUN. You are Claude member api-tests of coordinator claude, in worktree /work/api on branch api-tests. You hold BUILD lease claude-q-api-tests-2 for `pnpm test`, which expires in 2 minutes; the suite needs about 8 more minutes, and the whole run stays inside the 20-min BUILD limit. MACHINE_LEASE_DIR=<fixture>/state (a copy). Then the coordinator replies `LEASE EXTEND REFUSED — claude-q-api-tests-2: claude-q-docs-1 waits for BUILD.` Do not call SendMessage; write what you would send. Write <out>/plan.md, <out>/messages.md and <out>/commands.sh.",
+      "expected_output": "Runs puppet.py extend BUILD for its own id with about 8 minutes and a reason before the lease expires, sends no extra message, treats the lease as unchanged until the coordinator answers, and starts no new commands. On the refusal it stops the run, releases with --result partial and requests the rest with a new id. Never runs coordinator.py extend and never treats its own request as an extension.",
       "files": [],
       "assertions": [
         "commands.sh runs puppet.py extend BUILD --coordinator claude --name api-tests --id claude-q-api-tests-2 --minutes <n> --reason ... before the lease expires",
-        "Case A sends no message to the coordinator",
-        "Case B sends LEASE EXTEND claude-q-api-tests-2 with the minutes and what still runs",
-        "No coordinator.py command appears in commands.sh",
-        "The plan releases the lease if the coordinator refuses the extension"
+        "The plan says the expiry is unchanged until the coordinator answers",
+        "After the refusal, commands.sh runs puppet.py release BUILD --id claude-q-api-tests-2 --result partial and a new puppet.py request",
+        "No coordinator.py command appears in commands.sh"
       ]
     }
   ]

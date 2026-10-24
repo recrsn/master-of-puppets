@@ -29,15 +29,15 @@ One or more coordinator sessions take PR stacks to merged. Coordinators:
 A working session joins a coordinator as a member. It reports by message
 (JOIN, UPDATE, CHILD TASK STARTED, LEAVE), follows ACTIVE and PAUSE directions,
 queues its own lease requests with `puppet.py request`, waits with
-`puppet.py await-grant`, extends its own lease with `puppet.py extend`
-while no other entry waits, releases its own leases, and takes its own PRs to
-merged. Only a coordinator grants. The coordinator records membership and
+`puppet.py await-grant`, asks for more time with `puppet.py extend`,
+releases its own leases, and takes its own PRs to
+merged. Only a coordinator grants and extends. The coordinator records membership and
 decisions.
 
 Four files in `master-of-puppets/scripts` do the work: `coordinator.py`
 (roster, members, leases, messaging, shared-record reads, watchers, config,
 update votes), `puppet.py` (the commands a member runs: roster, memory, the
-shared-record reads, lease request, wait, extend and release), `moplib.py`
+shared-record reads, lease request, wait, extension request and release), `moplib.py`
 (the state code both share) and `server.py` (dashboard, with the page shell
 `dashboard.html`). All use only the Python standard library.
 
