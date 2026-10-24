@@ -136,8 +136,10 @@ details.more>summary::after{content:"Show " attr(data-more) " more"} details.mor
 .row.q{margin:0 -8px}
 .row.q .row-h{gap:10px;height:auto;min-height:32px;padding:4px 8px}
 .q-t{flex:1;min-width:0;display:flex;flex-direction:column}
-.q-req{font-family:var(--font-cui-mono);font-size:12px;line-height:16px;color:var(--text-color-cui-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wq .q-req{font-size:16px;line-height:22px}
+.q-req{display:flex;gap:12px;font-family:var(--font-cui-mono);font-size:12px;line-height:16px;color:var(--text-color-cui-tertiary);white-space:nowrap;overflow:hidden}
+.q-req>span{display:inline-flex;align-items:center;gap:4px}
+.ic{flex:none;width:12px;height:12px}
+.wq .q-req{font-size:16px;line-height:22px} .wq .ic{width:16px;height:16px}
 .row.q .row-b{padding:0 8px 8px 30px;gap:4px;font-size:12px;line-height:16px}
 .row.q .acts{margin:4px 0 0 -8px;gap:4px}
 .q-pos{flex:none;display:inline-flex;align-items:center;justify-content:center;width:12px;font-family:var(--font-cui-mono);font-size:12px;color:var(--text-color-cui-tertiary)}
