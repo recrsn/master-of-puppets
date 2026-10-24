@@ -20,8 +20,9 @@ Leases are <on|off>. <If on, the lease addendum follows.>
 
 ```
 LEASES ON — <slug> grants these classes (puppet skill, section 5):
-<CLASS — description — max minutes from config show, one per line>
-Split runs longer than the limit.
+<CLASS — description — maxMinutes (suggestedMinutes when set) from config show, one per line>
+Choose the smallest time that finishes the whole current unit of work; do not
+cut a unit to fit the suggested time. Split only runs longer than the limit.
 ```
 
 ## Messages members send
