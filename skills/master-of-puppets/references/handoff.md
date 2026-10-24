@@ -101,7 +101,7 @@ Members use the puppet skill, section 8. Coordinators do the rest.
      when the whole stream moves
    - remove the PRs from `prs-<you>.txt`
    - for each member that moves: `coordinator.py member transfer --coordinator <you> --name <member> --to <receiver> --note <path>`.
-     The receiver's `watch inbox` prints `TRANSFER`. Send no message.
+     The command puts `TRANSFER` in the receiver's inbox. Send no other message.
    - only when no member moves (PRs or streams alone):
      `coordinator.py say --from <you> --to <receiver> --message "HANDOFF — <what> — PRs <n> — streams <slug> — note <path>"`
 
@@ -114,8 +114,8 @@ Members use the puppet skill, section 8. Coordinators do the rest.
    - for each offered member: `coordinator.py member accept --coordinator <you> --name <member> --from <sender>`.
      One locked write moves the member and its pending children, its queued
      and held lease entries, its PRs (out of the sender's claim, into yours)
-     and its dashboard row. The sender's `watch inbox` shows the `accept`
-     event: send no CUSTODY ACCEPTED.
+     and its dashboard row. The command puts `ACCEPT` in the sender's inbox:
+     send no CUSTODY ACCEPTED.
    - for PRs without a member: `coordinator.py heartbeat --name <you> --pr <your PRs and the new ones>`
    - append the PRs to `prs-<you>.txt`
    - `note --pr <n>` the acceptance

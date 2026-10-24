@@ -30,7 +30,7 @@ Usage: python3 -I puppet.py <command> ...
        ask your coordinator to extend your own granted lease to expire N minutes from now.
        It does not change the expiry: the coordinator decides. Writes one event line,
          extend-request CLASS ID N min by=NAME coordinator=C reason="TEXT"
-       which your coordinator's watch inbox shows; no message is needed. The coordinator
+       and puts an EXTEND message in your coordinator's inbox. The coordinator
        replies LEASE EXTENDED or tells you to release.
        exit 0 asked, 2 the lease would run longer than the class limit (release it and
        request the rest), 3 refused: not a member of C, not your lease, or not held
@@ -53,7 +53,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import (
     PEAKS, SAMPLES_KEPT, MINUTES_KEPT, load_machine, registry, class_names,
-    load_project, save_project, now, lock, unlock, log,
+    load_project, save_project, now, lock, unlock, log, say,
     load, save, load_roster, queue_entry, extension_refusal, READS, add_read_commands, read_cmd, version_warning, drain,
 )
 
@@ -63,7 +63,7 @@ from moplib import (
 
 def request(args):
     """Queue the member's own entry. The member cannot grant, set a priority or jump the
-    queue; its coordinator sees the "request" event in watch inbox and grants."""
+    queue; its coordinator gets a REQUEST message in its inbox and grants."""
     lock()
     try:
         roster, state, machine = load_roster(), load(), load_machine()
@@ -141,6 +141,8 @@ def extend(args):
         print(why)
         return 2
     log(f"extend-request {args.cls} {args.id} {args.minutes} min by={args.name} coordinator={args.coordinator} reason={json.dumps(args.reason)}")
+    say(args.name, f"EXTEND {args.cls} {args.id} {args.minutes} min: coordinator.py extend {args.cls} --id {args.id} "
+        f"--minutes {args.minutes} when the queue allows, else ask the member to release. Reason: {args.reason}", args.coordinator)
     print(f"asked {args.coordinator} to extend {args.cls} {args.id} to {args.minutes} min from now; it still expires at "
           f"{held['expiresAt'][11:16]}Z until {args.coordinator} extends it")
     return 0

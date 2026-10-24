@@ -64,8 +64,8 @@ Leases
        exit 2 when --minutes is over the class limit: split the run.
        --priority: default the task's priority, else 0; a change moves the entry to its
        place among the others. --front: the head, at the highest priority in the queue.
-       Members queue their own requests with puppet.py request; watch inbox shows each
-       as a "request" event. Only acquire grants.
+       Members queue their own requests with puppet.py request; each puts a REQUEST
+       message in the coordinator's inbox. Only acquire grants.
   acquire CLASS --coordinator C --holder NAME --id ID --worktree P --minutes N [--gib N]
           [--commands TEXT] [--measure]
        runs the host check itself (about 2 × swapIntervalS), then checks again under the lock.
@@ -84,8 +84,8 @@ Leases
        coordinator gets an inbox message from "dashboard", delivered directly as say does
   extend CLASS --id ID --minutes N   expires N minutes from now; exit 2 when the lease would
                                   run longer than the class limit. Extension is the coordinator's
-                                  decision: members ask with puppet.py extend, and watch inbox
-                                  shows the owner EXTEND; reply LEASE EXTENDED or ask to release
+                                  decision: members ask with puppet.py extend, and the owner's
+                                  inbox gets EXTEND; reply LEASE EXTENDED or ask to release
   host-check                      admission gate; exit 0 CALM, 1 BUSY (pressure or disk below
                                   the floor); prints disk=ok|alarm|blocked
   calm-wait [--settle S] [--retry S]           one CALM line when the host is calm
@@ -195,11 +195,16 @@ Peer-coordinator messaging
 
 Watchers and install
   watch inbox --me C | watch expiry | watch prs --me C [--interval S] | watch cloud --me C [--interval S]
-       Monitor sources. watch inbox prints INBOX messages and EVENT lines of others, and:
-         HEAD CLASS ID ...      an entry of C became the first ready entry: acquire it
+       Monitor sources. watch inbox reads inbox.jsonl only, never events.log. It prints
+       the INBOX messages to C or to all, among them (each is a message in C's inbox):
+         REQUEST CLASS ID ...   C's member queued or changed an entry: check and grant it
          PRIORITY CLASS ID N by=X   another coordinator or the dashboard changed its priority
          TRANSFER NAME ...      another coordinator offers C a member: member accept
+         ACCEPT NAME ...        another coordinator took a member C offered
          EXTEND CLASS ID N min ...  C's member asks for more time (puppet.py extend): extend or refuse
+         CONFIG, MEMORY, LEASES, ADMISSION, INSTALLED, UPDATE   a peer changed a machine rule
+       and, from the queue state each 2 s:
+         HEAD CLASS ID ...      an entry of C became the first ready entry: acquire it
        watch expiry prints each expired lease once, with left=N processes in its worktree.
        watch cloud reads cloud-<C>.txt (a CodeRabbit cloud task id or URL,
        then the member name, per line) and prints each task's state change from
@@ -213,8 +218,10 @@ Watchers and install
        records this skill copy in source.json; roster, whoami, coordinate, heartbeat and
        status then warn on stderr when an update is due
   update propose --by C [--text TEXT]   from the skill copy: records the update (file hashes)
-       with C's vote and adds a machine decision that asks the user Install / Do not install
-  update agree --by C [--text TEXT] | update object --by C --text TEXT
+       with C's vote, adds a machine decision that asks the user Install / Do not install,
+       and messages every live peer coordinator
+  update agree --by C [--text TEXT] | update object --by C --text TEXT   record the vote
+       and message every live peer coordinator
   update approve --by C --quote TEXT    the user's own words in C's session approve it
   update status                         votes, approval, blockers; exit 0 ready, 3 not
 
@@ -238,13 +245,13 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import (
-    DIR, CONFIG, TOOLS, MEMBER_TOOLS, SLUG, FILES, OBSOLETE, SOURCE, version_warning, PEAKS, LOG,
+    DIR, CONFIG, TOOLS, MEMBER_TOOLS, SLUG, FILES, OBSOLETE, SOURCE, version_warning, PEAKS,
     INBOX, CLASS_NAME, read_json, write_json, load_machine, registry,
     class_names, project_key, load_project, save_project, class_peak, typical_minutes,
     max_minutes, over_limit, extend_lease, now, lock, unlock, log, note,
     load_roster, save_roster, live, load, save, budget, order, queue_entry,
     say, deliver, notify, READS, memory_path, add_read_commands,
-    read_cmd, run, worktree_pids, drain, id_owner,
+    read_cmd, run, worktree_pids, drain,
 )
 
 
@@ -266,12 +273,22 @@ def changes(old, new):
     return out
 
 
+PENDING = []
+
+
+def announce(by, message):
+    """Queue a rule change for every live peer; main sends it after the command releases the lock."""
+    PENDING.append((by, message))
+
+
 def record_config(by, reason, what, old, new):
     """One event and one ledger line per config change: who, why and the changed keys."""
     diff = changes(old, new)
     log(f"config {what} by={by}{reason_field(reason)} changes={json.dumps(diff, separators=(',', ':'))}")
     note(by, f"config {what}: " + ("; ".join(f"{k} {json.dumps(a)} -> {json.dumps(b)}" for k, (a, b) in diff.items()) or "no change")
          + (f" (reason: {reason})" if reason else ""))
+    announce(by, f"CONFIG {what} by {by}: " + ("; ".join(f"{k} {json.dumps(a)} -> {json.dumps(b)}" for k, (a, b) in diff.items()) or "no change")
+             + (f" (reason: {reason})" if reason else ""))
 
 
 def config_cmd(args):
@@ -493,6 +510,7 @@ def roster_cmd(args):
         save_roster(roster)
         log(f"leases {args.mode} by={args.by}")
         note(args.by, f"leases {args.mode}")
+        announce(args.by, f"LEASES {args.mode} by {args.by}")
         return 0
     if args.cmd in ("coordinate", "heartbeat", "resign"):
         cur = coords.get(args.name)
@@ -728,6 +746,8 @@ def transfer_cmd(args, roster):
         log(f"transfer {args.name} from={args.coordinator} to={args.to} by={args.coordinator}"
             + (f" note={json.dumps(args.note)}" if args.note else ""))
         note(args.coordinator, f"offered {args.name} to {args.to}" + (f"; note {args.note}" if args.note else ""))
+        say(args.coordinator, f"TRANSFER {args.name} from {args.coordinator}" + (f", note {args.note}" if args.note else "")
+            + f": take it with member accept --coordinator {args.to} --name {args.name} --from {args.coordinator}", args.to)
         print(f"offered {args.name} to {args.to}; it takes the member with member accept")
         return 0
     src, dst = args.source, args.coordinator
@@ -766,6 +786,8 @@ def transfer_cmd(args, roster):
     log(f"accept {args.name} from={src} to={dst} by={dst}" + (f" leases={','.join(leases)}" if leases else ""))
     note(dst, f"took {', '.join(names)} from {src}" + (f"; PRs {' '.join('#' + str(n) for n in prs)}" if prs else "")
          + (f"; leases {', '.join(leases)}" if leases else ""))
+    say(dst, f"ACCEPT {', '.join(names)}: {dst} took custody" + (f"; PRs {' '.join('#' + str(n) for n in prs)}" if prs else "")
+        + (f"; leases {', '.join(leases)}" if leases else "") + ". Stop directing it.", src)
     print(json.dumps({"moved": names, "prs": prs, "leases": leases}))
     return 0
 
@@ -1033,9 +1055,27 @@ def record_update_answer(digest, yes, answer):
     log(f"update {'approve' if yes else 'reject'} {digest} by=dashboard")
 
 
+def broadcast(sender, message):
+    """Inbox record, then direct delivery to every live peer coordinator (say without --to)."""
+    say(sender, message)
+    roster = load_roster()
+    text = f"[{sender} via coordinator.py say] {message}"
+    for n, c in roster["coordinators"].items():
+        if n != sender and live(c):
+            print(deliver(n, c.get("tool"), c.get("sessionId"), text))
+
+
 def update_cmd(args):
-    """propose, agree, object, approve and status: one shared record of a helper update,
-    so coordinators vote in state instead of in messages, and install reads it."""
+    """propose, agree, object, approve and status: one shared record of a helper update
+    that install reads. propose, agree and object also message every live peer."""
+    announce = []
+    code = update_locked(args, announce)
+    for message in announce:
+        broadcast(args.by, message)
+    return code
+
+
+def update_locked(args, announce):
     lock()
     try:
         roster, state = load_roster(), load()
@@ -1070,6 +1110,9 @@ def update_cmd(args):
             log(f"update propose {digest} by={args.by}")
             note(args.by, f"proposed helper update {digest} ({git or 'no git'}) from {here}; machine decision {item['id']}")
             print(f"proposed update {digest}; machine decision {item['id']} asks the user")
+            announce.append(f"UPDATE PROPOSED {digest} ({git or 'no git'}) by {args.by}"
+                            + (f": {args.text}" if args.text else "")
+                            + f". Read the diff with install, then run update agree or update object --text.")
             return 0
         if not proposal or proposal.get("installed"):
             print("no open update proposal")
@@ -1086,6 +1129,9 @@ def update_cmd(args):
         log(f"update {args.ucmd} {proposal['digest']} by={args.by}")
         note(args.by, f"update {proposal['digest']}: {args.ucmd}" + (f" — user: {args.quote}" if args.ucmd == "approve" else
                                                                      f" — {args.text}" if args.text else ""))
+        if args.ucmd in ("agree", "object"):
+            announce.append(f"UPDATE {proposal['digest']}: {args.by} {'agrees' if args.ucmd == 'agree' else 'objects'}"
+                            + (f" — {args.text}" if args.text else ""))
         why = update_blockers(proposal, roster, state)
         print("ready to install" if not why else "not ready:\n  " + "\n  ".join(why))
         return 0
@@ -1102,7 +1148,7 @@ def reason_field(reason):
 
 def memory_cmd(args):
     """add, update (same ID) and remove. Each change logs one event and one ledger line
-    with who and why, so peers see it in watch inbox without a message."""
+    with who and why, and messages every live peer coordinator."""
     path, name = memory_path(args.project_root)
     lock()
     try:
@@ -1113,6 +1159,7 @@ def memory_cmd(args):
             write_json(path, data)
             log(f"memory add {name} {entry['id']} by={args.by}{reason_field(args.reason)}")
             note(args.by, f"memory {name} {entry['id']} added: {args.text}" + (f" (reason: {args.reason})" if args.reason else ""))
+            announce(args.by, f"MEMORY {name} {entry['id']} added by {args.by}: {args.text}" + (f" (reason: {args.reason})" if args.reason else ""))
             print(entry["id"])
             return 0
         entry = next((x for x in data["entries"] if x["id"] == args.id), None)
@@ -1132,6 +1179,7 @@ def memory_cmd(args):
         write_json(path, data)
         log(f"memory {args.mcmd} {name} {args.id} by={args.by}{reason_field(args.reason)}")
         note(args.by, f"memory {name} {args.id} {change}" + (f" (reason: {args.reason})" if args.reason else ""))
+        announce(args.by, f"MEMORY {name} {args.id} {change} by {args.by}" + (f" (reason: {args.reason})" if args.reason else ""))
         return 0
     finally:
         unlock()
@@ -1229,6 +1277,7 @@ def admission_cmd(args, state, machine):
     save(state, machine)
     log(f"admission {verb} {args.cls} by={args.by}" + (f" reason={json.dumps(args.reason)}" if args.reason else ""))
     note(args.by, f"admission {verb} {args.cls}" + (f": {args.reason}" if args.reason else ""))
+    announce(args.by, f"ADMISSION {verb} {args.cls} by {args.by}" + (f": {args.reason}" if args.reason else ""))
     return 0
 
 
@@ -1463,7 +1512,8 @@ def prs_cmd(args):
 
 
 def follow(paths):
-    """Yield (path, line) for lines appended to the files after start."""
+    """Yield (path, line) for lines appended to the files after start, and (None, None)
+    after each sweep so the caller can poll state."""
     files = {}
     for p in paths:
         open(p, "a").close()
@@ -1475,23 +1525,8 @@ def follow(paths):
             for line in f.readlines():
                 if line.strip():
                     yield p, line.strip()
+        yield None, None
         time.sleep(2)
-
-
-def event_of(line, me, names):
-    """True when the events.log line is me's own: my grants and queue entries, my lease
-    IDs, my roster changes, or an action by=me. Lease IDs go to the coordinator whose
-    name prefixes them, longest name first; a release line names its coordinator."""
-    f = line.split()
-    if len(f) < 3:
-        return False
-    return (
-        (f[1] in ("wait", "acquire", "refuse") and len(f) > 3 and f[3] == me)
-        or (f[1] == "release" and f"coordinator={me}" in f)
-        or (f[1] in ("unwait", "hold", "ready", "extend", "priority") and len(f) > 3 and id_owner(f[3], names) == me)
-        or (f[1] in ("coordinate", "resign") and f[2] == me)
-        or f"by={me}" in f
-    )
 
 
 def own_heads(me):
@@ -1506,11 +1541,9 @@ def own_heads(me):
 
 
 def watch_inbox(me):
-    """Messages to me or to all, other coordinators' roster and lease events, and:
+    """Messages to me or to all (inbox.jsonl only; it never reads events.log), and:
     HEAD when an entry of mine becomes the first ready entry of its class (acquire it),
-    PRIORITY when another coordinator or the dashboard changes the priority of my entry,
-    TRANSFER when another coordinator offers me a member (member accept),
-    EXTEND when my member asks for more time on its lease (puppet.py extend)."""
+    polled from the queue state."""
     heads = {}
 
     def report_heads():
@@ -1522,30 +1555,17 @@ def watch_inbox(me):
                 print(f"HEAD {c} {q['id']}{prio} — {q['holder'][:60]}: acquire it when the host and budget allow", flush=True)
         heads = now_heads
     report_heads()
-    for path, line in follow([INBOX, LOG]):
-        if path == INBOX:
-            try:
-                rec = json.loads(line)
-            except ValueError:
-                print(f"INBOX {line}", flush=True)
-                continue
-            if rec.get("from") != me and rec.get("to") in (None, me):
-                print(f"INBOX {rec.get('from')}: {rec.get('message')}", flush=True)
+    for path, line in follow([INBOX]):
+        if path is None:
+            report_heads()
             continue
-        f = line.split()
-        names = load_roster()["coordinators"]
-        by = next((x[3:] for x in f if x.startswith("by=")), None)
-        if len(f) > 4 and f[1] == "priority" and by != me and id_owner(f[3], names) == me:
-            print(f"PRIORITY {f[2]} {f[3]} {f[4]} by={by or 'unknown'}", flush=True)
-        elif len(f) > 4 and f[1] == "extend-request" and f"coordinator={me}" in f:
-            print(f"EXTEND {f[2]} {f[3]} {f[4]} min {' '.join(f[6:])}: coordinator.py extend {f[2]} --id {f[3]} --minutes {f[4]} "
-                  "when the queue allows, else ask the member to release", flush=True)
-        elif len(f) > 2 and f[1] == "transfer" and f"to={me}" in f:
-            src = next((x[5:] for x in f if x.startswith("from=")), "?")
-            print(f"TRANSFER {' '.join(f[2:])}: take it with member accept --coordinator {me} --name {f[2]} --from {src}", flush=True)
-        elif not event_of(line, me, names):
-            print(f"EVENT {line}", flush=True)
-        report_heads()
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            print(f"INBOX {line}", flush=True)
+            continue
+        if rec.get("from") != me and rec.get("to") in (None, me):
+            print(f"INBOX {rec.get('from')}: {rec.get('message')}", flush=True)
 
 
 def watch_expiry():
@@ -1690,6 +1710,7 @@ def install_cmd(args):
         log(f"install {proposal['digest']} by={args.by}")
         note(args.by, f"installed helper update {proposal['digest']} ({proposal.get('git') or 'no git'}) from {here}: "
              + " ".join(f"{n}={h[:12]}" for n, h in proposal["files"].items()))
+        announce(args.by, f"INSTALLED helper update {proposal['digest']} by {args.by}. Restart a dashboard you own.")
         return code
     finally:
         unlock()
@@ -2093,4 +2114,7 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    code = main()
+    for by, message in PENDING:
+        broadcast(by, message)
+    sys.exit(code)

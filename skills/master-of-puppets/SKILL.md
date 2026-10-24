@@ -42,13 +42,13 @@ uses them. Below, `coordinator.py` means
 `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/coordinator.py"`.
 `coordinator.py install` (run from the skill copy) installs the three files
 when absent. When a live copy differs, it prints the diff and installs none:
-other sessions use them now. An update goes through the shared vote, not
-through messages:
+other sessions use them now. An update goes through the shared vote; the
+proposal and each vote also reach the other coordinators as messages:
 
 1. One coordinator runs `update propose --by <you> --text "<what changes>"`
    from the skill copy. It records the exact files and adds a machine
    decision that asks the user Install or Do not install on the dashboard.
-2. Each other coordinator sees the `update propose` event, reads the diff
+2. `update propose` messages every live coordinator (like `say`). Each one reads the diff
    (`install` without `--replace` prints it), and runs
    `update agree --by <you>` or `update object --by <you> --text "<why>"`.
 3. The user answers the machine decision. When the user approves in your own
@@ -59,7 +59,7 @@ through messages:
    granted, while a live coordinator has not agreed, or after another install,
    and it writes the file hashes to the ledger. Restart a dashboard you own.
 
-No coordinator sends AGREE, installer elections or install reports by `say`.
+`update` and `install` message every live coordinator themselves; do not send AGREE, installer elections or install reports by `say`.
 A full install also removes obsolete helpers (an old `lease.py`); never run
 one. `install` records the skill copy, and `roster`, `whoami`, `coordinate`,
 `heartbeat` and `status` then print a warning when an update is due. On that
@@ -330,8 +330,8 @@ BUILD lease", "this repo merges through a merge queue".
   or relayed as USER SYNC), record it:
   `coordinator.py memory add --by <slug> --kind rule|note --text "..." [--project-root <path>]`.
   Omit `--project-root` for a machine-wide entry. Add `--reason "<the user's words>"`.
-  The command writes the event and the ledger line, so the other coordinators
-  see it in `watch inbox`; tell your members.
+  The command writes the event and the ledger line and messages the other
+  coordinators; tell your members.
 - Change a rule and keep its ID: `coordinator.py memory update --by <slug> --id <id> --text "<full new text>" --reason "..."`.
 - Remove a rule the user withdraws: `coordinator.py memory remove --by <slug> --id <id> --reason "..." [--project-root <path>]`.
 - A rule that should hold in every project is a change to the skill itself,
