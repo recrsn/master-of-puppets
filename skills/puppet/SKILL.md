@@ -58,7 +58,7 @@ enrollment line of each such task you start. The coordinator can then put regula
 first.
 
 Send it, and every later message (UPDATE, MERGED, USER SYNC, STATUS replies,
-CHILD TASK STARTED, LEASE RELEASED, LEAVE), by the direct route
+CHILD TASK STARTED, LEASE SIZE, LEASE RELEASED, LEAVE), by the direct route
 for your coordinator's tool (`protocol.md`, "Routes"). Never use `coordinator.py say`
 and never write shared inbox records, even with `--no-direct`. When your
 session id changes, send JOIN again (`protocol.md`, "Routes").
@@ -116,21 +116,32 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
 
 1. Finish all edits first. Pick an id, `<coord>-q-<name>-<n>` (n counts your
    requests), and queue it yourself; no message is needed:
-   `puppet.py request <CLASS> --coordinator <coord> --name <name> --id <id> --minutes <estimate> --commands "<exact commands>" --worktree <worktree> [--gib <n>] [--what "<short label>"]`.
+   `puppet.py request <CLASS> --coordinator <coord> --name <name> --id <id> --minutes <estimate> --commands "<exact commands>" --worktree <worktree> [--gib <n>] [--cpus <n>] [--what "<short label>"]`.
    The classes and their scope are in WELCOME (BUILD and E2E by default).
-   **Duration.** You choose `--minutes`. Ask for the smallest time that lets
-   the whole current unit of work finish in one lease, for example the full
-   build and its tests. Do not cut a unit of work to fit a shorter time. A
-   suggested time in WELCOME is what past runs took; it is a reference, not
-   a target.
-   It prints your position. Your coordinator sees the request and grants it.
-   - Exit 2: the run is over the class limit. Split it at unit boundaries
-     (for example build, then tests) into parts that fit, and request each
-     part when the one before it is done.
+   **Size.** You observe and decide the size of your run. Look first:
+   `puppet.py sizes --worktree <worktree> --class <CLASS>` shows the
+   project's recorded run minutes, peak GiB and peak cores, and the observed
+   peaks your coordinator checks against. Add what you know of your own
+   commands (a full build or one package, tests in parallel or not).
+   - `--minutes` (always): the smallest time that lets the whole current
+     unit of work finish in one lease, for example the full build and its
+     tests. Do not cut a unit of work to fit a shorter time. A suggested time
+     in WELCOME is what past runs took; it is a reference, not a target.
+   - `--gib` and `--cpus` (when you know them): the peak memory and cores of
+     the run. Leave one out and your coordinator charges its own figure.
+   It prints your position. Your coordinator sees the request and decides.
+   - A `warning: undersized` line: your figure is below the observed peak by
+     more than the size margin, and your coordinator will refuse the grant.
+     Request again with the same id at the observed peak, or send
+     `LEASE SIZE — <id> — <why this run is smaller>`.
+   - Exit 2: the run is over the class limit or a whole budget. Split it at
+     unit boundaries (for example build, then tests) into parts that fit, and
+     request each part when the one before it is done.
    - Exit 3: refused (leases off, not a member, a foreign id, or the id is
      already held). Fix what it names; ask your coordinator when you cannot.
-   To change your request (commands, estimate), run `request` again with the
-   same id; your coordinator sees the change. You cannot set a priority or
+   To change your request (commands, size), run `request` again with the
+   same id; your coordinator sees the change. On `LEASE RESIZE`, do the same,
+   or send `LEASE SIZE` with your reason. You cannot set a priority or
    jump the queue. When the user wants your task to go first, send it as
    `USER SYNC`; the coordinator decides. To drop a queued request, ask your
    coordinator.
@@ -163,7 +174,8 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
    failure. Release:
    `puppet.py release <CLASS> --id <id> --result pass|fail|partial --note "<one line: what passed, or the first failure>" [--port <n> ...]`.
    Add `--port` for each port your E2E stack used. The command records the
-   result and counts what your run left in the worktree (`drained=<n>`); other
+   run minutes and the measured peak GiB and cores (your next sizing reads
+   them), the result, and counts what your run left in the worktree (`drained=<n>`); other
    coordinators read that record, so nobody asks you for a receipt. Then send
    `LEASE RELEASED <id> — pass|fail|partial — <raw summary>`. When the command
    prints `not drained`, stop what it lists that your run started, and say so

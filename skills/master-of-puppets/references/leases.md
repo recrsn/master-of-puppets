@@ -13,15 +13,15 @@ Classes are a machine-wide registry; any shared action can be one. The
 default registry has two:
 
 - **BUILD**: builds (including setup scripts that build), typecheck, lint,
-  format runs, tests and codegen. 10 GiB, 20 min.
+  format runs, tests and codegen. 10 GiB, 4 cores, 20 min.
 - **E2E**: starting local servers or stacks, and interacting with them. 8 GiB,
-  45 min; settles BUILD for 60 s.
+  2 cores, 45 min; settles BUILD for 60 s.
 
 Add or change one with
-`coordinator.py config set-class <NAME> --by <slug> --description "..." --default-gib <n> --max-minutes <n> [--settle OTHER=<s>]`,
+`coordinator.py config set-class <NAME> --by <slug> --description "..." --default-gib <n> --default-cpus <n> --max-minutes <n> [--settle OTHER=<s>]`,
 and cap it with `config set-machine --by <slug> --max-slots <NAME>=<n>`. A class with
-`--default-gib 0` uses no memory budget, so only its slot cap limits it. That
-fits a single resource: one Chrome window for E2E screenshots
+`--default-gib 0 --default-cpus 0` uses neither budget, so only its slot cap
+limits it. That fits a single resource: one Chrome window for E2E screenshots
 (`BROWSER`, 0 GiB, 1 slot), a shared tunnel, a test database, a device.
 `--settle OTHER=<s>` makes OTHER wait `<s>` seconds after each grant of this
 class. `config remove-class <NAME> --by <slug>` is refused while the class has holders or
@@ -41,47 +41,78 @@ Maximum length: `maxMinutes` per class from `coordinator.py config show`. Learne
 run times never lower it: a run cannot outlast the limit, so a limit learned
 from runs could only shrink. Every release records the run minutes; queue ETAs
 use the median run, and in learn mode `suggestedMinutes` (p90 of the last 10
-runs + 25%, at most `maxMinutes`) shows what past runs took. Members choose
-their own length: the smallest time that finishes the whole current unit of
-work in one lease, never a unit cut to fit the suggestion. `wait`, `acquire`
+runs + 25%, at most `maxMinutes`) shows what past runs took. `wait`, `acquire`
 and both `extend` commands refuse a longer lease with exit 2. Split a longer request: the
 first part keeps the queue place, later parts join the back of their priority.
 
+## Sizing
+
+The member observes and decides the size of each run; the coordinator decides
+whether to grant it, from rules and its own observations.
+
+- **Member.** It sizes the run from what it sees: its own past runs, the
+  commands it will run, and `puppet.py sizes --worktree <path>` (the project's
+  recorded minutes, GiB and core samples per class). `--minutes` is always its
+  call: the smallest time that finishes the whole current unit of work, never
+  a unit cut to fit the suggestion. It adds `--gib` and `--cpus` (peak memory
+  and cores) when it knows them; a figure it leaves out takes the project's
+  class peak.
+- **Coordinator.** It charges the request as asked. It does not raise or
+  lower a member's figures. It decides with:
+  - rules: the config limits (`maxMinutes`, both budgets, slot caps) and the
+    project rules in memory;
+  - observations: the peaks it measured (`measure-peak`, recorded at
+    release). `acquire` refuses (exit 6) a GiB or core figure below the
+    observed peak by more than `sizeMargin` (machine config, default 25%).
+    Only learn mode with three or more samples counts as an observation; a
+    default is not one.
+  An undersized request gets LEASE RESIZE. The member requests again with the
+  same id, or sends LEASE SIZE with why this run is smaller (for example only
+  the typecheck of a full build). When the reason fits the recorded commands,
+  grant with `acquire --accept-size`; the event line records it.
+- Minutes are not checked against observations: a short lease only costs its
+  own holder an extension or a new request.
+
 ## Adaptive capacity
 
-There is no fixed slot count. `coordinator.py acquire` admits a grant when the expected peak
-memory of all holders plus the request fits the budget:
+There is no fixed slot count. `coordinator.py acquire` admits a grant when the expected peaks
+of all holders plus the request fit both budgets:
 
 ```
-sum(held GiB) + request GiB <= total RAM - reserve
+sum(held GiB)   + request GiB   <= total RAM - reserveGiB
+sum(held cores) + request cores <= CPU cores - reserveCpus
 ```
 
-- Each project and class has a peak. Learn mode: the starting value (defaults
-  BUILD 10, E2E 8 GiB) until three measurements exist, then the maximum of
-  the last five. Fixed mode: the starting value. Pass `--worktree` to `wait`
-  so the right project's peak applies.
-- A request may carry its own estimate: `wait|acquire ... --gib <n>`.
+- A request's GiB and cores are the member's figures (`request|wait|acquire
+  ... --gib <n> --cpus <n>`). A figure it leaves out takes the project's class
+  peak. Learn mode: the starting value (defaults BUILD 10 GiB and 4 cores, E2E
+  8 GiB and 2 cores) until three measurements exist, then the maximum of the
+  last five. Fixed mode: the starting value. Pass `--worktree` to `wait` so
+  the right project's peak applies.
+- A request over a whole budget can never fit: `request` and `wait` refuse it
+  with exit 2. Split it.
 - Measure every lease: right after `acquire`, start
   `coordinator.py measure-peak --id <id> --worktree <worktree>` in the background. It sums the RSS
-  of processes whose working directory is in the worktree, writes the running
-  peak to `peaks/<id>.gib`, and exits after release. `release` records it.
-  RSS counts shared pages twice, so the figure errs high. Processes that run
-  elsewhere (a browser, a shared daemon) are not counted; pass `--peak-gib`
-  by hand when you know better.
+  and %CPU of processes whose working directory is in the worktree, writes the
+  running peaks to `peaks/<id>.gib` and `peaks/<id>.cpus`, and exits after
+  release. `release` records both. RSS counts shared pages twice, and %CPU is
+  a short decaying average, so both figures err high. Processes that run
+  elsewhere (a browser, a shared daemon) are not counted; pass `--peak-gib` or
+  `--peak-cpus` by hand when you know better.
 - Settings come from the first-run setup (`references/setup.md`): the memory
-  reserve and optional slot caps per machine
-  (`coordinator.py config set-machine --by <slug> --reserve-gib <n> --max-slots BUILD=<n>`), and
-  per project the peak mode, starting GiB and max minutes
-  (`coordinator.py config set-project --by <slug> --root <path> --class BUILD --peak learn --default-gib <n> --max-minutes <n>`).
+  and core reserve, the size margin and optional slot caps per machine
+  (`coordinator.py config set-machine --by <slug> --reserve-gib <n> --reserve-cpus <n> --size-margin <f> --max-slots BUILD=<n>`), and
+  per project the peak mode, starting GiB and cores, and max minutes
+  (`coordinator.py config set-project --by <slug> --root <path> --class BUILD --peak learn --default-gib <n> --default-cpus <n> --max-minutes <n>`).
   In fixed mode, samples are still recorded but not used.
-- `coordinator.py capacity` prints the budget, the class peaks and how many of each
+- `coordinator.py capacity` prints both budgets, the class peaks and how many of each
   class fit now. The dashboard shows the same numbers.
 
-Example: on a 24 GiB machine with a 6 GiB reserve, a 10 GiB build and an 8 GiB
-stack fill the 18 GiB budget, so the result is one of each. A 64 GiB machine
-admits more without a change.
+Example: on a 24 GiB, 10-core machine with a 6 GiB and 2-core reserve, a
+10 GiB, 4-core build and an 8 GiB, 2-core stack fill the 18 GiB budget, so
+the result is one of each. A 64 GiB machine admits more without a change.
 
-The memory budget predicts; the host check observes. Both must pass, and
+The budgets predict; the host check observes. Both must pass, and
 `acquire` checks both itself.
 
 ## Granting
@@ -94,20 +125,21 @@ The memory budget predicts; the host check observes. Both must pass, and
    `INBOX <name>: REQUEST <CLASS> <id> <holder> ...`, and a changed
    one as `REQUEST <CLASS> <id> changed ...`. Check that the
    recorded commands fit the class. If they do not, `unwait` the entry and
-   tell the member why. A request needs no reply: `request` printed its
+   tell the member why. A request that prints an undersized warning to the
+   member will refuse at `acquire` (exit 6); you may tell the member at once. A request needs no reply: `request` printed its
    position, and `await-grant` follows the queue. Reply LEASE QUEUED only when
    you change the entry (split, hold, priority). `watch inbox` shows only new
    lines, so a request made while it did not run has no message: each heartbeat
    round, `status --brief` shows it.
    To queue for a member yourself, for example the second part of a split:
-   `coordinator.py wait <CLASS> --coordinator <slug> --holder "<task> <what>" --id <slug>-q-<name>-<n> --minutes <est> --commands "<exact commands>" --worktree <path> [--gib <n>]`.
+   `coordinator.py wait <CLASS> --coordinator <slug> --holder "<task> <what>" --id <slug>-q-<name>-<n> --minutes <est> --commands "<exact commands>" --worktree <path> [--gib <n>] [--cpus <n>]`.
    To change an entry later, pass only `--id` and the fields that change.
    Start `--holder` with the task id (the dashboard matches on it, and the
    entry takes that task's priority).
 2. When that entry is the first ready one (`watch inbox` prints
    `HEAD <CLASS> <id>` for your entries), run `coordinator.py acquire ... --measure`.
    It runs the host check itself (about 25 s), then checks the queue, slot cap,
-   settle time, max minutes and memory budget again under the lock.
+   settle time, max minutes, size and both budgets again under the lock.
    `--measure` starts `measure-peak` for the lease; the granted commands come
    from the queue entry (or `--commands`) and show in `status --brief` and on
    the dashboard.
@@ -119,15 +151,18 @@ The memory budget predicts; the host check observes. Both must pass, and
      (another class's grant settles this one, for example BUILD for 60 s after
      an E2E grant), or `admission_hold` (below). Keep it queued and retry after
      that time, or on the hold's `admission clear` event.
-   - 4: the request does not fit the memory budget. Keep it queued and wait
-     for a release.
+   - 4: the request does not fit the memory or core budget (the output names
+     which). Keep it queued and wait for a release.
    - 5: the host is BUSY or free disk is below the floor. Start
      `coordinator.py calm-wait` in the background (`--settle <s>` while a
      stack starts), tell the member it waits for the host, and run `acquire`
      again on CALM.
+   - 6: undersized: a GiB or core figure is below the observed peak by more
+     than the size margin. Send LEASE RESIZE ("Sizing", above). Run `acquire
+     --accept-size` only on a LEASE SIZE reason that fits the commands.
 4. On release: the member's `puppet.py release <CLASS> --id <id> --result pass|fail|partial --note "..." [--port <n> ...]`
    writes one event line, the shared record of the release:
-   `release <CLASS> <id> ran <n> min result=<r> drained=<n> coordinator=<c> note="..."`.
+   `release <CLASS> <id> ran <n> min peak <g> GiB <c> cores result=<r> drained=<n> coordinator=<c> note="..."`.
    `drained` counts what the run left in the lease's worktree (agent session
    processes and bare shells do not count). Read it with
    `coordinator.py events --id <id>`. When `drained` is not 0, run

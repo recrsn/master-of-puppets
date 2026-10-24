@@ -15,8 +15,10 @@ One or more coordinator sessions take PR stacks to merged. Coordinators:
   the PR below merges, auto-merge, confirm the merge SHA;
 - record members, tasks and decisions in a shared roster and ledger;
 - optionally grant machine-wide leases for shared actions (builds, local
-  stacks, a single browser window, a test database). Capacity adapts to
-  measured memory peaks and run times, with swap, load and disk checks;
+  stacks, a single browser window, a test database). Members size each run
+  (minutes, memory, cores); coordinators grant against memory and core
+  budgets, refuse requests below their measured peaks, and check swap, load
+  and disk;
 - give tasks and lease queue entries a priority: all start at 0, the user's
   urgent work goes first, and a coordinator pushes back its own sweeps and
   scheduled runs while regular tasks wait;

@@ -15,12 +15,19 @@ Usage: python3 -I puppet.py <command> ...
   memory list [--project-root P] [--json]      machine rules and notes, then the project's
   inbox | ledger | events | who     the shared records, read-only (coordinator.py has the
        same commands and flags); for example events --id ID shows a lease's grant and release
+  sizes --worktree P [--class CLASS]
+       the project's recorded run minutes, peak GiB and peak cores per class, the figures
+       your coordinator charges and checks against, and the size margin: size from these
   request CLASS --coordinator C --name NAME --id ID --minutes N --commands TEXT --worktree P
-          [--gib N] [--what TEXT]
-       queue your own lease request; prints its position. The ID must start with C-q-NAME-,
+          [--gib N] [--cpus N] [--what TEXT]
+       queue your own lease request; prints its position. You size the run: --minutes always,
+       --gib and --cpus (peak memory and cores) when you know them; your coordinator charges
+       its own figure for a size you leave out. The ID must start with C-q-NAME-,
        and NAME must be a member of C. The entry takes your task's priority; only your
        coordinator or the user changes it. A repeat with the same ID changes the given fields.
-       exit 0 queued, 2 over the class limit (split the run), 3 refused: leases off, not a
+       Prints a warning when --gib or --cpus is below the observed peak by more than the
+       size margin: your coordinator then refuses the grant unless you tell it why.
+       exit 0 queued, 2 over the class limit or the whole budget (split the run), 3 refused: leases off, not a
        member of C, a foreign ID, or the ID is already held
   await-grant CLASS --id ID [--timeout-min N] [--appear-timeout S]
        prints GRANTED or NOT-GRANTED <reason>. Exit 0 granted (the only grant);
@@ -34,11 +41,12 @@ Usage: python3 -I puppet.py <command> ...
        replies LEASE EXTENDED or tells you to release.
        exit 0 asked, 2 the lease would run longer than the class limit (release it and
        request the rest), 3 refused: not a member of C, not your lease, or not held
-  release CLASS --id ID --result pass|fail|partial [--note TEXT] [--peak-gib N] [--port N ...] [--process PATTERN ...]
-       release your own lease, never another's; records its run minutes and peak, then
+  release CLASS --id ID --result pass|fail|partial [--note TEXT] [--peak-gib N] [--peak-cpus N]
+          [--port N ...] [--process PATTERN ...]
+       release your own lease, never another's; records its run minutes and peaks, then
        counts what the run left in the lease's worktree (agent session processes and bare
        shells do not count) and writes one event line:
-         release CLASS ID ran N min result=R drained=N coordinator=C note="TEXT"
+         release CLASS ID ran N min peak N GiB N cores result=R drained=N coordinator=C note="TEXT"
        That line is the record of the release: coordinators read it with `events`.
 """
 import argparse
@@ -53,7 +61,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import (
     PEAKS, SAMPLES_KEPT, MINUTES_KEPT, load_machine, registry, class_names,
-    load_project, save_project, now, lock, unlock, log, say,
+    load_project, save_project, project_key, undersized, now, lock, unlock, log, say,
     load, save, load_roster, queue_entry, extension_refusal, READS, add_read_commands, read_cmd, version_warning, drain,
 )
 
@@ -83,10 +91,13 @@ def request(args):
         queued = any(q["id"] == args.id for q in state["queue"][args.cls])
         holder = f"{args.name} {args.what or args.commands}" if args.what or not queued else None
         code, text = queue_entry(state, roster, args.cls, args.id, args.coordinator, holder, args.minutes,
-                                 args.gib, args.commands, args.worktree, by=args.name)
+                                 args.gib, args.cpus, args.commands, args.worktree, by=args.name)
         if code == 0:
             save(state, machine)
         print(text)
+        why = code == 0 and undersized(args.cls, project_key(args.worktree)[0], args.gib, args.cpus, machine["sizeMargin"])
+        if why:
+            print(f"warning: {why}")
         return code
     finally:
         unlock()
@@ -148,6 +159,14 @@ def extend(args):
     return 0
 
 
+def read_peak(path):
+    """A measure-peak figure, or None when the file is missing or unreadable."""
+    try:
+        return float(open(path).read().strip())
+    except (OSError, ValueError):
+        return None
+
+
 def release(args):
     """Release the caller's own lease: record its run minutes and measured peak, then
     check what the run left in its worktree (after the lock: the check scans every
@@ -160,27 +179,28 @@ def release(args):
         if not any(h["id"] == args.id for h in holders):
             print(f"{args.cls} not held by {args.id}: {json.dumps(holders)}")
             return 3
-        peak = args.peak_gib
-        peak_file = os.path.join(PEAKS, f"{args.id}.gib")
-        if peak is None and os.path.exists(peak_file):
-            try:
-                peak = float(open(peak_file).read().strip())
-            except ValueError:
-                peak = None
+        peak, cores = args.peak_gib, args.peak_cpus
+        files = [os.path.join(PEAKS, f"{args.id}.{ext}") for ext in ("gib", "cpus")]
+        if peak is None:
+            peak = read_peak(files[0])
+        if cores is None:
+            cores = read_peak(files[1])
         held = next(h for h in holders if h["id"] == args.id)
         key = held["project"]
         ran = round((now() - dt.datetime.fromisoformat(held["grantedAt"])).total_seconds() / 60, 1)
         if key:
             proj = load_project(key, held.get("worktree"))
             c = proj["classes"][args.cls]
-            if peak:
-                c["samples"].append(round(peak, 1))
-                del c["samples"][:-SAMPLES_KEPT]
+            for field, value in (("samples", peak), ("cpuSamples", cores)):
+                if value:
+                    c[field].append(round(value, 1))
+                    del c[field][:-SAMPLES_KEPT]
             c["runMinutes"].append(ran)
             del c["runMinutes"][:-MINUTES_KEPT]
             save_project(proj)
-        if os.path.exists(peak_file):
-            os.remove(peak_file)
+        for path in files:
+            if os.path.exists(path):
+                os.remove(path)
         state[args.cls] = [h for h in holders if h["id"] != args.id]
         save(state, machine)
     finally:
@@ -188,7 +208,8 @@ def release(args):
     left = drain(held["worktree"], args.port or [], args.process or []) if held.get("worktree") else []
     for line in left:
         print(f"  {line}")
-    log(f"release {args.cls} {args.id} ran {ran} min" + (f" peak {round(peak, 1)} GiB" if peak else "")
+    peaks = [f"{round(v, 1)} {unit}" for v, unit in ((peak, "GiB"), (cores, "cores")) if v]
+    log(f"release {args.cls} {args.id} ran {ran} min" + (f" peak {' '.join(peaks)}" if peaks else "")
         + f" result={args.result} drained={len(left)} coordinator={held['coordinator']}"
         + (f" note={json.dumps(args.note)}" if args.note else ""))
     print(f"released {args.cls} {args.id} ({args.result}); {'drained' if not left else 'not drained'}: {len(left)} left in {held.get('worktree')}")
@@ -207,7 +228,8 @@ def main():
     rq.add_argument("--minutes", type=int, required=True, help="your estimate")
     rq.add_argument("--commands", required=True, help="the exact commands the lease would cover")
     rq.add_argument("--worktree", required=True, help="sets the project whose class peak applies")
-    rq.add_argument("--gib", type=float, help="expected peak GiB, if known")
+    rq.add_argument("--gib", type=float, help="expected peak GiB; omit to let your coordinator charge its own figure")
+    rq.add_argument("--cpus", type=float, help="expected peak cores; omit to let your coordinator charge its own figure")
     rq.add_argument("--what", help="short label for the dashboard; default: the commands")
     ag = sub.add_parser("await-grant")
     ag.add_argument("cls", metavar="CLASS")
@@ -226,6 +248,7 @@ def main():
     r.add_argument("cls", metavar="CLASS")
     r.add_argument("--id", required=True)
     r.add_argument("--peak-gib", type=float, help="measured peak; default: peaks/<id>.gib from measure-peak")
+    r.add_argument("--peak-cpus", type=float, help="measured peak cores; default: peaks/<id>.cpus from measure-peak")
     r.add_argument("--result", required=True, choices=("pass", "fail", "partial"), help="the outcome of the granted commands")
     r.add_argument("--note", help="one short line, for example 'pushed #123' or the first failure")
     r.add_argument("--port", type=int, action="append", help="also check for listeners on this port (E2E)")

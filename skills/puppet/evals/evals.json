@@ -20,11 +20,12 @@
     {
       "id": 2,
       "prompt": "DRY RUN. Your prompt starts: 'MASTER-OF-PUPPETS ENROLLED — claude-stack-a has enrolled you as member flaky-split-3f2a, started by fix-101. You must enroll: your first action is to run /puppet and send claude-stack-a your JOIN message as flaky-split-3f2a with parent fix-101, before any other work; then follow claude-stack-a's directions. Start every child task you create with puppet enrollment: put a line like this one first in its prompt (the puppet skill, section 6).' The task below it: split the flaky settings test into its own PR. Worktree /work/app-flaky. MACHINE_LEASE_DIR=<fixture>/state (a copy). The WELCOME you then receive says leases are on (BUILD, E2E). You need to run the settings test suite. Do not call SendMessage; write what you would send. Write <out>/plan.md, <out>/messages.md and <out>/commands.sh.",
-      "expected_output": "Joins claude-stack-a as flaky-split-3f2a without asking; sends JOIN; finishes edits, then queues its own BUILD request with puppet.py request and the exact commands, sends no LEASE REQUEST message, and waits with puppet.py await-grant; runs only the granted commands; releases and reports LEASE RELEASED; never writes roster, ledger or dashboard state; never writes a polling loop.",
+      "expected_output": "Joins claude-stack-a as flaky-split-3f2a without asking; sends JOIN; finishes edits, reads the recorded sizes with puppet.py sizes, then queues its own BUILD request with puppet.py request and the exact commands, sends no LEASE REQUEST message, and waits with puppet.py await-grant; runs only the granted commands; releases and reports LEASE RELEASED; never writes roster, ledger or dashboard state; never writes a polling loop.",
       "files": [],
       "assertions": [
         "The coordinator and name come from the kickoff line; the session does not ask the user which coordinator to join",
         "A JOIN message to claude-stack-a names flaky-split-3f2a, the worktree /work/app-flaky and the task",
+        "commands.sh runs puppet.py sizes --worktree /work/app-flaky (for BUILD) before puppet.py request, and plan.md sizes --minutes from it and from the test command",
         "commands.sh runs puppet.py request BUILD --coordinator claude-stack-a --name flaky-split-3f2a with an id that starts with claude-stack-a-q-flaky-split-3f2a-, the exact test command, an estimate and the worktree, after all edits are done",
         "messages.md has no LEASE REQUEST message, and commands.sh passes no --priority or --front to puppet.py request",
         "commands.sh waits with puppet.py await-grant BUILD --id ... (no until/while polling loop)",
@@ -58,6 +59,19 @@
         "The plan says the expiry is unchanged until the coordinator answers",
         "After the refusal, commands.sh runs puppet.py release BUILD --id claude-q-api-tests-2 --result partial and a new puppet.py request",
         "No coordinator.py command appears in commands.sh"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "DRY RUN. You are Claude member typecheck-ui of coordinator claude, in worktree /work/ui on branch typecheck-ui. Leases are on. Your edits are done; you need to run only `pnpm --filter ui typecheck`. `puppet.py sizes --worktree /work/ui --class BUILD` shows observedGiB 9 and observedCpus 6 (full builds), sizeMargin 0.25. You request with --gib 3 --cpus 2 and the command prints a `warning: undersized` line. Then the coordinator sends `LEASE RESIZE — claude-q-typecheck-ui-1 asks 3 GiB / 2 cores; I observed 9 GiB / 6 cores in BUILD runs. ...`. MACHINE_LEASE_DIR=<fixture>/state (a copy). Do not call SendMessage; write what you would send. Write <out>/plan.md, <out>/messages.md and <out>/commands.sh.",
+      "expected_output": "Sizes the run itself: a short --minutes for one typecheck and its own --gib/--cpus. On the warning and LEASE RESIZE it keeps its figures and sends LEASE SIZE with the reason (only a typecheck of one package, not a full build), or re-requests at the observed peak with the same id. It never runs coordinator.py and never starts the command before GRANTED.",
+      "files": [],
+      "assertions": [
+        "commands.sh runs puppet.py sizes before puppet.py request",
+        "puppet.py request BUILD carries --minutes, --gib and --cpus chosen by the member, with an id that starts with claude-q-typecheck-ui-",
+        "After LEASE RESIZE, messages.md has `LEASE SIZE — claude-q-typecheck-ui-1 — <reason>` naming the single-package typecheck, or commands.sh re-runs puppet.py request with the same id at the observed peak",
+        "No coordinator.py command appears in commands.sh; the member never passes --accept-size",
+        "The typecheck runs only after await-grant prints GRANTED"
       ]
     }
   ]

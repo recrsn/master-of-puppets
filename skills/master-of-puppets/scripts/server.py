@@ -45,8 +45,8 @@ import urllib.request
 
 DIR = os.path.expanduser(os.environ.get("MACHINE_LEASE_DIR") or "~/.local/state/machine-leases")
 DEFAULT_REGISTRY = {
-    "BUILD": {"description": "builds, typecheck, lint/format, tests, codegen", "defaultGiB": 10, "maxMinutes": 20, "settle": {}},
-    "E2E": {"description": "local servers/stacks and interacting with them", "defaultGiB": 8, "maxMinutes": 45, "settle": {"BUILD": 60}},
+    "BUILD": {"description": "builds, typecheck, lint/format, tests, codegen", "defaultGiB": 10, "defaultCpus": 4, "maxMinutes": 20, "settle": {}},
+    "E2E": {"description": "local servers/stacks and interacting with them", "defaultGiB": 8, "defaultCpus": 2, "maxMinutes": 45, "settle": {"BUILD": 60}},
 }
 LIVE_MINUTES = 40
 FORCE_EVERY = 30
@@ -632,7 +632,7 @@ def render_page(host):
                 end = parse(h["expiresAt"])
                 left = int((end - now).total_seconds() // 60)
                 dur, color = (("expired", "danger") if left < 0 else (f"{left}m left", "t2"))
-                out.append(("▸", h, dur, color, f'{fmt(h.get("gib"))} GiB · {eta_text(cls, h["id"])}', h.get("commands", ""), ""))
+                out.append(("▸", h, dur, color, f'{fmt(h.get("gib"))} GiB · {fmt(h.get("cpus"))} cores · {eta_text(cls, h["id"])}', h.get("commands", ""), ""))
             pos = 0
             for q in queue.get(cls, []):
                 pos += 0 if q.get("hold") else 1
@@ -647,7 +647,8 @@ def render_page(host):
             text, color = lane_status(cls)
             cap = capacity.get(cls)
             desc = (f'{registry[cls].get("description", "")} · capacity {cap if cap is not None else "∞"}'
-                    f' · peak ~{fmt((budget.get("peakGiB") or {}).get(cls))} GiB')
+                    f' · peak ~{fmt((budget.get("peakGiB") or {}).get(cls))} GiB'
+                    f' · ~{fmt((budget.get("peakCpus") or {}).get(cls))} cores')
             entries = lane_entries(cls)
             rows = "".join(
                 f'<details class="row q" id="{dom_id("q", cls, h["id"])}"><summary class="row-h"><span class="q-pos">{pos}</span>'
@@ -666,7 +667,8 @@ def render_page(host):
             wall_lanes += f'<div class="lane"><div class="lane-h"><b>{e(cls)}</b><span class="{color}">{e(text)}</span></div>{wall_rows}</div>'
         lease_panel = (
             f'<section class="sec leases" id="leases"><div class="sec-h"><h2>Leases</h2>'
-            f'<span class="n">{fmt(budget.get("freeGiB"))} of {fmt(budget.get("limitGiB"))} GiB free</span></div>{desk_lanes}</section>'
+            f'<span class="n">{fmt(budget.get("freeGiB"))} of {fmt(budget.get("limitGiB"))} GiB · '
+            f'{fmt(budget.get("freeCpus"))} of {fmt(budget.get("limitCpus"))} cores free</span></div>{desk_lanes}</section>'
         )
         wall_leases = f'<section class="w-leases"><span class="wl">Leases</span>{wall_lanes}</section>'
 
