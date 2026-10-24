@@ -124,8 +124,11 @@ show who, why and each changed key with its old and new value)
        Without --project-root it sets the machine class; with it, that project's class (which
        wins over the machine class). Every live peer gets CLASS DEFAULTS PROPOSED.
   config agree --by C --id ID | config object --by C --id ID --text TEXT | config proposals
-       a proposal applies when every live coordinator agrees (the event and ledger record
-       it, and every live coordinator and member gets CONFIG); one objection closes it
+       coordinators decide these without the user. A proposal applies when every live
+       coordinator agrees, or 30 min after it was made with no objection (a live coordinator
+       that has not voted agrees); the event and ledger record it, and every live coordinator
+       and member gets CONFIG. One objection closes it. proposals lists open proposals and
+       applies those that are due; run it each heartbeat round
        project: --name --base-branch --merge-method merge|squash|rebase|auto --leases-default
                 [--class CLASS --max-minutes N --minutes learn|fixed --peak learn|fixed --default-gib N
                  --default-cpus N]
@@ -325,6 +328,7 @@ def record_config(by, reason, what, old, new):
 
 PROPOSALS = os.path.join(DIR, "class-proposals.json")
 VOTED = (("default_gib", "defaultGiB"), ("default_cpus", "defaultCpus"), ("max_minutes", "maxMinutes"))
+VOTE_WINDOW_MINUTES = 30  # two heartbeat rounds: a live coordinator that has not voted by then agrees
 
 
 def apply_class_defaults(p):
@@ -345,18 +349,38 @@ def apply_class_defaults(p):
     return before, raw
 
 
+def settle_proposal(p, roster, by):
+    """Apply open proposal p when every live coordinator agrees, or when VOTE_WINDOW_MINUTES
+    have passed with no objection (silence agrees). Returns the live coordinators still
+    waited for."""
+    waiting = [n for n, c in roster["coordinators"].items() if live(c) and p["votes"].get(n, {}).get("vote") != "agree"]
+    due = now() - dt.datetime.fromisoformat(p["at"]) >= dt.timedelta(minutes=VOTE_WINDOW_MINUTES)
+    if p["status"] != "open" or (waiting and not due):
+        return waiting
+    before, after = apply_class_defaults(p)
+    p["status"], p["appliedAt"] = "applied", now().isoformat()
+    p["silent"] = waiting
+    what = f"class {p['class']}" + (f" project {p['project']}" if p["project"] else "")
+    how = f"vote {p['id']}" + (f", silent after {VOTE_WINDOW_MINUTES} min: {', '.join(waiting)}" if waiting else "")
+    record_config(by, f"{how}: {p['reason']}", what, before, after)
+    announce(by, f"CONFIG {what} defaults {json.dumps(p['values'])} applied by {how}", members=True)
+    return []
+
+
 def class_vote_cmd(args):
     """propose, agree, object and proposals: class defaults (GiB, cores, max minutes) that
-    coordinators set from their observations. A proposal applies when every live
-    coordinator agrees; one objection closes it. The caller holds the lock."""
+    coordinators set from their observations, without the user. A proposal applies when
+    every live coordinator agrees, or after VOTE_WINDOW_MINUTES with no objection; one
+    objection closes it. proposals also applies those that are due. The caller holds the lock."""
     data = read_json(PROPOSALS) or {"proposals": []}
     roster = load_roster()
     if args.ccmd == "proposals":
         for p in data["proposals"]:
             if p["status"] == "open":
-                waiting = [n for n, c in roster["coordinators"].items() if live(c) and p["votes"].get(n, {}).get("vote") != "agree"]
+                waiting = settle_proposal(p, roster, p["by"])
                 print(f"{p['id']} {p['class']} {p['project'] or 'machine'} {json.dumps(p['values'])} by {p['by']}"
-                      f" · observations: {p['reason']} · waiting: {', '.join(waiting) or 'none'}")
+                      f" · observations: {p['reason']} · " + (f"waiting: {', '.join(waiting)}" if p["status"] == "open" else "applied"))
+        write_json(PROPOSALS, data)
         return 0
     if not live(roster["coordinators"].get(args.by)):
         print(f"{args.by} is not a live coordinator")
@@ -380,7 +404,8 @@ def class_vote_cmd(args):
         log(f"class-propose {p['id']} {args.name} {key or 'machine'} {json.dumps(values, separators=(',', ':'))} by={args.by}")
         announce(args.by, f"CLASS DEFAULTS PROPOSED {p['id']} by {args.by}: {args.name} ({key or 'machine'}) {json.dumps(values)}. "
                  f"Observations: {args.reason}. Check your own (sizes, capacity, events), then config agree --id {p['id']} "
-                 f"or config object --id {p['id']} --text.")
+                 f"or config object --id {p['id']} --text. Do not ask the user. With no objection it applies in "
+                 f"{VOTE_WINDOW_MINUTES} min.")
     else:
         p = next((x for x in data["proposals"] if x["id"] == args.id), None)
         if not p or p["status"] != "open":
@@ -391,13 +416,7 @@ def class_vote_cmd(args):
         if args.ccmd == "object":
             p["status"] = "rejected"
             announce(args.by, f"CLASS DEFAULTS {p['id']}: {args.by} objects — {args.text}. Closed; propose again with new observations.")
-    waiting = [n for n, c in roster["coordinators"].items() if live(c) and p["votes"].get(n, {}).get("vote") != "agree"]
-    if p["status"] == "open" and not waiting:
-        before, after = apply_class_defaults(p)
-        p["status"], p["appliedAt"] = "applied", now().isoformat()
-        what = f"class {p['class']}" + (f" project {p['project']}" if p["project"] else "")
-        record_config(args.by, f"vote {p['id']}: {p['reason']}", what, before, after)
-        announce(args.by, f"CONFIG {what} defaults {json.dumps(p['values'])} applied by vote {p['id']}", members=True)
+    waiting = settle_proposal(p, roster, args.by)
     write_json(PROPOSALS, data)
     print(f"{p['id']} {p['status']}" + (f"; waiting for {', '.join(waiting)}" if p["status"] == "open" else ""))
     return 0

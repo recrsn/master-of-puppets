@@ -84,8 +84,9 @@ whether to grant it, from rules and its own observations.
 
 ## Class defaults by vote
 
-Coordinators observe and vote on each class's default GiB, cores and max
-minutes. Observe with `coordinator.py sizes --worktree <path>`, `capacity` and
+Class defaults are the coordinators' job, never the user's: do not ask the
+user, and do not add a dashboard decision about them. Coordinators observe and
+vote on each class's default GiB, cores and max minutes. Observe with `coordinator.py sizes --worktree <path>`, `capacity` and
 the release lines in `events`. When the observations support a value
 (for example BUILD runs peak at 4 cores, or never run past 15 min):
 
@@ -98,11 +99,26 @@ class, which wins over the machine class. Every live peer gets `CLASS
 DEFAULTS PROPOSED <id> ...` in `watch inbox`. Check your own observations of
 that class, then `config agree --by <slug> --id <id>`, or `config object --by
 <slug> --id <id> --text "<what you observed>"`. The proposal applies when every
-live coordinator agrees; one objection closes it, and the proposer may propose
-again with new observations. The applying command records the change and
-sends CONFIG to every live coordinator and member. `config proposals` lists
-open proposals and who has not agreed. Use 0 to remove a limit. The user's
-word still goes through `set-class` and `set-project` directly.
+live coordinator agrees, or 30 minutes after it was made with no objection: a
+live coordinator that has not voted by then agrees. One objection closes it,
+and the proposer may propose again with new observations. The applying
+command records the change and sends CONFIG to every live coordinator and
+member. `config proposals` lists open proposals and who has not agreed, and
+applies those that are due.
+
+Each heartbeat round ("Heartbeat round" in SKILL.md, step 4):
+
+1. `coordinator.py config proposals`: vote on each open proposal you have not
+   voted on, from your own observations. Object only when your observations
+   contradict the value, and say what you saw.
+2. `coordinator.py sizes --worktree <path>` for each project you lease in:
+   propose a value when your observations support it and the class default
+   differs, for example observed core peaks around 4 while `defaultCpus` is
+   0. Propose cores and GiB from observed peaks. Propose a max-minutes value
+   only from runs that finished, never below the longest recent run.
+
+Use 0 to remove a limit. When the user names a value without being asked, set
+it directly with `set-class` or `set-project`.
 
 ## Adaptive capacity
 

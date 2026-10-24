@@ -10,7 +10,7 @@ the user asks to reconfigure.
 | Scope | File | Reused | Settings |
 | --- | --- | --- | --- |
 | Machine | `$DIR/config.json` | All projects on this machine | memory and core reserve, size margin, disk alarm, pressure gate, dashboard port, optional slot caps |
-| Project | `$DIR/projects/<key>.json` | All worktrees of one repository | base branch, merge method, leases default, per class: max lease minutes, peak mode, starting GiB and cores |
+| Project | `$DIR/projects/<key>.json` | All worktrees of one repository | base branch, merge method, leases default, per class: learn mode (class values come from coordinator votes) |
 
 Nothing is written into the repository. Every limit is a config number that
 `coordinator.py` enforces. When the user later changes a limit, change it here
@@ -70,36 +70,25 @@ tunnel), add each with `coordinator.py config set-class` (`references/leases.md`
 
 ## 3. Project questions (only when `project` is unconfigured)
 
-Ask these four questions:
+Ask these two questions. Do not ask about class peaks, cores or lease time
+limits: they start at 0 (no limit), and coordinators set them from their
+observations without the user (`references/leases.md`, "Class defaults by
+vote").
 
-1. **Peaks** (header "Peaks"): Learn: start at BUILD 10 GiB and 4 cores, E2E
-   8 GiB and 2 cores, then measure each lease with `coordinator.py measure-peak`
-   (Recommended). Fixed at those values. Learn from smaller starting values
-   (BUILD 6 GiB and 2 cores, E2E 4 GiB and 1 core): the class default is a
-   floor until three samples exist, so a low start admits more early on. No
-   limit: 0 GiB and 0 cores, so only what members ask for is charged until
-   coordinators vote values in (`references/leases.md`, "Class defaults by
-   vote").
-2. **Lease time limits** (header "Max time"): BUILD 20 / E2E 45 min with
-   learned suggestions (Recommended). No limit (0) until coordinators vote
-   one. Fixed short: 10 and 30. Fixed long: 30 and 60. Longer runs are split. The limit is always
-   the chosen value. Learn mode adds a suggested time, p90 of the last 10
-   runs + 25% (at least 5 min), for reference; it never lowers the limit, and
-   members still choose their own length.
-3. **Merge setup** (header "Merging"): the detected default branch with the
+1. **Merge setup** (header "Merging"): the detected default branch with the
    allowed merge method (Recommended), for example "main + squash
    (detected)". When the repository uses a merge queue or a required default
    method, offer "main + merge queue / repository default" (`auto`). Add the
    other allowed methods as options.
-4. **Leases in this project** (header "Leases"): Off until the host swaps
+2. **Leases in this project** (header "Leases"): Off until the host swaps
    (Recommended), or On from the start.
 
-Then run, one call per class for class settings:
+Then run (learn mode records peaks and run times, the evidence for votes):
 
 ```bash
 coordinator.py config set-project --by <slug> --root "$PWD" --name "<repo>" --base-branch <b> --merge-method <m> --leases-default <on|off>
-coordinator.py config set-project --by <slug> --root "$PWD" --class BUILD --max-minutes <n> --minutes <learn|fixed> --peak <learn|fixed> --default-gib <n> --default-cpus <n>
-coordinator.py config set-project --by <slug> --root "$PWD" --class E2E --max-minutes <n> --minutes <learn|fixed> --peak <learn|fixed> --default-gib <n> --default-cpus <n>
+coordinator.py config set-project --by <slug> --root "$PWD" --class BUILD --minutes learn --peak learn
+coordinator.py config set-project --by <slug> --root "$PWD" --class E2E --minutes learn --peak learn
 ```
 
 ## 4. Confirm
