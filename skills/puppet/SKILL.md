@@ -139,9 +139,14 @@ never by a relay.
    clean up owned resources, release promptly and report the raw failure;
    repair; request again with a new id.
 4. For E2E, stop the servers you started before releasing, including on
-   failure. Release: `puppet.py release <CLASS> --id <id>`, then
-   `LEASE RELEASED <id> — pass|fail — <raw summary>`. Report any cleanup
-   failure so the coordinator can keep the next E2E grant blocked.
+   failure. Release:
+   `puppet.py release <CLASS> --id <id> --result pass|fail|partial --note "<one line: what passed, or the first failure>" [--port <n> ...]`.
+   Add `--port` for each port your E2E stack used. The command records the
+   result and counts what your run left in the worktree (`drained=<n>`); other
+   coordinators read that record, so nobody asks you for a receipt. Then send
+   `LEASE RELEASED <id> — pass|fail|partial — <raw summary>`. When the command
+   prints `not drained`, stop what it lists that your run started, and say so
+   in the message, so the coordinator can keep the next E2E grant blocked.
 5. Project rules in WELCOME (from the coordinator's memory) can widen what
    needs a lease, for example a commit whose hooks run lint. Follow them.
 6. What needs no lease: `leases.md`, "Classes", in the coordinator skill.

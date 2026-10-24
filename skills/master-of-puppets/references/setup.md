@@ -14,8 +14,8 @@ the user asks to reconfigure.
 
 Nothing is written into the repository. Every limit is a config number that
 `coordinator.py` enforces. When the user later changes a limit, change it here
-with `config set-machine`, `set-class` or `set-project`, never with
-`memory add`.
+with `config set-machine`, `set-class` or `set-project` (each with `--by <slug>`
+and an optional `--reason`), never with `memory add`.
 
 Ask the question groups below with the agent's question tool
 (`agents.md`, "Ask setup questions"). Wait for required choices before
@@ -56,7 +56,7 @@ first and add "(Recommended)" to its label.
 Then run:
 
 ```bash
-coordinator.py config set-machine --reserve-gib <n> --disk-floor-gib <n> --disk-alarm-gib <n> --max-swapouts <n> --swap-interval-s 12 --load-per-core <k> --dashboard-port 4720 [--max-slots BUILD=1 --max-slots E2E=1]
+coordinator.py config set-machine --by <slug> --reserve-gib <n> --disk-floor-gib <n> --disk-alarm-gib <n> --max-swapouts <n> --swap-interval-s 12 --load-per-core <k> --dashboard-port 4720 [--max-slots BUILD=1 --max-slots E2E=1]
 ```
 
 If the user names other shared actions (one browser window, a test database, a
@@ -86,9 +86,9 @@ Ask these four questions:
 Then run, one call per class for class settings:
 
 ```bash
-coordinator.py config set-project --root "$PWD" --name "<repo>" --base-branch <b> --merge-method <m> --leases-default <on|off>
-coordinator.py config set-project --root "$PWD" --class BUILD --max-minutes <n> --minutes <learn|fixed> --peak <learn|fixed> --default-gib <n>
-coordinator.py config set-project --root "$PWD" --class E2E --max-minutes <n> --minutes <learn|fixed> --peak <learn|fixed> --default-gib <n>
+coordinator.py config set-project --by <slug> --root "$PWD" --name "<repo>" --base-branch <b> --merge-method <m> --leases-default <on|off>
+coordinator.py config set-project --by <slug> --root "$PWD" --class BUILD --max-minutes <n> --minutes <learn|fixed> --peak <learn|fixed> --default-gib <n>
+coordinator.py config set-project --by <slug> --root "$PWD" --class E2E --max-minutes <n> --minutes <learn|fixed> --peak <learn|fixed> --default-gib <n>
 ```
 
 ## 4. Confirm

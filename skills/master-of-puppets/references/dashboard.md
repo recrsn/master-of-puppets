@@ -18,7 +18,7 @@ live-update script). It follows the system light or dark theme.
 
 Layout, desk mode: the header shows CPU, memory, swap and disk meters, a
 Desk/Wall switch and a Ledger button. "Needs you" comes first, worst first:
-host alarms, expired leases, stale coordinators, decisions, blocked tasks and
+host alarms, expired leases, admission holds, stale coordinators, decisions, blocked tasks and
 members with no update for 30 min. One card per task holds all its reasons,
 with a chip for its stream. Then the work board groups the other tasks by
 stream (open streams in roster order, then "No stream"), and by state inside
@@ -50,6 +50,12 @@ records the answer, and the coordinator gets a message from "dashboard" with
 the answer and the question. Only the option number crosses the post; the
 answer text comes from the state file. A decision without options has no
 buttons.
+
+A machine-scope decision (`decision add --scope machine`) lives in
+`dashboard/machine-state.json` and shows under the name "machine". Its answer
+counts for every coordinator, and every live coordinator gets the message.
+`update propose` adds one for each helper update; its answer is the user's
+approval or rejection that `install --replace` reads.
 
 Each queued lease entry has Move up and Cancel buttons (Cancel asks first).
 They run `coordinator.py up|unwait --notify`, which tells each affected coordinator

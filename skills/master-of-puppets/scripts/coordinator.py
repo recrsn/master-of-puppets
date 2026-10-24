@@ -74,6 +74,9 @@ Leases
        this one), 4 over the memory budget, 5 host BUSY or disk below the floor.
        --commands records the granted scope; --measure starts measure-peak itself.
        The holder releases with puppet.py release.
+  admission hold CLASS --by C --reason TEXT | admission clear CLASS --by C [--reason TEXT]
+       no grant of CLASS while a hold is set (acquire exits 3 with its reason), for example
+       while a failed run's cleanup is uncertain; status --brief and the dashboard show it
   unwait | hold | ready CLASS --id ID
   up CLASS --id ID                move a ready entry ahead of the ready entry in front of it;
                                   it takes that entry's priority when that is higher
@@ -86,8 +89,12 @@ Leases
   calm-wait [--settle S] [--retry S]           one CALM line when the host is calm
   measure-peak --id ID --worktree P [--interval S]   run in the background after acquire
   drain-check --worktree P [--port N ...] [--process PATTERN ...]   exit 0 when nothing is left; never kills
+       agent session processes (claude, codex, their direct non-shell children, the
+       caller's own ancestors and process group) and bare shells do not count. puppet.py release runs the
+       same check and writes result= and drained= on its event line
 
-Config
+Config (every set and remove takes --by C [--reason TEXT]; the event and ledger line
+show who, why and each changed key with its old and new value)
   config show [--project-root P] | set-machine ... | set-project --root P ... | project-key P
        machine: --reserve-gib --disk-floor-gib --disk-alarm-gib --max-swapouts --swap-interval-s
                 --load-per-core --dashboard-port --max-slots CLASS=N (N=0 removes the cap)
@@ -128,30 +135,52 @@ Roster and members (coordinators write; members send messages, and request and r
        --session the row links to the session from --tool and --session-id; without
        --repo, PR links use the worktree's GitHub origin (a warning when there is none)
   member remove --coordinator C --name NAME
+  member transfer --coordinator C --name NAME --to C2 [--note PATH] | --cancel
+  member accept --coordinator C2 --name NAME --from C
+       transfer offers a member to live coordinator C2; C2's watch inbox prints TRANSFER.
+       accept moves it in one locked write: the roster entry and its pending children,
+       its queued and held lease entries (their coordinator field), its PRs and its row
   member stale --coordinator C [--minutes 30]   members (not done) with no update for N minutes
   park --coordinator C --name MEMBER [--until YYYY-MM-DD] [--notify]
   unpark --coordinator C --name MEMBER [--notify]
        park sets the member to paused; the task leaves Needs you and returns there as
        "Revisit" after --until. The dashboard's Park/Unpark buttons use --notify.
-  decision add --by C --text TEXT [--task ID] [--href URL] [--option TEXT ...]
+  decision add --by C --text TEXT [--task ID] [--href URL] [--option TEXT ...] [--scope machine]
        prints the decision id. Each --option (at most 4, 60 characters each) is a
-       suggested answer: the dashboard shows it as a button on the decision
+       suggested answer: the dashboard shows it as a button on the decision.
+       --scope machine: one question for every coordinator (dashboard/machine-state.json);
+       its answer (decision answer --by machine) is the user's own answer for each of
+       them, and --notify tells every live coordinator
   decision answer --by C --id ID --choice N [--notify]
        the user's answer, option N (from 1): clears the decision and notes it in the
        ledger. The dashboard's option buttons use --notify, so C gets the answer
-  decision clear --by C (--task ID | --all)
+  decision clear --by C (--task ID | --all) [--scope machine]
   note --by C --text TEXT [--pr N]   shared ledger
 
 Memory (the skill's own memory; coordinators write it, everyone reads it)
-  memory add --by NAME --text TEXT [--kind rule|note] [--project-root P]
+  memory add --by NAME --text TEXT [--kind rule|note] [--project-root P] [--reason TEXT]
+  memory update --by NAME --id ID --text TEXT [--kind rule|note] [--project-root P] [--reason TEXT]
+       replaces the text and keeps the ID
   memory list [--project-root P] [--json]      machine entries, then the project's
-  memory remove --id ID [--project-root P]
+  memory remove --by NAME --id ID [--project-root P] [--reason TEXT]
+       each change logs an event (by=, reason=) and a ledger line with the old and new text
        Stored on this machine, in the state dir, never in a repository.
        Machine scope: memory/machine.json. Project scope (with --project-root):
        memory/<project-key>.json, shared by every worktree of the repository.
        Project-specific rules (for example which git hooks need a lease) live here,
        not in the skill text. Limits (GiB, slots, minutes, disk, swap, load) do not:
        they are config numbers.
+
+Shared records (read-only; puppet.py has them too)
+  inbox [--from C] [--to C] | ledger [--by C] [--pr N] | events [--id ID] [--class CLASS] [--coordinator C]
+       each with [--since ISO|90s|30m|2h|1d] [--grep TEXT] [-n N (default 20, 0 all)] [--json].
+       inbox --to C: messages C receives (to C or to all). events --coordinator C: C's
+       grants, queue entries, lease IDs and actions. Use these, not tail, grep or jq.
+  who --pr N | --worktree P | --repo owner/repo | --text TEXT
+       the coordinators, members, streams, watch lists and leases that match; exit 3: no owner
+  prs --path GLOB [--path ...] [--repo owner/repo]
+       open PRs of members and prs-<C>.txt watch lists whose changed files match (a glob
+       or a directory prefix), with their owners; --repo also covers coordinator PRs
 
 Peer-coordinator messaging
   say --from NAME --message TEXT [--to NAME] [--no-direct]
@@ -164,14 +193,27 @@ Peer-coordinator messaging
 
 Watchers and install
   watch inbox --me C | watch expiry | watch prs --me C [--interval S] | watch cloud --me C [--interval S]
-       Monitor sources. watch cloud reads cloud-<C>.txt (a CodeRabbit cloud task id or URL,
+       Monitor sources. watch inbox prints INBOX messages and EVENT lines of others, and:
+         HEAD CLASS ID ...      an entry of C became the first ready entry: acquire it
+         PRIORITY CLASS ID N by=X   another coordinator or the dashboard changed its priority
+         TRANSFER NAME ...      another coordinator offers C a member: member accept
+       watch expiry prints each expired lease once, with left=N processes in its worktree.
+       watch cloud reads cloud-<C>.txt (a CodeRabbit cloud task id or URL,
        then the member name, per line) and prints each task's state change from
        `coderabbit code show --agent`
-  install [--replace]         copy moplib.py, coordinator.py and puppet.py into the state dir when absent.
-       A live copy that differs stops the install (all or nothing) unless --replace, which only
-       follows the agreement of the other coordinators and the user. A full install removes
-       obsolete helpers (lease.py). Each run records this skill copy in source.json; roster,
-       whoami, coordinate, heartbeat and status then warn on stderr when an update is due
+  install [--replace --by C]  copy moplib.py, coordinator.py and puppet.py into the state dir when absent.
+       A live copy that differs stops the install (all or nothing). --replace installs only
+       the proposed update of exactly these files, once the user approved it and every live
+       coordinator agreed, while no lease is granted; it holds the state lock, so it is the
+       only install, and it writes the file hashes to the ledger (no message needed). A full
+       install removes obsolete helpers (lease.py). Each run except a refused --replace
+       records this skill copy in source.json; roster, whoami, coordinate, heartbeat and
+       status then warn on stderr when an update is due
+  update propose --by C [--text TEXT]   from the skill copy: records the update (file hashes)
+       with C's vote and adds a machine decision that asks the user Install / Do not install
+  update agree --by C [--text TEXT] | update object --by C --text TEXT
+  update approve --by C --quote TEXT    the user's own words in C's session approve it
+  update status                         votes, approval, blockers; exit 0 ready, 3 not
 
 A coordinator is live while its heartbeat is newer than 40 minutes. coordinate and
 heartbeat exit 3 when a PR is owned by another live coordinator; enroll and member
@@ -179,6 +221,7 @@ exit 3 when the coordinator is not live.
 """
 import argparse
 import datetime as dt
+import hashlib
 import json
 import re
 import shutil
@@ -198,11 +241,34 @@ from moplib import (
     max_minutes, length_limit, over_limit, now, lock, unlock, log, note,
     load_roster, save_roster, live, load, save, budget, order, queue_entry,
     say, deliver, notify, READS, memory_path, add_read_commands,
-    read_cmd,
+    read_cmd, run, worktree_pids, drain, id_owner,
 )
 
 
 # ---------------------------------------------------------------- config
+
+
+def changes(old, new):
+    """{key: [old, new]} for each key whose value differs, one level into dicts."""
+    out = {}
+    for k in sorted(set(old) | set(new)):
+        a, b = old.get(k), new.get(k)
+        if k == "updatedAt" or a == b:
+            continue
+        if isinstance(a, dict) and isinstance(b, dict):
+            for sk, v in changes(a, b).items():
+                out[f"{k}.{sk}"] = v
+        else:
+            out[k] = [a, b]
+    return out
+
+
+def record_config(by, reason, what, old, new):
+    """One event and one ledger line per config change: who, why and the changed keys."""
+    diff = changes(old, new)
+    log(f"config {what} by={by}{reason_field(reason)} changes={json.dumps(diff, separators=(',', ':'))}")
+    note(by, f"config {what}: " + ("; ".join(f"{k} {json.dumps(a)} -> {json.dumps(b)}" for k, (a, b) in diff.items()) or "no change")
+         + (f" (reason: {reason})" if reason else ""))
 
 
 def config_cmd(args):
@@ -213,6 +279,7 @@ def config_cmd(args):
         return 0
     if args.ccmd == "set-machine":
         raw = read_json(CONFIG) or {}
+        before = json.loads(json.dumps(raw))
         for flag, field in (("reserve_gib", "reserveGiB"), ("disk_floor_gib", "diskFloorGiB"), ("disk_alarm_gib", "diskAlarmGiB"),
                             ("max_swapouts", "maxSwapouts"), ("swap_interval_s", "swapIntervalS"),
                             ("load_per_core", "loadPerCore"), ("dashboard_port", "dashboardPort")):
@@ -235,7 +302,7 @@ def config_cmd(args):
         raw["configured"] = True
         raw["updatedAt"] = now().isoformat()
         write_json(CONFIG, raw)
-        log(f"config machine {json.dumps(raw)}")
+        record_config(args.by, args.reason, "machine", before, raw)
         print(json.dumps(load_machine(), indent=1))
         return 0
     if args.ccmd in ("set-class", "remove-class"):
@@ -243,6 +310,7 @@ def config_cmd(args):
             print("class names are upper-case, for example BROWSER or TEST-DB")
             return 2
         raw = read_json(CONFIG) or {}
+        before = json.loads(json.dumps({**raw, "classes": raw.get("classes") or registry()}))
         reg = raw.setdefault("classes", registry())
         if args.ccmd == "remove-class":
             state = load()
@@ -269,12 +337,13 @@ def config_cmd(args):
                     c.setdefault("settle", {}).pop(other, None)
         raw["updatedAt"] = now().isoformat()
         write_json(CONFIG, raw)
-        log(f"config class {args.ccmd} {args.name}")
+        record_config(args.by, args.reason, f"class {args.ccmd} {args.name}", before, raw)
         print(json.dumps(reg, indent=1))
         return 0
     if args.ccmd == "set-project":
         key, base = project_key(args.root)
         proj = load_project(key, base)
+        before = json.loads(json.dumps(proj))
         proj["root"] = base
         for flag, field in (("name", "name"), ("base_branch", "baseBranch"), ("merge_method", "mergeMethod"), ("leases_default", "leasesDefault")):
             if getattr(args, flag) is not None:
@@ -287,7 +356,7 @@ def config_cmd(args):
         proj["configured"] = True
         proj["updatedAt"] = now().isoformat()
         save_project(proj)
-        log(f"config project {key}")
+        record_config(args.by, args.reason, f"project {key}", before, proj)
         print(json.dumps(proj, indent=1))
         return 0
     out = {"machine": machine}
@@ -425,8 +494,8 @@ def roster_cmd(args):
     if args.cmd in ("coordinate", "heartbeat", "resign"):
         cur = coords.get(args.name)
         if args.cmd == "coordinate":
-            if not SLUG.match(args.name):
-                print("--name must be a lowercase slug, for example claude-scope-ux")
+            if not SLUG.match(args.name) or args.name == MACHINE:
+                print(f"--name must be a lowercase slug other than {MACHINE}, for example claude-scope-ux")
                 return 2
             if live(cur) and cur["sessionId"] != args.session_id and not args.takeover:
                 print(json.dumps({"live_coordinator": {args.name: cur}}))
@@ -563,6 +632,8 @@ def roster_cmd(args):
                 rows.append(f"{x['name']} {x.get('status', 'active')} last update {age if age is not None else '?'} min ago — {x.get('task', '')[:60]}")
         print("\n".join(rows) if rows else f"no member silent for {args.minutes} min")
         return 0
+    if args.cmd == "member" and args.mcmd in ("transfer", "accept"):
+        return transfer_cmd(args, roster)
     m = next((x for x in members if x["name"] == args.name), None)
     if args.cmd == "member" and args.mcmd == "remove":
         members[:] = [x for x in members if x["name"] != args.name]
@@ -629,6 +700,73 @@ def roster_cmd(args):
     return 0
 
 
+def transfer_cmd(args, roster):
+    """transfer: offer member NAME to live coordinator --to (or --cancel the offer).
+    accept: the receiver takes it in one locked write: the roster entry and its pending
+    children, its queued and held lease entries, its PRs and its dashboard row. The
+    caller holds the lock and has checked that --coordinator is live."""
+    coords = roster["coordinators"]
+    if args.mcmd == "transfer":
+        m = next((x for x in roster["members"].get(args.coordinator, []) if x["name"] == args.name), None)
+        if m is None:
+            print(f"{args.name} is not a member of {args.coordinator}")
+            return 3
+        if args.cancel:
+            offer = m.pop("transfer", None)
+            save_roster(roster)
+            log(f"transfer {args.name} from={args.coordinator} cancelled by={args.coordinator}")
+            print(f"cancelled the offer of {args.name}" + (f" to {offer['to']}" if offer else " (there was none)"))
+            return 0
+        if not args.to or args.to == args.coordinator or not live(coords.get(args.to)):
+            print(json.dumps({"no_live_coordinator": args.to}))
+            return 3
+        m["transfer"] = {"to": args.to, "note": args.note or "", "at": now().isoformat()}
+        save_roster(roster)
+        log(f"transfer {args.name} from={args.coordinator} to={args.to} by={args.coordinator}"
+            + (f" note={json.dumps(args.note)}" if args.note else ""))
+        note(args.coordinator, f"offered {args.name} to {args.to}" + (f"; note {args.note}" if args.note else ""))
+        print(f"offered {args.name} to {args.to}; it takes the member with member accept")
+        return 0
+    src, dst = args.source, args.coordinator
+    moving = [x for x in roster["members"].get(src, []) if x["name"] == args.name]
+    if not moving or (moving[0].get("transfer") or {}).get("to") != dst:
+        print(f"{src} has not offered {args.name} to {dst}")
+        return 3
+    m = moving[0]
+    moving += [x for x in roster["members"][src] if x.get("status") == "pending" and x.get("parent") == args.name]
+    names = [x["name"] for x in moving]
+    for x in moving:
+        roster["members"][src].remove(x)
+        x.pop("transfer", None)
+        if x.get("parent") == src:
+            x["parent"] = dst
+        x["updatedAt"] = now().isoformat()
+        roster["members"].setdefault(dst, []).append(x)
+    prs = [n for x in moving for n in x.get("prs", [])]
+    if src in coords:
+        coords[src]["prs"] = [n for n in coords[src].get("prs", []) if n not in prs]
+    coords[dst]["prs"] = list(dict.fromkeys(coords[dst].get("prs", []) + prs))
+    save_roster(roster)
+    state, machine = load(), load_machine()
+    leases = []
+    for c in class_names(machine):
+        for q in state[c] + state["queue"][c]:
+            if q["coordinator"] == src and q["holder"].partition(" ")[0] in names:
+                q["coordinator"] = dst
+                leases.append(q["id"])
+    if leases:
+        save(state, machine)
+    rows = {t["id"]: t for t in (read_json(state_path(src)) or {}).get("tasks", [])}
+    for n in names:
+        remove_task(src, n)
+        upsert_task(dst, n, {k: v for k, v in rows.get(n, {"name": next(x.get("task") for x in moving if x["name"] == n)}).items() if k != "id"})
+    log(f"accept {args.name} from={src} to={dst} by={dst}" + (f" leases={','.join(leases)}" if leases else ""))
+    note(dst, f"took {', '.join(names)} from {src}" + (f"; PRs {' '.join('#' + str(n) for n in prs)}" if prs else "")
+         + (f"; leases {', '.join(leases)}" if leases else ""))
+    print(json.dumps({"moved": names, "prs": prs, "leases": leases}))
+    return 0
+
+
 def reprioritize(coord, name, priority):
     """Give the task's queued lease entries its new priority and re-order each queue.
     Returns {CLASS: [ids]} of the moved entries, so the coordinator can tell their new turn."""
@@ -639,7 +777,7 @@ def reprioritize(coord, name, priority):
             if q["coordinator"] == coord and q["holder"].partition(" ")[0] == name and q.get("priority", 0) != priority:
                 q["priority"] = priority
                 moved.setdefault(c, []).append(q["id"])
-                log(f"priority {c} {q['id']} {priority}")
+                log(f"priority {c} {q['id']} {priority} by={coord}")
         order(state["queue"][c])
     if moved:
         save(state, machine)
@@ -751,9 +889,35 @@ MAX_OPTIONS = 4
 MAX_OPTION_CHARS = 60
 
 
+MACHINE = "machine"  # the dashboard source of machine-scope decisions; no coordinator has this name
+
+
+def add_decision(by, text, options, scope=None, task=None, href=None, extra=None):
+    """Append a decision to dashboard/<by>-state.json, or with scope machine to
+    dashboard/machine-state.json (one question for every coordinator). The caller holds the lock."""
+    path = state_path(MACHINE if scope == MACHINE else by)
+    data = read_json(path) or {}
+    item = {"id": uuid.uuid4().hex[:8], "text": text}
+    if scope == MACHINE:
+        item["by"] = by
+    if task:
+        item["task"] = task
+    if href:
+        item["href"] = href
+    if options:
+        item["options"] = options
+    item.update(extra or {})
+    data.setdefault("decisions", []).append(item)
+    data["updated"] = now().strftime("%H:%MZ")
+    write_json(path, data)
+    return item
+
+
 def decision_cmd(args):
     """add, answer and clear. answer is the user's choice from the dashboard; it runs in
-    another process than the owner's, so it takes the lock."""
+    another process than the owner's, so it takes the lock. A machine-scope decision
+    (--scope machine; answered with --by machine) is one question for every coordinator:
+    the answer is the user's own answer for each of them, and each live one is told."""
     if args.dcmd == "add" and args.option:
         if len(args.option) > MAX_OPTIONS or any(len(o) > MAX_OPTION_CHARS or not o.strip() for o in args.option):
             print(f"at most {MAX_OPTIONS} options, each 1 to {MAX_OPTION_CHARS} characters")
@@ -761,22 +925,20 @@ def decision_cmd(args):
     if args.dcmd == "clear" and not (args.task or args.all):
         print("decision clear needs --task ID or --all")
         return 2
-    path = state_path(args.by)
+    scope = getattr(args, "scope", None)
+    machine_scope = scope == MACHINE or args.by == MACHINE
+    path = state_path(MACHINE if machine_scope else args.by)
     lock()
     try:
+        if args.dcmd == "add":
+            item = add_decision(args.by, args.text, args.option, scope, args.task, args.href)
+            data = read_json(path)
+            log(f"decision add {item['id']} scope={scope or 'coordinator'} by={args.by}")
+            print(f"decision {item['id']} added · {len(data['decisions'])} decisions for {MACHINE if machine_scope else args.by}")
+            return 0
         data = read_json(path) or {}
         items = data.setdefault("decisions", [])
-        if args.dcmd == "add":
-            item = {"id": uuid.uuid4().hex[:8], "text": args.text}
-            if args.task:
-                item["task"] = args.task
-            if args.href:
-                item["href"] = args.href
-            if args.option:
-                item["options"] = args.option
-            items.append(item)
-            done = f"decision {item['id']} added"
-        elif args.dcmd == "answer":
+        if args.dcmd == "answer":
             item = next((d for d in items if isinstance(d, dict) and d.get("id") == args.id), None)
             options = (item or {}).get("options") or []
             if item is None or not 1 <= args.choice <= len(options):
@@ -786,28 +948,158 @@ def decision_cmd(args):
             data["decisions"] = [d for d in items if d is not item]
             task = item.get("task", "")
             done = f"Answered{' for ' + task if task else ''}: {answer}"
-            message = (f"The user answered the decision{' for ' + task if task else ''} on the dashboard: \"{answer}\" "
+            whom = " for every coordinator" if machine_scope else ""
+            message = (f"The user answered the decision{' for ' + task if task else ''}{whom} on the dashboard: \"{answer}\" "
                        f"(question: \"{item.get('text', '')}\"). This is the user's answer; act on it.")
+            if item.get("update"):
+                record_update_answer(item["update"], args.choice == 1, answer)
         else:
-            data["decisions"] = [] if args.all else [d for d in items if not isinstance(d, dict) or d.get("task") != args.task]
+            def keep(d):
+                """Machine scope clears only your own items. A legacy string decision has no
+                task or author: only a coordinator-scope --all clears it."""
+                if not isinstance(d, dict):
+                    return machine_scope or not args.all
+                if machine_scope and d.get("by") != args.by:
+                    return True
+                return not args.all and d.get("task") != args.task
+            data["decisions"] = [d for d in items if keep(d)]
             done = "cleared"
         data["updated"] = now().strftime("%H:%MZ")
         write_json(path, data)
         if args.dcmd == "answer":
             log(f"decision answer {args.by} {args.id} choice={args.choice}" + (" by=dashboard" if args.notify else ""))
-            note("dashboard" if args.notify else args.by, f"User decision{' for ' + task if task else ''}: {answer} ({item.get('text', '')})")
+            note("dashboard" if args.notify else args.by, f"User decision{' for ' + task if task else ''}{whom}: {answer} ({item.get('text', '')})")
     finally:
         unlock()
-    print(f"{done} · {len(data['decisions'])} decisions for {args.by}")
+    print(f"{done} · {len(data['decisions'])} decisions for {MACHINE if machine_scope else args.by}")
     if args.dcmd == "answer" and args.notify:
-        print(notify(args.by, message))
+        targets = [n for n, c in load_roster()["coordinators"].items() if live(c)] if machine_scope else [args.by]
+        for name in targets:
+            print(notify(name, message))
     return 0
+
+
+# ---------------------------------------------------------------- helper update vote
+
+
+UPDATE = os.path.join(DIR, "update.json")
+
+
+def file_hashes(src):
+    return {n: hashlib.sha256(open(os.path.join(src, n), "rb").read()).hexdigest() for n in FILES}
+
+
+def digest_of(hashes):
+    return hashlib.sha256("".join(hashes[n] for n in FILES).encode()).hexdigest()[:12]
+
+
+def update_blockers(proposal, roster, state):
+    """Why proposal cannot be installed now: an empty list when it can."""
+    if not proposal:
+        return ["no update proposal; run update propose from the skill copy"]
+    why = []
+    if proposal.get("installed"):
+        why.append(f"already installed by {proposal['installed']['by']} at {proposal['installed']['at']}")
+    if proposal.get("rejected"):
+        why.append(f"the user rejected it: {proposal['rejected']}")
+    if not proposal.get("approval"):
+        why.append("no user approval: the dashboard decision, or update approve with the user's words")
+    votes = proposal.get("votes", {})
+    for name, c in roster["coordinators"].items():
+        v = votes.get(name, {}).get("vote")
+        if v == "object":
+            why.append(f"{name} objects: {votes[name].get('text', '')}")
+        elif live(c) and v != "agree":
+            why.append(f"no vote from live coordinator {name}")
+    held = [h["id"] for c in class_names() for h in state[c]]
+    if held:
+        why.append(f"leases are granted: {', '.join(held)}; install between grants")
+    return why
+
+
+def record_update_answer(digest, yes, answer):
+    """The user's answer to an update proposal's machine decision. The caller holds the lock."""
+    proposal = read_json(UPDATE)
+    if not proposal or proposal["digest"] != digest:
+        return
+    if yes:
+        proposal["approval"] = {"by": "dashboard", "quote": answer, "at": now().isoformat()}
+    else:
+        proposal["rejected"] = f"{answer} (dashboard, {now().isoformat()})"
+    write_json(UPDATE, proposal)
+    log(f"update {'approve' if yes else 'reject'} {digest} by=dashboard")
+
+
+def update_cmd(args):
+    """propose, agree, object, approve and status: one shared record of a helper update,
+    so coordinators vote in state instead of in messages, and install reads it."""
+    lock()
+    try:
+        roster, state = load_roster(), load()
+        proposal = read_json(UPDATE)
+        if args.ucmd == "status":
+            why = update_blockers(proposal, roster, state)
+            if proposal:
+                print(json.dumps({k: proposal.get(k) for k in ("digest", "git", "source", "by", "at", "text", "votes", "approval", "rejected", "installed")}, indent=1))
+            print("ready to install" if not why else "not ready:\n  " + "\n  ".join(why))
+            return 0 if not why else 3
+        if not live(roster["coordinators"].get(args.by)):
+            print(f"{args.by} is not a live coordinator")
+            return 3
+        if args.ucmd == "propose":
+            here = os.path.dirname(os.path.realpath(__file__))
+            if os.path.realpath(DIR) == here:
+                print("run update propose from the skill copy, not the live copy")
+                return 2
+            hashes = file_hashes(here)
+            digest = digest_of(hashes)
+            if proposal and proposal["digest"] == digest and not proposal.get("installed"):
+                print(f"update {digest} is already proposed by {proposal['by']}")
+                return 0
+            git = run(["git", "-C", here, "describe", "--always", "--dirty"]).strip() or None
+            proposal = {"digest": digest, "files": hashes, "source": here, "git": git, "by": args.by, "at": now().isoformat(),
+                        "text": args.text or "", "votes": {args.by: {"vote": "agree", "at": now().isoformat()}}}
+            item = add_decision(args.by, f"Replace the live helpers with {git or digest} from {here}? Proposed by {args.by}"
+                                + (f": {args.text}" if args.text else ""), ["Install", "Do not install"], MACHINE,
+                                extra={"update": digest})
+            proposal["decision"] = item["id"]
+            write_json(UPDATE, proposal)
+            log(f"update propose {digest} by={args.by}")
+            note(args.by, f"proposed helper update {digest} ({git or 'no git'}) from {here}; machine decision {item['id']}")
+            print(f"proposed update {digest}; machine decision {item['id']} asks the user")
+            return 0
+        if not proposal or proposal.get("installed"):
+            print("no open update proposal")
+            return 3
+        if args.ucmd == "approve":
+            proposal["approval"] = {"by": args.by, "quote": args.quote, "at": now().isoformat()}
+            path = state_path(MACHINE)
+            data = read_json(path) or {}
+            data["decisions"] = [d for d in data.get("decisions", []) if d.get("id") != proposal.get("decision")]
+            write_json(path, data)
+        else:
+            proposal.setdefault("votes", {})[args.by] = {"vote": args.ucmd, "text": args.text or "", "at": now().isoformat()}
+        write_json(UPDATE, proposal)
+        log(f"update {args.ucmd} {proposal['digest']} by={args.by}")
+        note(args.by, f"update {proposal['digest']}: {args.ucmd}" + (f" — user: {args.quote}" if args.ucmd == "approve" else
+                                                                     f" — {args.text}" if args.text else ""))
+        why = update_blockers(proposal, roster, state)
+        print("ready to install" if not why else "not ready:\n  " + "\n  ".join(why))
+        return 0
+    finally:
+        unlock()
 
 
 # ---------------------------------------------------------------- memory
 
 
+def reason_field(reason):
+    return f" reason={json.dumps(reason)}" if reason else ""
+
+
 def memory_cmd(args):
+    """add, update (same ID) and remove. Each change logs one event and one ledger line
+    with who and why, so peers see it in watch inbox without a message."""
     path, name = memory_path(args.project_root)
     lock()
     try:
@@ -816,16 +1108,27 @@ def memory_cmd(args):
             entry = {"id": f"m-{os.urandom(3).hex()}", "kind": args.kind, "text": args.text, "by": args.by, "at": now().isoformat()}
             data["entries"].append(entry)
             write_json(path, data)
-            log(f"memory add {name} {entry['id']} by={args.by}")
+            log(f"memory add {name} {entry['id']} by={args.by}{reason_field(args.reason)}")
+            note(args.by, f"memory {name} {entry['id']} added: {args.text}" + (f" (reason: {args.reason})" if args.reason else ""))
             print(entry["id"])
             return 0
-        before = len(data["entries"])
-        data["entries"] = [x for x in data["entries"] if x["id"] != args.id]
-        if len(data["entries"]) == before:
+        entry = next((x for x in data["entries"] if x["id"] == args.id), None)
+        if entry is None:
             print(f"no memory entry {args.id} in {name}")
             return 3
+        if args.mcmd == "update":
+            old = entry["text"]
+            entry["text"] = args.text
+            if args.kind:
+                entry["kind"] = args.kind
+            entry.update({"updatedBy": args.by, "updatedAt": now().isoformat()})
+            change = f"changed from {json.dumps(old)} to {json.dumps(args.text)}"
+        else:
+            data["entries"].remove(entry)
+            change = f"removed: {json.dumps(entry['text'])}"
         write_json(path, data)
-        log(f"memory remove {name} {args.id}")
+        log(f"memory {args.mcmd} {name} {args.id} by={args.by}{reason_field(args.reason)}")
+        note(args.by, f"memory {name} {args.id} {change}" + (f" (reason: {args.reason})" if args.reason else ""))
         return 0
     finally:
         unlock()
@@ -850,6 +1153,8 @@ def brief(state):
         prio = f", priority {ready[0]['priority']}" if ready and ready[0].get("priority") else ""
         head = f"head {ready[0]['id']} ({ready[0]['coordinator']}{prio})" if ready else "no ready entry"
         lines.append(f"{c} queue {len(ready)} ready, {len(q) - len(ready)} on hold — {head}")
+    for c, hold in state.get("admission", {}).items():
+        lines.append(f"{c} ADMISSION HOLD by {hold['by']} since {hold['at'][11:16]}Z — {hold['reason']}")
     b = state["budget"]
     lines.append(f"budget {b['freeGiB']} of {b['limitGiB']} GiB free · capacity {b['capacity']} · peaks {b['peakGiB']}")
     return "\n".join(lines)
@@ -902,11 +1207,36 @@ def queue_edit_cmd(args):
     return 0
 
 
+def admission_cmd(args, state, machine):
+    """hold: no grant of CLASS until clear, for example while a failed run's cleanup is
+    uncertain or the disk is low. acquire refuses with exit 3 and the hold's reason.
+    The caller holds the lock."""
+    holds = state.setdefault("admission", {})
+    if args.acmd == "hold":
+        holds[args.cls] = {"by": args.by, "reason": args.reason, "at": now().isoformat()}
+        verb = "hold"
+    elif args.cls not in holds:
+        print(f"no admission hold on {args.cls}")
+        return 0
+    else:
+        old = holds.pop(args.cls)
+        verb = "clear"
+        if old["by"] != args.by:
+            print(f"cleared the hold of {old['by']}: {old['reason']}")
+    save(state, machine)
+    log(f"admission {verb} {args.cls} by={args.by}" + (f" reason={json.dumps(args.reason)}" if args.reason else ""))
+    note(args.by, f"admission {verb} {args.cls}" + (f": {args.reason}" if args.reason else ""))
+    return 0
+
+
 def acquire_checks(args, state, machine):
     """Every acquire gate except the host and the memory budget. Returns (exit, text) to refuse, else None."""
     queue, holders = state["queue"][args.cls], state[args.cls]
     if any(h["id"] == args.id for h in holders):
         return 0, "already held"
+    hold = state.get("admission", {}).get(args.cls)
+    if hold:
+        return 3, json.dumps({"admission_hold": {args.cls: hold}})
     entry = next((q for q in queue if q["id"] == args.id), {})
     why = over_limit(args.cls, entry.get("project") or project_key(args.worktree)[0], args.minutes)
     if why:
@@ -990,13 +1320,6 @@ def acquire_cmd(args):
 # ---------------------------------------------------------------- host
 
 
-def run(cmd):
-    try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=20).stdout
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-
-
 def swapouts():
     m = re.search(r"Swapouts:\s+(\d+)", run(["vm_stat"]))
     return int(m.group(1)) if m else 0
@@ -1049,19 +1372,6 @@ def calm_wait_cmd(args):
         time.sleep(args.retry)
 
 
-def worktree_pids(tree):
-    tree = os.path.realpath(tree)
-    pids, pid = set(), None
-    for line in run(["lsof", "-nP", "-d", "cwd", "-Fpn"]).splitlines():
-        if line.startswith("p"):
-            pid = line[1:]
-        elif line.startswith("n") and pid:
-            path = line[1:]
-            if path == tree or path.startswith(tree + "/"):
-                pids.add(pid)
-    return sorted(pids, key=int)
-
-
 def measure_peak_cmd(args):
     """While ID holds a lease, sum RSS of processes working in the worktree; keep the max
     in peaks/<id>.gib for release. RSS counts shared pages twice, so it errs high."""
@@ -1085,30 +1395,65 @@ def measure_peak_cmd(args):
 
 def drain_check_cmd(args):
     """Report what a released lease left behind: processes working in the worktree (with
-    their listeners), listeners on the given ports, and processes matching each
-    --process pattern (for example a tunnel or a browser started for the run).
-    Exit 0 when nothing is left, 1 otherwise. It only reports; it never kills."""
-    left = 0
-    pids = worktree_pids(args.worktree)
-    for pid in pids:
-        cmd = run(["ps", "-o", "command=", "-p", pid]).strip()[:100]
-        if not cmd:
-            continue
-        left += 1
-        ports = [l[1:] for l in run(["lsof", "-nP", "-a", "-p", pid, "-iTCP", "-sTCP:LISTEN", "-Fn"]).splitlines() if l.startswith("n")]
-        print(f"  worktree {pid} {'[listen ' + ' '.join(ports) + '] ' if ports else ''}{cmd}")
-    for port in args.port or []:
-        for line in run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fpc"]).splitlines():
-            if line.startswith("p"):
-                pid = line[1:]
-                left += 1
-                print(f"  port {port} {pid} {run(['ps', '-o', 'command=', '-p', pid]).strip()[:100]}")
-    for pattern in args.process or []:
-        for line in run(["pgrep", "-fl", pattern]).splitlines():
-            left += 1
-            print(f"  process {pattern}: {line[:110]}")
-    print(f"{'drained' if not left else 'not drained'}: {left} left for {args.worktree}")
+    their listeners, except agent session processes), listeners on the given ports, and
+    processes matching each --process pattern (for example a tunnel or a browser started
+    for the run). Exit 0 when nothing is left, 1 otherwise. It only reports; it never kills."""
+    left = drain(args.worktree, args.port or [], args.process or [])
+    for line in left:
+        print(f"  {line}")
+    print(f"{'drained' if not left else 'not drained'}: {len(left)} left for {args.worktree}")
     return 0 if not left else 1
+
+
+def prs_cmd(args):
+    """Open PRs on the machine whose changed files match --path: the PRs of members (with
+    their repo), of prs-<C>.txt watch lists, and of coordinators (with --repo). One gh
+    call per PR, eight at a time. Exit 3 when none matches."""
+    import fnmatch
+    from concurrent.futures import ThreadPoolExecutor
+    roster = load_roster()
+    owners = {}
+    for coord, members in roster["members"].items():
+        for m in members:
+            for n in m.get("prs", []) if m.get("repo") else []:
+                owners.setdefault((m["repo"], n), []).append(f"{coord}/{m['name']}")
+    for path in sorted(p for p in os.listdir(DIR) if p.startswith("prs-") and p.endswith(".txt")):
+        for raw in open(os.path.join(DIR, path)).read().splitlines():
+            repo, _, n = (raw.split() or [""])[0].rpartition("#")
+            if repo and n.isdigit():
+                owners.setdefault((repo, int(n)), []).append(path[4:-4])
+    known = {n for _, n in owners}
+    for coord, c in roster["coordinators"].items():
+        for n in c.get("prs", []) if args.repo else []:
+            if n not in known:
+                owners.setdefault((args.repo, n), []).append(coord)
+    refs = [r for r in owners if not args.repo or r[0] == args.repo]
+
+    def hit(path):
+        return any(fnmatch.fnmatch(path, g) or path.startswith(g.rstrip("/") + "/") for g in args.path)
+
+    def view(ref):
+        r = subprocess.run(["gh", "pr", "view", str(ref[1]), "--repo", ref[0], "--json", "state,title,files"],
+                           capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        if r.returncode != 0:
+            return ref, None, " ".join(r.stderr.split())[:120]
+        d = json.loads(r.stdout)
+        return ref, d, [f["path"] for f in d.get("files", []) if hit(f["path"])]
+    found = 0
+    with ThreadPoolExecutor(8) as pool:
+        for (repo, n), d, files in pool.map(view, refs):
+            if d is None:
+                print(f"{repo}#{n} error {files}", file=sys.stderr)
+            elif d["state"] == "OPEN" and files:
+                found += 1
+                print(f"{repo}#{n} ({', '.join(dict.fromkeys(owners[(repo, n)]))}) {d['title'][:70]}")
+                for f in files[:10]:
+                    print(f"  {f}")
+                if len(files) > 10:
+                    print(f"  ... {len(files) - 10} more")
+    if not found:
+        print(f"no open PR among {len(refs)} touches {' '.join(args.path)}")
+    return 0 if found else 3
 
 
 # ---------------------------------------------------------------- watchers and install
@@ -1130,8 +1475,49 @@ def follow(paths):
         time.sleep(2)
 
 
+def event_of(line, me, names):
+    """True when the events.log line is me's own: my grants and queue entries, my lease
+    IDs, my roster changes, or an action by=me. Lease IDs go to the coordinator whose
+    name prefixes them, longest name first; a release line names its coordinator."""
+    f = line.split()
+    if len(f) < 3:
+        return False
+    return (
+        (f[1] in ("wait", "acquire", "refuse") and len(f) > 3 and f[3] == me)
+        or (f[1] == "release" and f"coordinator={me}" in f)
+        or (f[1] in ("unwait", "hold", "ready", "extend", "priority") and len(f) > 3 and id_owner(f[3], names) == me)
+        or (f[1] in ("coordinate", "resign") and f[2] == me)
+        or f"by={me}" in f
+    )
+
+
+def own_heads(me):
+    """{CLASS: entry} for each class whose first ready queue entry is me's (by the
+    entry's coordinator field, so a transferred member's old ID prefix does not matter)."""
+    state, heads = load(), {}
+    for c in class_names():
+        ready = [q for q in state["queue"][c] if not q.get("hold")]
+        if ready and ready[0]["coordinator"] == me:
+            heads[c] = ready[0]
+    return heads
+
+
 def watch_inbox(me):
-    """Messages to me or to all, and other coordinators' roster and lease events."""
+    """Messages to me or to all, other coordinators' roster and lease events, and:
+    HEAD when an entry of mine becomes the first ready entry of its class (acquire it),
+    PRIORITY when another coordinator or the dashboard changes the priority of my entry,
+    TRANSFER when another coordinator offers me a member (member accept)."""
+    heads = {}
+
+    def report_heads():
+        nonlocal heads
+        now_heads = own_heads(me)
+        for c, q in now_heads.items():
+            if (heads.get(c) or {}).get("id") != q["id"]:
+                prio = f" priority {q['priority']}" if q.get("priority") else ""
+                print(f"HEAD {c} {q['id']}{prio} — {q['holder'][:60]}: acquire it when the host and budget allow", flush=True)
+        heads = now_heads
+    report_heads()
     for path, line in follow([INBOX, LOG]):
         if path == INBOX:
             try:
@@ -1143,20 +1529,21 @@ def watch_inbox(me):
                 print(f"INBOX {rec.get('from')}: {rec.get('message')}", flush=True)
             continue
         f = line.split()
-        if len(f) < 3:
-            continue
-        own = (
-            (f[1] in ("wait", "acquire", "refuse") and len(f) > 3 and f[3] == me)
-            or (f[1] in ("release", "unwait", "hold", "ready", "extend", "priority") and f[3 if len(f) > 3 else -1].startswith(me + "-"))
-            or (f[1] in ("coordinate", "resign") and f[2] == me)
-            or f"by={me}" in f
-        )
-        if not own:
+        names = load_roster()["coordinators"]
+        by = next((x[3:] for x in f if x.startswith("by=")), None)
+        if len(f) > 4 and f[1] == "priority" and by != me and id_owner(f[3], names) == me:
+            print(f"PRIORITY {f[2]} {f[3]} {f[4]} by={by or 'unknown'}", flush=True)
+        elif len(f) > 2 and f[1] == "transfer" and f"to={me}" in f:
+            src = next((x[5:] for x in f if x.startswith("from=")), "?")
+            print(f"TRANSFER {' '.join(f[2:])}: take it with member accept --coordinator {me} --name {f[2]} --from {src}", flush=True)
+        elif not event_of(line, me, names):
             print(f"EVENT {line}", flush=True)
+        report_heads()
 
 
 def watch_expiry():
-    """Each lease past its expiry, once. An expired lease still holds its slot."""
+    """Each lease past its expiry, once, with left=N: the processes its run still has in
+    its worktree (as drain-check counts them). An expired lease still holds its slot."""
     seen = set()
     while True:
         t = now()
@@ -1166,7 +1553,8 @@ def watch_expiry():
                 key = (c, h["id"])
                 if key not in seen and dt.datetime.fromisoformat(h["expiresAt"]) < t:
                     seen.add(key)
-                    print(f'{c} {h["id"]} ({h["coordinator"]}) expired at {h["expiresAt"][11:16]}Z holder={h["holder"][:60]}', flush=True)
+                    left = len(drain(h["worktree"])) if h.get("worktree") else "?"
+                    print(f'{c} {h["id"]} ({h["coordinator"]}) expired at {h["expiresAt"][11:16]}Z left={left} holder={h["holder"][:60]}', flush=True)
         time.sleep(60)
 
 
@@ -1266,12 +1654,41 @@ def watch_cmd(args):
 def install_cmd(args):
     """Copy the helpers into the state dir when absent. All or nothing: when a live copy
     differs, print every diff and install none, so live files never mix versions; with
-    --replace, replace every differing copy. After a full install, remove obsolete helpers.
-    Each run records this skill copy as the source, so later runs can warn when an update is due."""
+    --replace, replace every differing copy, only for the update proposal of exactly these
+    files that the user approved and every live coordinator agreed, while no lease is
+    granted. The state lock makes it the only install. After a full install, remove obsolete
+    helpers. Each run records this skill copy as the source, so later runs can warn when
+    an update is due; a refused --replace records nothing."""
     here = os.path.dirname(os.path.realpath(__file__))
     if os.path.realpath(DIR) == here:
         print("this is the live copy")
         return 0
+    if not args.replace:
+        return install_files(args, here)
+    if not args.by:
+        print("install --replace needs --by <coordinator>")
+        return 2
+    lock()
+    try:
+        proposal = read_json(UPDATE)
+        why = update_blockers(proposal, load_roster(), load())
+        if proposal and proposal["files"] != file_hashes(here):
+            why.append(f"this copy is not the proposed update {proposal['digest']}; propose it with update propose")
+        if why:
+            print("not installed:\n  " + "\n  ".join(why))
+            return 3
+        code = install_files(args, here)
+        proposal["installed"] = {"by": args.by, "at": now().isoformat()}
+        write_json(UPDATE, proposal)
+        log(f"install {proposal['digest']} by={args.by}")
+        note(args.by, f"installed helper update {proposal['digest']} ({proposal.get('git') or 'no git'}) from {here}: "
+             + " ".join(f"{n}={h[:12]}" for n, h in proposal["files"].items()))
+        return code
+    finally:
+        unlock()
+
+
+def install_files(args, here):
     import difflib
     write_json(SOURCE, {"path": here, "at": now().isoformat()})
     plan, differs = [], False
@@ -1289,7 +1706,7 @@ def install_cmd(args):
             plan.append((dst, new))
             continue
         differs = True
-        print(f"DIFFERS {dst} (not overwritten; agree the change with the other coordinators and the user, then use --replace)")
+        print(f"DIFFERS {dst} (not overwritten; run update propose, and install --replace --by C once the user approves and every live coordinator agrees)")
         sys.stdout.writelines(difflib.unified_diff(old.splitlines(True), new.splitlines(True), dst, src, n=1))
     if differs:
         if plan:
@@ -1324,6 +1741,7 @@ def main():
     da.add_argument("--task")
     da.add_argument("--href")
     da.add_argument("--option", action="append", help="a suggested answer; repeat for each (at most 4)")
+    da.add_argument("--scope", choices=(MACHINE,), help="machine: one question for every coordinator, answered once")
     dn = dsub.add_parser("answer")
     dn.add_argument("--by", required=True)
     dn.add_argument("--id", required=True)
@@ -1333,6 +1751,7 @@ def main():
     dl.add_argument("--by", required=True)
     dl.add_argument("--task")
     dl.add_argument("--all", action="store_true")
+    dl.add_argument("--scope", choices=(MACHINE,), help="clear your machine-scope decisions")
     sub.add_parser("capacity")
     a = sub.add_parser("acquire")
     a.add_argument("cls", metavar="CLASS")
@@ -1377,11 +1796,26 @@ def main():
         h = sub.add_parser(name)
         h.add_argument("cls", metavar="CLASS")
         h.add_argument("--id", required=True)
+    adm = sub.add_parser("admission")
+    asub = adm.add_subparsers(dest="acmd", required=True)
+    ah = asub.add_parser("hold")
+    ah.add_argument("cls", metavar="CLASS")
+    ah.add_argument("--by", required=True)
+    ah.add_argument("--reason", required=True)
+    acl = asub.add_parser("clear")
+    acl.add_argument("cls", metavar="CLASS")
+    acl.add_argument("--by", required=True)
+    acl.add_argument("--reason", help="for example what was cleaned up")
+    pp = sub.add_parser("prs")
+    pp.add_argument("--path", action="append", required=True, help="a glob or a directory prefix; repeat for more")
+    pp.add_argument("--repo", help="only this owner/repo; also the repo for coordinator PRs that no member lists")
     cf = sub.add_parser("config")
     csub = cf.add_subparsers(dest="ccmd", required=True)
     cs = csub.add_parser("show")
     cs.add_argument("--project-root")
     cm = csub.add_parser("set-machine")
+    cm.add_argument("--by", required=True)
+    cm.add_argument("--reason", help="why, for example the user's words")
     cm.add_argument("--reserve-gib", type=float)
     cm.add_argument("--disk-floor-gib", type=float, help="below this many GiB free, no lease is granted")
     cm.add_argument("--disk-alarm-gib", type=float, help="below this many GiB free, the host check raises the disk alarm")
@@ -1391,6 +1825,8 @@ def main():
     cm.add_argument("--dashboard-port", type=int)
     cm.add_argument("--max-slots", action="append", help="CLASS=N hard cap; N=0 removes it")
     cpj = csub.add_parser("set-project")
+    cpj.add_argument("--by", required=True)
+    cpj.add_argument("--reason", help="why, for example the user's words")
     cpj.add_argument("--root", required=True)
     cpj.add_argument("--name")
     cpj.add_argument("--base-branch")
@@ -1403,12 +1839,16 @@ def main():
     cpj.add_argument("--peak", choices=("learn", "fixed"))
     cpj.add_argument("--default-gib", type=float)
     sc = csub.add_parser("set-class")
+    sc.add_argument("--by", required=True)
+    sc.add_argument("--reason", help="why, for example the user's words")
     sc.add_argument("name", metavar="CLASS")
     sc.add_argument("--description")
     sc.add_argument("--default-gib", type=float, help="expected peak; 0 = not memory-bound")
     sc.add_argument("--max-minutes", type=int)
     sc.add_argument("--settle", action="append", help="OTHER=SECONDS: after a grant of this class, OTHER waits (0 removes)")
     rc = csub.add_parser("remove-class")
+    rc.add_argument("--by", required=True)
+    rc.add_argument("--reason", help="why, for example the user's words")
     rc.add_argument("name", metavar="CLASS")
     ck = csub.add_parser("project-key")
     ck.add_argument("path")
@@ -1425,9 +1865,19 @@ def main():
     ma.add_argument("--text", required=True)
     ma.add_argument("--kind", choices=("rule", "note"), default="rule")
     ma.add_argument("--project-root")
+    ma.add_argument("--reason", help="why, for example the user's words")
+    mu = mesub.add_parser("update")
+    mu.add_argument("--by", required=True)
+    mu.add_argument("--id", required=True)
+    mu.add_argument("--text", required=True, help="the full new text; the ID stays")
+    mu.add_argument("--kind", choices=("rule", "note"))
+    mu.add_argument("--project-root")
+    mu.add_argument("--reason", help="why, for example the user's words")
     mr2 = mesub.add_parser("remove")
+    mr2.add_argument("--by", required=True)
     mr2.add_argument("--id", required=True)
     mr2.add_argument("--project-root")
+    mr2.add_argument("--reason", help="why, for example the user's words")
     nt = sub.add_parser("note")
     nt.add_argument("--by", required=True)
     nt.add_argument("--text", required=True)
@@ -1470,6 +1920,16 @@ def main():
         mx.add_argument("--stream", help='stream slug; "" clears it')
         mx.add_argument("--priority", type=int, help="task priority: 0 default, higher first, below 0 for background work")
         mx.add_argument("--parent", help="the member that started this one (JOIN parent field)")
+    mt = msub.add_parser("transfer")
+    mt.add_argument("--coordinator", required=True, help="the member's coordinator (you)")
+    mt.add_argument("--name", required=True)
+    mt.add_argument("--to", help="the receiving live coordinator")
+    mt.add_argument("--note", help="the handoff note path")
+    mt.add_argument("--cancel", action="store_true", help="withdraw the offer")
+    mac = msub.add_parser("accept")
+    mac.add_argument("--coordinator", required=True, help="the receiver (you)")
+    mac.add_argument("--name", required=True)
+    mac.add_argument("--from", dest="source", required=True, help="the offering coordinator")
     mr = msub.add_parser("remove")
     mr.add_argument("--coordinator", required=True)
     mr.add_argument("--name", required=True)
@@ -1524,7 +1984,21 @@ def main():
     wa.add_argument("--interval", type=int, default=180, help="seconds between PR or cloud task polls")
     ins = sub.add_parser("install")
     ins.add_argument("--replace", action="store_true",
-                     help="replace live copies that differ; only after the other coordinators and the user agree")
+                     help="replace live copies that differ: only the proposed update, approved by the user and agreed by every live coordinator")
+    ins.add_argument("--by", help="the installing coordinator; required with --replace")
+    up = sub.add_parser("update")
+    usub = up.add_subparsers(dest="ucmd", required=True)
+    upr = usub.add_parser("propose")
+    upr.add_argument("--by", required=True)
+    upr.add_argument("--text", help="what changes, in one line")
+    for name in ("agree", "object"):
+        uv = usub.add_parser(name)
+        uv.add_argument("--by", required=True)
+        uv.add_argument("--text", required=name == "object", help="the reason (required to object)")
+    uap = usub.add_parser("approve")
+    uap.add_argument("--by", required=True)
+    uap.add_argument("--quote", required=True, help="the user's own words in your session")
+    usub.add_parser("status")
     args = p.parse_args()
     if args.cmd in ("roster", "whoami", "coordinate", "heartbeat", "status"):
         version_warning()
@@ -1543,13 +2017,15 @@ def main():
     if args.cmd == "memory":
         return memory_cmd(args)
     unlocked = {"host-check": host_check_cmd, "calm-wait": calm_wait_cmd, "measure-peak": measure_peak_cmd,
-                "drain-check": drain_check_cmd, "watch": watch_cmd, "install": install_cmd}
+                "drain-check": drain_check_cmd, "watch": watch_cmd, "install": install_cmd, "prs": prs_cmd}
     if args.cmd in unlocked:
         if args.cmd == "watch" and args.what != "expiry" and not args.me:
             p.error("watch inbox|prs|cloud needs --me <coordinator>")
         return unlocked[args.cmd](args)
     if args.cmd == "decision":
         return decision_cmd(args)
+    if args.cmd == "update":
+        return update_cmd(args)
     if args.cmd in ("unwait", "up"):
         return queue_edit_cmd(args)
     if args.cmd in ("park", "unpark"):
@@ -1579,7 +2055,7 @@ def main():
         queue = state["queue"][args.cls]
         if args.cmd == "wait":
             code, text = queue_entry(state, roster, args.cls, args.id, args.coordinator, args.holder, args.minutes,
-                                     args.gib, args.commands, args.worktree, args.priority, args.front)
+                                     args.gib, args.commands, args.worktree, args.priority, args.front, changed_by=args.coordinator)
             if code == 0:
                 save(state, machine)
             print(text)
@@ -1599,6 +2075,8 @@ def main():
                     return 0
             print(f"{args.cls} not held by {args.id}")
             return 3
+        if args.cmd == "admission":
+            return admission_cmd(args, state, machine)
         if args.cmd in ("hold", "ready"):
             for q in queue:
                 if q["id"] == args.id:

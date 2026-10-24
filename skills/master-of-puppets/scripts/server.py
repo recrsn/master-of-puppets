@@ -395,6 +395,9 @@ def render_page(host):
             if parse(h["expiresAt"]) < now:
                 need(("lease", h["id"]), "critical", f"Expired {cls} lease · {ago(parse(h['expiresAt']), now)}",
                      id=h["id"], title=h.get("holder", ""), coord=h.get("coordinator", ""))
+    for cls, hold in (leases.get("admission") or {}).items():
+        need(("admission", cls), "serious", f"{cls} admission hold · {ago(parse(hold['at']), now)}",
+             title=hold.get("reason", ""), coord=hold.get("by", ""))
     for name, c in coords.items():
         if not coord_live(c) and c.get("status") != "idle":
             hb = f"Last heartbeat {ago(parse(c['heartbeat']), now)}" if c.get("heartbeat") else "No heartbeat"

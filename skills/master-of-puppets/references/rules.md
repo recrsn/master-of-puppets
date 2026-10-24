@@ -15,6 +15,14 @@ that `coordinator.py` enforces (`references/setup.md`).
 - Never kill processes. Never take over an expired lease or a live
   coordinator's role without the user's approval.
 - Prefer fix tasks over investigations when two needs tie.
+- Read the shared record before you message a peer: `events`, `inbox`,
+  `ledger`, `who` and `prs --path`. Never send, or ask for, a release, drain
+  or cleanup receipt; the release event is the record (`references/leases.md`).
+- A change that every coordinator must see is a command, not a message:
+  admission holds, rule and config changes (`--reason`), helper updates
+  (`update`), member handoffs (`member transfer`, `member accept`), and
+  questions for the user that concern every coordinator
+  (`decision add --scope machine`). `references/protocol.md` has the table.
 
 ## Member limits
 
