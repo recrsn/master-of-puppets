@@ -34,7 +34,7 @@ not write product code.
 | `scripts/coordinator.py` | Coordinator commands: roster and members, streams, leases, messaging, shared-record reads, watchers, config, update votes and install. Run with `python3 -I`; the docstring lists every command. |
 | `scripts/puppet.py` | Member commands: roster, whoami, memory list, the shared-record reads (`inbox`, `ledger`, `events`, `who`, `sizes`), and for the member's own lease `request`, `await-grant`, `extend` (asks for more time) and `release`. It cannot grant or extend. Members run only this file. |
 | `scripts/moplib.py` | State code that both CLIs import. |
-| `scripts/server.py` | The one dashboard, on `http://localhost:4720/`, with the page shell `scripts/dashboard.html`: host values, "Needs you" first, the work list, lease lanes, and coordinators with the ledger in a drawer; a Wall mode for a shared screen. Live by SSE. Exits with "already serving" when one runs. |
+| `scripts/server.py` | The one dashboard, on `http://localhost:4720/`, with the page shell `scripts/dashboard.html`: host values and page links on every page. Dashboard: "Needs you" first, the work list and lease lanes. Events: coordinators and the ledger. Config and Rules: edit machine, class and project config and memory rules. Live by SSE. Exits with "already serving" when one runs. |
 
 The live copies of `coordinator.py`, `puppet.py` and `moplib.py` are in
 `$MACHINE_LEASE_DIR` (default `~/.local/state/machine-leases`); every session
