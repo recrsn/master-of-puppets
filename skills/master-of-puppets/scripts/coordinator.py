@@ -276,9 +276,10 @@ def changes(old, new):
 PENDING = []
 
 
-def announce(by, message):
-    """Queue a rule change for every live peer; main sends it after the command releases the lock."""
-    PENDING.append((by, message))
+def announce(by, message, members=False):
+    """Queue a rule change for every live coordinator, and every live member when members is set;
+    main sends it after the command releases the lock."""
+    PENDING.append((by, message, members))
 
 
 def record_config(by, reason, what, old, new):
@@ -288,7 +289,7 @@ def record_config(by, reason, what, old, new):
     note(by, f"config {what}: " + ("; ".join(f"{k} {json.dumps(a)} -> {json.dumps(b)}" for k, (a, b) in diff.items()) or "no change")
          + (f" (reason: {reason})" if reason else ""))
     announce(by, f"CONFIG {what} by {by}: " + ("; ".join(f"{k} {json.dumps(a)} -> {json.dumps(b)}" for k, (a, b) in diff.items()) or "no change")
-             + (f" (reason: {reason})" if reason else ""))
+             + (f" (reason: {reason})" if reason else ""), members=True)
 
 
 def config_cmd(args):
@@ -1055,14 +1056,23 @@ def record_update_answer(digest, yes, answer):
     log(f"update {'approve' if yes else 'reject'} {digest} by=dashboard")
 
 
-def broadcast(sender, message):
-    """Inbox record, then direct delivery to every live peer coordinator (say without --to)."""
+def broadcast(sender, message, members=False):
+    """Inbox record, then direct delivery to every live peer coordinator (say without --to).
+    With members, also to every live member of a live coordinator, so no coordinator relays it."""
     say(sender, message)
     roster = load_roster()
-    text = f"[{sender} via coordinator.py say] {message}"
+    text = f"[{sender} via coordinator.py] {message}"
     for n, c in roster["coordinators"].items():
         if n != sender and live(c):
             print(deliver(n, c.get("tool"), c.get("sessionId"), text))
+    if not members:
+        return
+    for coord, mlist in roster["members"].items():
+        if not live(roster["coordinators"].get(coord)):
+            continue
+        for m in mlist:
+            if m.get("status") != "done":
+                print(deliver(m["name"], m.get("tool"), m.get("sessionId"), text))
 
 
 def update_cmd(args):
@@ -1159,7 +1169,7 @@ def memory_cmd(args):
             write_json(path, data)
             log(f"memory add {name} {entry['id']} by={args.by}{reason_field(args.reason)}")
             note(args.by, f"memory {name} {entry['id']} added: {args.text}" + (f" (reason: {args.reason})" if args.reason else ""))
-            announce(args.by, f"MEMORY {name} {entry['id']} added by {args.by}: {args.text}" + (f" (reason: {args.reason})" if args.reason else ""))
+            announce(args.by, f"MEMORY {name} {entry['id']} added by {args.by}: {args.text}" + (f" (reason: {args.reason})" if args.reason else ""), members=True)
             print(entry["id"])
             return 0
         entry = next((x for x in data["entries"] if x["id"] == args.id), None)
@@ -1179,7 +1189,7 @@ def memory_cmd(args):
         write_json(path, data)
         log(f"memory {args.mcmd} {name} {args.id} by={args.by}{reason_field(args.reason)}")
         note(args.by, f"memory {name} {args.id} {change}" + (f" (reason: {args.reason})" if args.reason else ""))
-        announce(args.by, f"MEMORY {name} {args.id} {change} by {args.by}" + (f" (reason: {args.reason})" if args.reason else ""))
+        announce(args.by, f"MEMORY {name} {args.id} {change} by {args.by}" + (f" (reason: {args.reason})" if args.reason else ""), members=True)
         return 0
     finally:
         unlock()
@@ -2115,6 +2125,6 @@ def main():
 
 if __name__ == "__main__":
     code = main()
-    for by, message in PENDING:
-        broadcast(by, message)
+    for by, message, members in PENDING:
+        broadcast(by, message, members)
     sys.exit(code)
