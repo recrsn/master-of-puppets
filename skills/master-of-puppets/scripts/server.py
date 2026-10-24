@@ -10,10 +10,11 @@ Inputs ($MACHINE_LEASE_DIR, default ~/.local/state/machine-leases):
   dashboard/<coordinator>-state.json (one per coordinator).
 The page is rendered in memory when an input changes and every 30 s (ETAs and
 heartbeat age). Every 5 s the server samples the host (CPU, load, memory, swap, disk).
-  /            the page (shell: dashboard.html). Desk mode: host values in the header,
-               "Needs you" first (grouped, alarms first), the work list, then the lease
-               lanes; coordinators and the ledger open in a drawer. Wall mode: the
-               same, large, for a shared screen (add ?mode=wall to the URL)
+Pages share one shell (dashboard.html) with host values and the page links in the header:
+  /            "Needs you" first (grouped, alarms first), the work list, then the lease lanes
+  /events      coordinators, then the event log (ledger.jsonl), newest first
+  /config      machine limits, lease classes and project settings, editable
+  /rules       machine and project memory (rules and notes), editable
   POST /park   {"action": "park"|"unpark", "coord", "name", "until"?} from the Park and Unpark
                buttons: runs `coordinator.py park|unpark ... --notify`, so the coordinator is told.
   POST /queue  {"action": "up"|"unwait", "cls", "id"} from the page's Move up and Cancel
@@ -22,8 +23,13 @@ heartbeat age). Every 5 s the server samples the host (CPU, load, memory, swap, 
   POST /decide {"coord", "id", "choice"} from a decision's option buttons: runs
                `coordinator.py decision answer --by C --id ID --choice N --notify`, so the
                coordinator gets the user's answer. Only the option number crosses the post.
+  POST /config {"cmd": "set-machine"|"set-class"|"remove-class"|"set-project", "args", "reason"?} from
+               the Config page: runs `coordinator.py config <cmd> --by user ...`, which records the
+               change and tells every live coordinator and member.
+  POST /memory {"action": "add"|"update"|"remove", "scope", "id"?, "text"?, "kind"?, "reason"?} from
+               the Rules page: runs `coordinator.py memory <action> --by user ...`, which tells them too.
   Posts: same-origin JSON with X-Requested-By only.
-  /events      text/event-stream: `update` (page changed) and `host` (JSON sample)
+  /stream      text/event-stream: `update` (a page changed) and `host` (JSON sample)
   /host.json   the latest host sample
   /health      "ok <version>"
 """
@@ -42,6 +48,11 @@ import sys
 import threading
 import time
 import urllib.request
+
+# python3 -I keeps the script's own directory off sys.path; moplib is its sibling.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
+from moplib import CLASS_NAME, MEMORY, load_machine, load_project, registry  # noqa: E402
 
 DIR = os.path.expanduser(os.environ.get("MACHINE_LEASE_DIR") or "~/.local/state/machine-leases")
 DEFAULT_REGISTRY = {
@@ -126,12 +137,13 @@ STALE_MINUTES = 30
 PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
 KIND_LABEL = {"warn": "Blocked", "work": "In progress", "ok": "On track", "done": "Done"}
 KIND_DOT = {"warn": "blocked", "work": "progress", "ok": "ontrack", "done": "done"}
-# Needs you groups, in order: key, label, wall label, dot, color of the "ago" time
-NEED_GROUPS = [("alarm", "Alarms", "alarms", "blocked", "danger"), ("decision", "Decisions", "decisions", "decision", "t2"),
-               ("blocked", "Blocked", "blocked", "blocked", "t2"), ("stale", "Stale ({}+ min)", "stale", "stale", "warn"),
-               ("revisit", "Revisit", "revisit", "stale", "warn")]
+# Needs you groups, in order: key, label, dot, color of the "ago" time
+NEED_GROUPS = [("alarm", "Alarms", "blocked", "danger"), ("decision", "Decisions", "decision", "t2"),
+               ("blocked", "Blocked", "blocked", "t2"), ("stale", "Stale ({}+ min)", "stale", "warn"),
+               ("revisit", "Revisit", "stale", "warn")]
 NEED_CAP = 8  # rows shown per Needs you group before "Show N more" (alarms are never capped)
-WALL_ROWS = 8
+EVENT_ROWS = 200
+PAGES = (("/", "Dashboard"), ("/events", "Events"), ("/config", "Config"), ("/rules", "Rules"))
 
 
 def fmt(v, unit=""):
@@ -223,10 +235,6 @@ def dom_id(*parts):
     return re.sub(r"[^A-Za-z0-9_-]+", "-", "-".join(str(p) for p in parts))
 
 
-def clamp(pct):
-    return max(0.0, min(100.0, float(pct)))
-
-
 def host_mini(t):
     """Compact host value for the header; the page script repaints it on each host event."""
     return (
@@ -235,13 +243,18 @@ def host_mini(t):
     )
 
 
-def host_wall(t):
-    """Large host tile for wall mode."""
-    return (
-        f'<div class="wtile" data-host="{t["id"]}" data-sev="{t["sev"]}" title="{e(t["label"] + " " + t["value"] + " · " + t["sub"])}">'
-        f'<div class="wtile-h"><span class="wl">{e(t["label"])}</span><span class="hv" data-k="value">{e(t["value"])}</span></div>'
-        f'<div class="hbar"><i class="fill" style="width:{clamp(t["pct"]):.1f}%"></i></div></div>'
+def shell(current, host, main):
+    """A full page: the shared header (brand, live dot, host values, page links) and main."""
+    links = "".join(f'<a class="mode" href="{path}"{' aria-current="page"' if path == current else ""}>{label}</a>'
+                    for path, label in PAGES)
+    header = (
+        '<header class="top"><div class="top-l"><span class="brand">Master of puppets</span>'
+        f'<span class="live" title="Live · updated {time.strftime("%H:%M:%S")}"></span></div><div class="top-r">'
+        f'<div class="minis" id="minis">{"".join(host_mini(t) for t in host_tiles(host))}</div>'
+        f'<nav class="modes">{links}</nav></div></header>'
     )
+    with open(PAGE) as f:
+        return f.read().replace("{{BODY}}", header + main)
 
 
 def open_button(href):
@@ -486,10 +499,10 @@ def render_page(host):
                 n["when"] is None, n["when"] or now)
 
     groups = []
-    for gkey, label, short, dot, ago_cls in NEED_GROUPS:
+    for gkey, label, dot, ago_cls in NEED_GROUPS:
         items = sorted(((k, n) for k, n in needs.items() if group_of(k, n) == gkey), key=need_order)
         if items:
-            groups.append({"key": gkey, "label": label.format(STALE_MINUTES), "short": short, "dot": dot, "ago": ago_cls,
+            groups.append({"key": gkey, "label": label.format(STALE_MINUTES), "dot": dot, "ago": ago_cls,
                            "items": items})
     need_count = len(needs)
     worst = "danger" if any(n["sev"] == "critical" for n in needs.values()) else "warn" if needs else "ok"
@@ -619,7 +632,7 @@ def render_page(host):
 
     # ---- leases: one lane per class, running then queued entries
     leases_on = roster.get("leases") == "on" or any(holders(leases, c) or queue.get(c) for c in classes)
-    lease_panel = wall_leases = ""
+    lease_panel = ""
     if leases_on:
         def lane_status(cls):
             cur, cap = holders(leases, cls), capacity.get(cls)
@@ -669,7 +682,7 @@ def render_page(host):
                             f"{prio}{eta_text(cls, q['id'])}", "", buttons))
             return out
 
-        desk_lanes = wall_lanes = ""
+        desk_lanes = ""
         for cls in classes:
             text, color = lane_status(cls)
             cap = capacity.get(cls)
@@ -688,21 +701,14 @@ def render_page(host):
                 for pos, h, dur, dcolor, req, detail, commands, buttons in entries)
             desk_lanes += (f'<div class="lane"><div class="lane-h" title="{e(desc)}"><b>{e(cls)}</b><span class="{color}">{e(text)}</span></div>'
                            f'{rows}</div>')
-            wall_rows = "".join(
-                f'<div class="wq"><span class="q-pos">{pos}</span><span class="q-t"><span class="row-t">{e(h.get("holder", ""))}</span>'
-                f'<span class="q-req">{req}</span></span><span class="mono {dcolor}">{e(dur)}</span></div>'
-                for pos, h, dur, dcolor, req, *_ in entries)
-            wall_lanes += f'<div class="lane"><div class="lane-h"><b>{e(cls)}</b><span class="{color}">{e(text)}</span></div>{wall_rows}</div>'
         ends = [end for cls in classes for kind, _, end in eta[cls].values() if kind == "queued"]
         clears = f"Queue clears ~{local(max(ends))}" if ends else "Queue empty"
         lease_panel = (
             f'<section class="sec leases" id="leases"><div class="sec-h"><h2>Leases</h2>'
             f'<span class="n">{clears}</span></div>{desk_lanes}</section>'
         )
-        wall_leases = (f'<section class="w-leases"><div class="lane-h"><span class="wl">Leases</span>'
-                       f'<span class="wl t3">{clears}</span></div>{wall_lanes}</section>')
 
-    # ---- coordinators (in the ledger drawer)
+    # ---- coordinators (top of the Events page)
     coord_rows = ""
     for name in sorted(set(coords) | set(sources)):
         c, src = coords.get(name, {}), sources.get(name, {})
@@ -729,10 +735,10 @@ def render_page(host):
         )
     coord_rows = coord_rows or '<p class="none">None</p>'
 
-    # ---- ledger drawer
+    # ---- event log: the ledger, newest first
     ledger = []
     try:
-        for line in reversed(open(os.path.join(DIR, "ledger.jsonl")).read().splitlines()[-20:]):
+        for line in reversed(open(os.path.join(DIR, "ledger.jsonl")).read().splitlines()[-EVENT_ROWS:]):
             try:
                 ledger.append(json.loads(line))
             except ValueError:
@@ -742,22 +748,14 @@ def render_page(host):
 
     def entry(x):
         try:
-            at = local(parse(x.get("at", "")))
+            at = parse(x.get("at", "")).astimezone().strftime("%b %-d %H:%M")
         except (TypeError, ValueError):
-            at = str(x.get("at", ""))[11:16]
+            at = str(x.get("at", ""))[:16]
         return (f'<div class="entry"><span class="mono sm t3">{e(" · ".join(p for p in (at, x.get("by", "")) if p))}</span>'
                 f'<p class="t2">{e(x.get("text", ""))}</p></div>')
 
     ledger_html = "".join(entry(x) for x in ledger) or '<div class="entry t3">Empty</div>'
 
-    header = (
-        '<header class="top"><div class="top-l"><span class="brand">Master of puppets</span>'
-        f'<span class="live" title="Live · updated {time.strftime("%H:%M:%S")}"></span></div><div class="top-r">'
-        f'<div class="minis" id="minis">{"".join(host_mini(t) for t in tiles)}</div>'
-        '<div class="modes"><button type="button" class="mode" data-mode-btn="desk">Desk</button>'
-        '<button type="button" class="mode" data-mode-btn="wall">Wall</button>'
-        '<button type="button" class="ghost" data-ledger-open>Ledger</button></div></div></header>'
-    )
     desk = (
         '<main class="desk"><div class="col-main">'
         f'<section class="sec needs"><div class="sec-h"><h2>Needs you</h2><span class="n {worst}">{need_count}</span></div>'
@@ -765,32 +763,288 @@ def render_page(host):
         + f'</section><section class="sec"><div class="sec-h"><h2>Work</h2><span class="n">{work_count}</span></div>{board}</section>'
         f'{parked_html}</div><aside class="col-side">{lease_panel}</aside></main>'
     )
-    flat = [(g, n) for g in groups for _, n in g["items"]]
-    group_counts = "".join(f'<span><i class="dot {g["dot"]}"></i><b>{len(g["items"])}</b>{e(g["short"])}</span>' for g in groups)
-    wall_rows = "".join(
-        f'<div class="wn"><span class="dot {g["dot"]}"></span><span class="row-t">{e(n["title"] or n["reasons"][0])}</span>'
-        f'<span class="mono {g["ago"]}">{ago_short(n["when"], now) if n["when"] else ""}</span></div>'
-        for g, n in flat[:WALL_ROWS])
-    wall_more = f'<div class="wn t3">{len(flat) - WALL_ROWS} more</div>' if len(flat) > WALL_ROWS else ""
-    wall = (
-        f'<main class="wall"><div class="w-host">{"".join(host_wall(t) for t in tiles)}</div><div class="w-body">'
-        f'<section class="w-needs"><div class="w-count"><div class="w-big"><b class="{worst}">{need_count}</b><span>Needs you</span></div>'
-        f'<div class="w-groups">{group_counts}</div></div>'
-        f'<div class="w-list">{wall_rows}{wall_more}</div></section>{wall_leases}</div></main>'
+    events = (
+        '<main class="page"><section class="sec"><div class="sec-h"><h2>Coordinators</h2></div>'
+        f'<div class="coords">{coord_rows}</div></section>'
+        f'<section class="sec"><div class="sec-h"><h2>Events</h2><span class="n">latest {len(ledger)}</span></div>'
+        f'<div class="log">{ledger_html}</div></section></main>'
     )
-    drawer = (
-        '<div class="scrim" data-ledger-close></div><aside class="drawer" aria-label="Ledger"><div class="drawer-h">'
-        '<span class="brand">Ledger</span><button type="button" class="ghost" data-ledger-close>Close</button></div>'
-        f'<div class="drawer-b"><div class="coords"><span class="sub">Coordinators</span>{coord_rows}</div>{ledger_html}</div></aside>'
-    )
-    with open(PAGE) as f:
-        return f.read().replace("{{BODY}}", header + desk + wall + drawer)
+    return {"/": shell("/", host, desk), "/events": shell("/events", host, events),
+            "/config": shell("/config", host, render_config()), "/rules": shell("/rules", host, render_rules())}
+
+
+# ---------------------------------------------------------------- config and rules pages
+
+# set-machine fields: config key, label, flag, type, hint
+MACHINE_FIELDS = [
+    ("reserveGiB", "Reserve memory", "--reserve-gib", float, "GiB kept free of leases"),
+    ("reserveCpus", "Reserve cores", "--reserve-cpus", float, "cores kept free of leases"),
+    ("sizeMargin", "Size margin", "--size-margin", float, "fraction a request may be below the observed peak"),
+    ("diskFloorGiB", "Disk floor", "--disk-floor-gib", float, "GiB free; below it no lease is granted"),
+    ("diskAlarmGiB", "Disk alarm", "--disk-alarm-gib", float, "GiB free; below it the host check raises the alarm"),
+    ("maxSwapouts", "Max swap-outs", "--max-swapouts", int, "per swap interval"),
+    ("swapIntervalS", "Swap interval", "--swap-interval-s", int, "seconds"),
+    ("loadPerCore", "Load per core", "--load-per-core", float, "load average limit per core"),
+    ("dashboardPort", "Dashboard port", "--dashboard-port", int, "takes effect when the server restarts"),
+]
+CLASS_FIELDS = [
+    ("description", "Description", "--description", str, ""),
+    ("defaultGiB", "Default memory", "--default-gib", float, "GiB; 0 = not memory-bound"),
+    ("defaultCpus", "Default cores", "--default-cpus", float, "0 = not CPU-bound"),
+    ("maxMinutes", "Max minutes", "--max-minutes", int, "0 = no limit"),
+]
+PROJECT_FIELDS = [
+    ("name", "Name", "--name", str, ""),
+    ("baseBranch", "Base branch", "--base-branch", str, ""),
+    ("mergeMethod", "Merge method", "--merge-method", ("merge", "squash", "rebase", "auto"), "auto: the merge queue or repository default"),
+    ("leasesDefault", "Leases", "--leases-default", ("on", "off"), "default for new members"),
+]
+PROJECT_CLASS_FIELDS = [
+    ("maxMinutes", "Max minutes", "--max-minutes", int, ""),
+    ("minutesMode", "Minutes", "--minutes", ("learn", "fixed"), "learn: suggest from recorded runs"),
+    ("peakMode", "Peak", "--peak", ("learn", "fixed"), ""),
+    ("defaultGiB", "Default memory", "--default-gib", float, "GiB"),
+    ("defaultCpus", "Default cores", "--default-cpus", float, ""),
+]
+PAIRS = re.compile(r"^\s*([A-Z][A-Z0-9_-]{0,23})\s*=\s*(\d{1,6})\s*$")
+
+
+def known_projects():
+    """{key: project} for configured projects whose stored root is an existing absolute path;
+    only these can be edited, since the coordinator finds a project by its root."""
+    out = {}
+    for path in sorted(glob.glob(os.path.join(DIR, "projects", "*.json"))):
+        raw = load(path, {})
+        root = raw.get("root") or ""
+        if raw.get("configured") and os.path.isabs(root) and os.path.isdir(root):
+            key = os.path.basename(path)[:-5]
+            out[key] = load_project(key, root)
+    return out
+
+
+def input_html(name, label, value, kind, hint=""):
+    """One labelled form field. kind: int, float, str, or a tuple of choices."""
+    shown = "" if value is None else value if isinstance(value, str) else fmt(value)
+    if isinstance(kind, tuple):
+        ctl = (f'<select name="{e(name)}">'
+               + "".join(f'<option{" selected" if c == value else ""}>{e(c)}</option>' for c in kind) + "</select>")
+    elif kind is str:
+        ctl = f'<input name="{e(name)}" value="{e(shown)}">'
+    else:
+        step = "1" if kind is int else "any"
+        ctl = f'<input name="{e(name)}" type="number" step="{step}" min="0" value="{e(shown)}">'
+    return (f'<label class="f{" wide" if name == "description" else ""}"><span class="f-l">{e(label)}</span>{ctl}'
+            + (f'<span class="f-h">{e(hint)}</span>' if hint else "") + "</label>")
+
+
+def form_html(post, fields, hidden=None, extra="", button="Save"):
+    """A form the page script posts as JSON with only the changed fields (hidden ones always)."""
+    keep = "".join(f'<input type="hidden" name="{e(k)}" value="{e(v)}">' for k, v in (hidden or {}).items())
+    return (f'<form class="cfg" data-post="{e(post)}">{keep}<div class="fields">{fields}</div>'
+            f'<div class="f-acts"><input name="__reason" class="reason" placeholder="Reason (optional)" aria-label="Reason">'
+            f'<button class="btn" type="submit">{button}</button>{extra}</div></form>')
+
+
+def render_config():
+    machine = load_machine()
+    classes = registry(machine)
+    slots = machine.get("maxSlots") or {}
+    out = ['<main class="page"><p class="t3">Saving runs <span class="mono">coordinator.py config</span>, which records '
+           'the change in Events and tells every live coordinator and member.</p>']
+    fields = "".join(input_html(k, label, machine.get(k), kind, hint) for k, label, _, kind, hint in MACHINE_FIELDS)
+    fields += "".join(input_html(f"maxSlots.{c}", f"Max slots · {c}", slots.get(c, 0), int, "0 = no cap") for c in classes)
+    out.append(f'<section class="sec"><div class="sec-h"><h2>Machine</h2></div>'
+               f'{form_html("/config", fields, {"cmd": "set-machine"})}</section>')
+
+    rows = ""
+    for name, c in classes.items():
+        fields = "".join(input_html(k, label, c.get(k), kind, hint) for k, label, _, kind, hint in CLASS_FIELDS)
+        settle = ", ".join(f"{o}={v}" for o, v in (c.get("settle") or {}).items())
+        fields += input_html("settle", "Settle", settle, str, "OTHER=SECONDS, …: after a grant, OTHER waits")
+        remove = (f'<button type="button" class="ghost cancel" data-remove-class="{e(name)}">Remove class</button>')
+        rows += (f'<div class="card"><div class="card-h mono">{e(name)}</div>'
+                 f'{form_html("/config", fields, {"cmd": "set-class", "name": name}, remove)}</div>')
+    add = (input_html("name", "Name", "", str, "upper case, for example BROWSER")
+           + "".join(input_html(k, label, None, kind, hint) for k, label, _, kind, hint in CLASS_FIELDS))
+    rows += (f'<div class="card"><div class="card-h">New class</div>'
+             f'{form_html("/config", add, {"cmd": "set-class"}, button="Add class")}</div>')
+    out.append(f'<section class="sec"><div class="sec-h"><h2>Lease classes</h2><span class="n">{len(classes)}</span></div>{rows}</section>')
+
+    projects = known_projects()
+    rows = ""
+    for key, proj in projects.items():
+        fields = "".join(input_html(k, label, proj.get(k), kind, hint) for k, label, _, kind, hint in PROJECT_FIELDS)
+        body = form_html("/config", fields, {"cmd": "set-project", "project": key})
+        for cls, pc in proj["classes"].items():
+            cf = "".join(input_html(k, label, pc.get(k), kind, hint) for k, label, _, kind, hint in PROJECT_CLASS_FIELDS)
+            body += (f'<div class="sub-h mono">{e(cls)}</div>'
+                     + form_html("/config", cf, {"cmd": "set-project", "project": key, "class": cls}))
+        rows += (f'<details class="card" id="{dom_id("proj", key)}"><summary class="card-h">'
+                 f'<span>{e(proj.get("name") or key)}</span><span class="mono t3 wrap">{e(proj["root"])}</span></summary>{body}</details>')
+    out.append(f'<section class="sec"><div class="sec-h"><h2>Projects</h2><span class="n">{len(projects)}</span></div>'
+               + (rows or '<p class="none">None</p>') + "</section></main>")
+    return "".join(out)
+
+
+def render_rules():
+    projects = known_projects()
+    scopes = [("machine", "Machine", None)]
+    for path in sorted(glob.glob(os.path.join(MEMORY, "*.json"))):
+        key = os.path.basename(path)[:-5]
+        if key != "machine" and (load(path, {}).get("entries") or key in projects):
+            scopes.append((key, (projects.get(key) or {}).get("name") or key, (projects.get(key) or {}).get("root")))
+    scopes += [(k, p.get("name") or k, p["root"]) for k, p in projects.items() if k not in {s[0] for s in scopes}]
+    out = ['<main class="page"><p class="t3">Saving runs <span class="mono">coordinator.py memory</span>, which records '
+           'the change in Events and tells every live coordinator and member. Limits are not rules: set them on Config.</p>']
+    for key, label, root in scopes:
+        entries = load(os.path.join(MEMORY, f"{key}.json"), {}).get("entries", [])
+        editable = key == "machine" or bool(root)
+        rows = ""
+        for x in entries:
+            meta = meta_line(x.get("id", ""), x.get("kind", "rule"), x.get("by", ""), x.get("at", "")[:10])
+            if editable:
+                fields = (input_html("kind", "Kind", x.get("kind", "rule"), ("rule", "note"))
+                          + f'<label class="f wide"><span class="f-l">Text</span><textarea name="text" data-always rows="3">{e(x.get("text", ""))}</textarea></label>')
+                remove = f'<button type="button" class="ghost cancel" data-remove-rule="{e(x.get("id", ""))}" data-scope="{e(key)}">Remove</button>'
+                body = form_html("/memory", fields, {"action": "update", "scope": key, "id": x.get("id", "")}, remove)
+            else:
+                body = f'<p class="t2">{e(x.get("text", ""))}</p>'
+            rows += f'<div class="card">{meta}{body}</div>'
+        if editable:
+            fields = (input_html("kind", "Kind", "rule", ("rule", "note"))
+                      + '<label class="f wide"><span class="f-l">Text</span><textarea name="text" rows="3"></textarea></label>')
+            rows += f'<div class="card"><div class="card-h">New entry</div>{form_html("/memory", fields, {"action": "add", "scope": key}, button="Add")}</div>'
+        else:
+            rows += '<p class="none">Read only: this project has no stored root.</p>'
+        out.append(f'<section class="sec"><div class="sec-h"><h2>{e(label)}</h2><span class="n">{len(entries)}</span>'
+                   + (f'<span class="mono sm t3 wrap">{e(root)}</span>' if root else "") + f"</div>{rows}</section>")
+    return "".join(out) + "</main>"
+
+
+def coordinator(cmd):
+    """Run coordinator.py with argv cmd; returns (ok, output lines). A JSON dump on success is
+    left out: the page refreshes with the new values."""
+    try:
+        r = subprocess.run([sys.executable, "-I", COORDINATOR, *cmd], capture_output=True, text=True, timeout=180)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, [f"coordinator.py failed: {exc}"]
+    if r.returncode == 0:
+        return True, ["Saved"]
+    lines = [x for x in (r.stdout + r.stderr).splitlines() if x.strip()]
+    return False, lines or [f"coordinator.py exit {r.returncode}"]
+
+
+def typed(kind, v):
+    """v as a flag value of kind, else raise ValueError."""
+    v = str(v).strip()
+    if isinstance(kind, tuple):
+        if v not in kind:
+            raise ValueError(v)
+        return v
+    if kind is str:
+        if len(v) > 500 or "\n" in v:
+            raise ValueError(v)
+        return v
+    x = kind(v)
+    if x < 0:
+        raise ValueError(v)
+    return str(x)
+
+
+def config_action(cmd, args, reason):
+    """Map a Config form post to `coordinator.py config CMD --by user ...`."""
+    if not isinstance(args, dict):
+        return False, ["bad request"]
+    argv = ["config", cmd, "--by", "user"] + (["--reason", reason] if reason else [])
+    try:
+        if cmd == "set-machine":
+            flags = {k: (flag, kind) for k, _, flag, kind, _ in MACHINE_FIELDS}
+            for k, v in args.items():
+                if k.startswith("maxSlots."):
+                    cls = k.split(".", 1)[1]
+                    if cls not in registry():
+                        raise ValueError(k)
+                    argv += ["--max-slots", f"{cls}={int(v)}"]
+                elif k in flags and str(v).strip():
+                    argv += [flags[k][0], typed(flags[k][1], v)]
+                else:
+                    raise ValueError(k)
+        elif cmd in ("set-class", "remove-class"):
+            name = str(args.pop("name", ""))
+            if not CLASS_NAME.match(name):
+                return False, ["Class names are upper case, for example BROWSER or TEST-DB"]
+            argv.append(name)
+            if cmd == "set-class":
+                flags = {k: (flag, kind) for k, _, flag, kind, _ in CLASS_FIELDS}
+                if "settle" in args:
+                    want = {}
+                    for item in filter(None, (x.strip() for x in str(args.pop("settle")).split(","))):
+                        m = PAIRS.match(item)
+                        if not m:
+                            return False, [f"Settle wants OTHER=SECONDS, got {item}"]
+                        want[m.group(1)] = int(m.group(2))
+                    have = (registry().get(name) or {}).get("settle") or {}
+                    for other in set(have) | set(want):
+                        if want.get(other, 0) != have.get(other, 0):
+                            argv += ["--settle", f"{other}={want.get(other, 0)}"]
+                for k, v in args.items():
+                    if k not in flags or (flags[k][1] is not str and not str(v).strip()):
+                        raise ValueError(k)
+                    argv += [flags[k][0], typed(flags[k][1], v)]
+        elif cmd == "set-project":
+            proj = known_projects().get(str(args.pop("project", "")))
+            if not proj:
+                return False, ["Unknown project"]
+            argv += ["--root", proj["root"]]
+            cls = args.pop("class", None)
+            fields = PROJECT_FIELDS
+            if cls is not None:
+                if cls not in proj["classes"]:
+                    raise ValueError(cls)
+                argv += ["--class", cls]
+                fields = PROJECT_CLASS_FIELDS
+            flags = {k: (flag, kind) for k, _, flag, kind, _ in fields}
+            for k, v in args.items():
+                if k not in flags or not str(v).strip():
+                    raise ValueError(k)
+                argv += [flags[k][0], typed(flags[k][1], v)]
+        else:
+            return False, ["bad request"]
+    except (ValueError, TypeError):
+        return False, ["bad request"]
+    return coordinator(argv)
+
+
+MEMORY_ID = re.compile(r"^m-[0-9a-f]{1,32}$")
+
+
+def memory_action(action, scope, entry_id, text, kind, reason):
+    """Map a Rules form post to `coordinator.py memory ACTION --by user ...`."""
+    if action not in ("add", "update", "remove") or (action != "add" and not MEMORY_ID.match(entry_id)):
+        return False, ["bad request"]
+    argv = ["memory", action, "--by", "user"] + (["--reason", reason] if reason else [])
+    if scope != "machine":
+        proj = known_projects().get(scope)
+        if not proj:
+            return False, ["This project has no stored root; its rules are read only"]
+        argv += ["--project-root", proj["root"]]
+    if action != "add":
+        argv += ["--id", entry_id]
+    if action != "remove":
+        if not text.strip() or len(text) > 8000:
+            return False, ["Text is empty or too long"]
+        argv += ["--text", text.strip()]
+    if kind:
+        if kind not in ("rule", "note") or action == "remove":
+            return False, ["bad request"]
+        argv += ["--kind", kind]
+    return coordinator(argv)
 
 
 # ---------------------------------------------------------------- server
 
 version = 0
-page = b""
+pages = {}  # path -> rendered bytes
 page_hash = None
 host = {}
 host_version = 0
@@ -800,6 +1054,7 @@ changed = threading.Condition()
 def inputs():
     paths = [os.path.join(DIR, n) for n in ("leases.json", "roster.json", "ledger.jsonl", "config.json")]
     paths += glob.glob(os.path.join(DIR, "projects", "*.json")) + glob.glob(os.path.join(DIR, "dashboard", "*-state.json"))
+    paths += glob.glob(os.path.join(MEMORY, "*.json"))
     out = []
     for p in paths:
         try:
@@ -810,16 +1065,16 @@ def inputs():
 
 
 def rerender():
-    global version, page, page_hash
+    global version, pages, page_hash
     try:
-        body = render_page(host).encode()
-    except Exception as exc:  # keep serving the last good page
+        out = {path: body.encode() for path, body in render_page(host).items()}
+    except Exception as exc:  # keep serving the last good pages
         print(f"render failed: {exc!r}", file=sys.stderr, flush=True)
         return
     # The timestamp alone must not trigger an update.
-    digest = hashlib.sha256(re.sub(rb"updated [0-9:]+", b"", body)).hexdigest()
+    digest = hashlib.sha256(re.sub(rb"updated [0-9:]+", b"", b"".join(out[p] for p, _ in PAGES))).hexdigest()
     with changed:
-        page = body
+        pages = out
         if digest != page_hash:
             page_hash = digest
             version += 1
@@ -923,7 +1178,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?")[0]
-        if path not in ("/queue", "/park", "/decide"):
+        if path not in ("/queue", "/park", "/decide", "/config", "/memory"):
             self.send_response(404)
             self.end_headers()
             return
@@ -932,8 +1187,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
         try:
-            req = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 4096)))
-            if path == "/decide":
+            req = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 65536)))
+            reason = str(req.get("reason") or "").strip()[:500]
+            if path == "/config":
+                ok, lines = config_action(str(req.get("cmd", "")), req.get("args"), reason)
+            elif path == "/memory":
+                ok, lines = memory_action(str(req.get("action", "")), str(req.get("scope", "")), str(req.get("id") or ""),
+                                          str(req.get("text") or ""), str(req.get("kind") or ""), reason)
+            elif path == "/decide":
                 choice = req.get("choice")
                 ok, lines = decide_action(str(req.get("coord", "")), str(req.get("id", "")),
                                           choice if type(choice) is int else None)
@@ -955,13 +1216,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
-        if path == "/":
-            self.send(page or render_page(host).encode(), "text/html; charset=utf-8")
+        if path in dict(PAGES):
+            if not pages:
+                rerender()
+            self.send(pages.get(path, b"starting"), "text/html; charset=utf-8")
         elif path == "/host.json":
             self.send(json.dumps(host).encode(), "application/json")
         elif path == "/health":
             self.send(f"ok {version}".encode(), "text/plain")
-        elif path == "/events":
+        elif path == "/stream":
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-store")

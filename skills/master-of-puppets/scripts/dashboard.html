@@ -79,19 +79,13 @@ body[data-stale] .live::before{background:var(--color-cui-red-9)} body[data-stal
 .hs{display:flex;gap:5px;white-space:nowrap;cursor:default}
 .hs .hv{font-family:var(--font-cui-mono);font-variant-numeric:tabular-nums}
 [data-sev=warning] .hv,[data-sev=serious] .hv{color:var(--text-color-cui-warn)} [data-sev=critical] .hv{color:var(--text-color-cui-danger)}
-i.fill{background:var(--color-cui-mauve-9)}
-[data-sev=warning] i.fill,[data-sev=serious] i.fill{background:var(--color-cui-amber-9)} [data-sev=critical] i.fill{background:var(--color-cui-red-9)}
 .modes{display:flex;align-items:center;gap:4px}
-.mode{height:24px;padding:0 8px;border:none;border-radius:4px;font:500 12px/16px var(--font-cui-sans);cursor:pointer;background:transparent;color:var(--text-color-cui-tertiary)}
-html[data-mode=desk] [data-mode-btn=desk],html[data-mode=wall] [data-mode-btn=wall]{background:var(--background-color-cui-neutral-subtle);color:var(--text-color-cui-primary)}
-
-/* Modes */
-main.desk,main.wall{display:none}
-html[data-mode=desk] main.desk,html[data-mode=wall] main.wall{display:flex}
-html[data-mode=wall] .minis{display:none}
+.mode{display:inline-flex;align-items:center;height:24px;padding:0 8px;border-radius:4px;font:500 12px/16px var(--font-cui-sans);text-decoration:none;color:var(--text-color-cui-tertiary)}
+.mode:hover{color:var(--text-color-cui-primary)}
+.mode[aria-current=page]{background:var(--background-color-cui-neutral-subtle);color:var(--text-color-cui-primary)}
 
 /* Desk */
-main.desk{max-width:1280px;margin:0 auto;padding:32px 24px;flex-wrap:wrap;gap:48px;align-items:flex-start}
+main.desk{display:flex;max-width:1280px;margin:0 auto;padding:32px 24px;flex-wrap:wrap;gap:48px;align-items:flex-start}
 .col-main{flex:999 1 560px;min-width:0;display:flex;flex-direction:column;gap:40px}
 .col-side{flex:1 1 300px;max-width:100%;min-width:0;display:flex;flex-direction:column;gap:20px}
 .col-side:empty{display:none}
@@ -152,54 +146,35 @@ details.more>summary::after{content:"Show " attr(data-more) " more"} details.mor
 @keyframes blink{50%{opacity:.25}}
 @media (prefers-reduced-motion:reduce){.dot.live{animation:none}}
 
-/* Wall */
-main.wall{flex-direction:column;gap:56px;padding:40px 48px}
-.w-host{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr));gap:24px 48px}
-.wtile{display:flex;flex-direction:column;gap:10px;min-width:0}
-.wtile-h{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:0 12px}
-.wl{font-size:20px;line-height:28px;color:var(--text-color-cui-secondary)}
-.wtile .hv{flex:none;max-width:100%;font-size:36px;line-height:44px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.hbar{height:4px;border-radius:9999px;background:var(--background-color-cui-neutral);overflow:hidden}
-.hbar i{display:block;height:100%}
-.w-body{display:flex;flex-wrap:wrap;gap:48px 80px;align-items:flex-start}
-.w-needs{flex:1.6 1 560px;min-width:0;display:flex;flex-direction:column;gap:32px}
-.w-count{display:flex;flex-wrap:wrap;align-items:baseline;gap:12px 40px}
-.w-big{display:flex;align-items:baseline;gap:16px}
-.w-big b{font-size:112px;line-height:112px;font-weight:600;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
-.w-big span{font-size:28px;line-height:36px;font-weight:500;color:var(--text-color-cui-secondary)}
-.w-groups{display:flex;flex-wrap:wrap;gap:12px 32px}
-.w-groups>span{display:flex;align-items:center;gap:10px;font-size:24px;line-height:32px;color:var(--text-color-cui-secondary)}
-.w-groups b{font-weight:600;color:var(--text-color-cui-primary);font-variant-numeric:tabular-nums}
-.w-groups .dot,.wn .dot{width:12px;height:12px}
-.w-list{display:flex;flex-direction:column}
-.wn{display:flex;align-items:center;gap:20px;height:52px;border-top:1px solid var(--border-color-cui-neutral);font-size:24px;line-height:32px}
-.wn .mono{flex:none;font-size:22px}
-.wn.t3{font-size:22px}
-.w-leases{flex:1 1 360px;min-width:0;display:flex;flex-direction:column;gap:28px}
-.w-leases .lane{gap:8px}
-.w-leases .lane-h{gap:16px;font-size:24px;line-height:32px}
-.w-leases .lane-h b{letter-spacing:0}
-.wq{display:flex;align-items:baseline;gap:16px;font-size:20px;line-height:28px;color:var(--text-color-cui-secondary)}
-.wq .q-pos{width:16px;font-size:20px}
-.wq .mono{flex:none}
-
-/* Ledger drawer */
-.scrim{display:none;position:fixed;inset:0;z-index:20;background:var(--background-color-cui-overlay)}
-.drawer{display:none;position:fixed;top:0;right:0;bottom:0;z-index:21;width:min(440px,100%);flex-direction:column;background:var(--background-color-cui-base-1);box-shadow:var(--shadow-cui-xl),0 0 0 1px var(--border-color-cui-neutral)}
-html[data-ledger] .scrim{display:block} html[data-ledger] .drawer{display:flex}
-.drawer-h{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border-color-cui-neutral)}
-.drawer-h .ghost{height:28px;padding:0 10px;font-size:14px;line-height:20px}
-.drawer-b{flex:1;overflow:auto;display:flex;flex-direction:column}
-.coords{display:flex;flex-direction:column;gap:10px;padding:16px;border-bottom:1px solid var(--border-color-cui-neutral)}
+/* Events, Config and Rules pages */
+main.page{max-width:960px;margin:0 auto;padding:32px 24px;display:flex;flex-direction:column;gap:32px}
+main.page>p{padding:0 12px;font-size:12px;line-height:16px}
+.log{display:flex;flex-direction:column;border-top:1px solid var(--border-color-cui-neutral)}
+.card{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:6px;background:var(--background-color-cui-base-1);box-shadow:0 0 0 1px var(--border-color-cui-neutral)}
+.card+.card{margin-top:8px}
+.card-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;font-weight:600}
+summary.card-h{cursor:pointer} details.card:not([open])>summary.card-h{margin:-2px 0}
+.sub-h{margin-top:8px;font-size:12px;line-height:16px;font-weight:700;color:var(--text-color-cui-secondary)}
+form.cfg{display:flex;flex-direction:column;gap:12px}
+.fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px 16px}
+.f{display:flex;flex-direction:column;gap:4px;min-width:0} .f.wide{grid-column:1/-1}
+.f-l{font-size:12px;line-height:16px;font-weight:500;color:var(--text-color-cui-secondary)}
+.f-h{font-size:12px;line-height:16px;color:var(--text-color-cui-tertiary)}
+.cfg input,.cfg select,.cfg textarea{width:100%;min-height:28px;padding:4px 8px;border:1px solid var(--border-color-cui-neutral-strong);border-radius:4px;background:var(--background-color-cui-base-2);color:var(--text-color-cui-primary);font:400 14px/20px var(--font-cui-sans)}
+.cfg textarea{resize:vertical;font-family:var(--font-cui-mono);font-size:12px;line-height:18px}
+.cfg input[type=number]{font-family:var(--font-cui-mono);font-size:12px}
+.f-acts{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.f-acts .reason{flex:1 1 220px;width:auto}
+form.cfg:not([data-dirty]) .btn[type=submit]{opacity:.5}
+.coords{display:flex;flex-direction:column;gap:14px;padding:0 12px}
 .coords .none{padding:0}
-.sub{font-size:12px;line-height:16px;font-weight:500;color:var(--text-color-cui-tertiary)}
 .coord{display:flex;flex-direction:column;gap:2px}
 .c-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;font-size:12px;line-height:16px}
 .c-n{font-size:14px;line-height:20px;font-weight:500} a.c-n{color:inherit;text-decoration:none} a.c-n:hover{text-decoration:underline}
 .c-m{margin-left:auto;font-family:var(--font-cui-mono);color:var(--text-color-cui-tertiary);white-space:nowrap}
 .c-s{font-size:12px;line-height:16px;color:var(--text-color-cui-secondary)}
 .notes{margin:4px 0 0;padding-left:16px;font-size:12px;line-height:16px;color:var(--text-color-cui-secondary)}
-.entry{display:flex;flex-direction:column;gap:4px;padding:12px 16px;border-bottom:1px solid var(--border-color-cui-neutral)}
+.entry{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border-bottom:1px solid var(--border-color-cui-neutral)}
 </style>
 <script>
 (() => {
@@ -208,26 +183,21 @@ html[data-ledger] .scrim{display:block} html[data-ledger] .drawer{display:flex}
   const theme = () => { root.dataset.theme = dark.matches ? "dark" : "light"; };
   theme();
   dark.addEventListener("change", theme);
-  const asked = new URLSearchParams(location.search).get("mode");
-  root.dataset.mode = asked === "wall" || asked === "desk" ? asked : localStorage.getItem("mop-mode") || "desk";
 
   // The page body is replaced on each update; this state lives outside it.
   const open = new Set(JSON.parse(localStorage.getItem("mop-open") || "[]"));
   // Groups marked data-fold start open; this holds the ones collapsed.
   const shut = new Set(JSON.parse(localStorage.getItem("mop-shut") || "[]"));
-  let ledgerTop = 0;
   // An open Park form: {coord, name, until}; redrawn after each body swap.
   let parkForm = null;
 
   const paint = (h) => {
     if (!h || !h.tiles) return;
     for (const t of h.tiles) {
-      const pct = Math.max(0, Math.min(100, t.pct)) + "%";
       for (const el of document.querySelectorAll(`[data-host="${t.id}"]`)) {
         el.dataset.sev = t.sev;
         el.title = `${t.label} ${t.value} · ${t.sub}`;
         for (const k of el.querySelectorAll("[data-k]")) k.textContent = t[k.dataset.k];
-        for (const i of el.querySelectorAll("i.fill")) i.style[i.dataset.axis === "h" ? "height" : "width"] = pct;
       }
     }
     const minis = document.getElementById("minis");
@@ -323,8 +293,6 @@ html[data-ledger] .scrim{display:block} html[data-ledger] .drawer{display:flex}
   const sync = () => {
     for (const d of document.querySelectorAll("details[id]")) d.open = "fold" in d.dataset ? !shut.has(d.id) : open.has(d.id);
     drawToast();
-    const b = document.querySelector(".drawer-b");
-    if (b) b.scrollTop = ledgerTop;
     paint(window.__host);
     drawParkForm();
   };
@@ -340,15 +308,55 @@ html[data-ledger] .scrim{display:block} html[data-ledger] .drawer{display:flex}
     if (d.open) open.add(d.id); else open.delete(d.id);
     localStorage.setItem("mop-open", JSON.stringify([...open]));
   }, true);
-  document.addEventListener("scroll", (ev) => {
-    if (ev.target.classList && ev.target.classList.contains("drawer-b")) ledgerTop = ev.target.scrollTop;
-  }, true);
+  // Config and Rules forms post JSON with the changed fields only; hidden and data-always fields always go.
+  const changedFields = (form) => {
+    const out = {};
+    for (const el of form.elements) {
+      if (!el.name || el.name === "__reason") continue;
+      const was = el.tagName === "SELECT" ? ([...el.options].find((o) => o.defaultSelected) || el.options[0]).value : el.defaultValue;
+      if (el.type === "hidden" || "always" in el.dataset || el.value !== was) out[el.name] = el.value;
+    }
+    return out;
+  };
+  const refresh = async () => {
+    const r = await fetch(location.pathname, {cache: "no-store"});
+    if (!r.ok) return;
+    const doc = new DOMParser().parseFromString(await r.text(), "text/html");
+    const y = window.scrollY;
+    document.body.innerHTML = doc.body.innerHTML;
+    sync();
+    window.scrollTo(0, y);
+  };
+  const send = async (url, data, reason, btn) => {
+    const body = url === "/config" ? {cmd: data.cmd, args: Object.fromEntries(Object.entries(data).filter(([k]) => k !== "cmd")), reason}
+                                   : {...data, reason};
+    if (await post(url, body, btn)) refresh();
+  };
+  document.addEventListener("input", (ev) => {
+    const f = ev.target.closest("form.cfg");
+    if (f) f.dataset.dirty = "1";
+  });
+  document.addEventListener("submit", (ev) => {
+    const f = ev.target.closest("form.cfg");
+    if (!f) return;
+    ev.preventDefault();
+    if (!f.dataset.dirty) { showToast(true, ["No changes"]); return; }
+    send(f.dataset.post, changedFields(f), f.elements.__reason.value, f.querySelector("[type=submit]"));
+  });
   document.addEventListener("click", (ev) => {
     const q = ev.target.closest("[data-q]");
-    const m = ev.target.closest("[data-mode-btn]");
     const pk = ev.target.closest("[data-park]");
     const dc = ev.target.closest("[data-decide]");
-    if (dc) {
+    const rc = ev.target.closest("[data-remove-class]");
+    const rr = ev.target.closest("[data-remove-rule]");
+    if (rc) {
+      const name = rc.dataset.removeClass;
+      if (confirm(`Remove lease class ${name}? Every live coordinator and member gets a message.`))
+        send("/config", {cmd: "remove-class", name}, rc.closest("form").elements.__reason.value, rc);
+    } else if (rr) {
+      if (confirm(`Remove ${rr.dataset.removeRule}? Every live coordinator and member gets a message.`))
+        send("/memory", {action: "remove", scope: rr.dataset.scope, id: rr.dataset.removeRule}, rr.closest("form").elements.__reason.value, rr);
+    } else if (dc) {
       decide(dc);
     } else if (pk) {
       parkClick(pk);
@@ -362,33 +370,19 @@ html[data-ledger] .scrim{display:block} html[data-ledger] .drawer{display:flex}
       drawParkForm();
     } else if (q) {
       queueAction(q);
-    } else if (m) {
-      root.dataset.mode = m.dataset.modeBtn;
-      localStorage.setItem("mop-mode", root.dataset.mode);
-    } else if (ev.target.closest("[data-ledger-open]")) {
-      root.dataset.ledger = "1";
-    } else if (ev.target.closest("[data-ledger-close]")) {
-      delete root.dataset.ledger;
     }
   });
   document.addEventListener("keydown", (ev) => {
     if (ev.key !== "Escape") return;
-    if (parkForm) { parkForm = null; drawParkForm(); } else delete root.dataset.ledger;
+    if (parkForm) { parkForm = null; drawParkForm(); }
   });
   document.addEventListener("DOMContentLoaded", sync);
 
   if (!window.EventSource || location.protocol === "file:") return;
-  const es = new EventSource("/events");
+  const es = new EventSource("/stream");
   es.addEventListener("host", (ev) => { window.__host = JSON.parse(ev.data); paint(window.__host); });
-  es.addEventListener("update", async () => {
-    const r = await fetch("/", {cache: "no-store"});
-    if (!r.ok) return;
-    const doc = new DOMParser().parseFromString(await r.text(), "text/html");
-    const y = window.scrollY;
-    document.body.innerHTML = doc.body.innerHTML;
-    sync();
-    window.scrollTo(0, y);
-  });
+  // A form with unsaved edits holds the page until it is saved.
+  es.addEventListener("update", () => { if (!document.querySelector("form[data-dirty]")) refresh(); });
   es.onerror = () => { document.body.dataset.stale = "1"; };
   es.onopen = () => { delete document.body.dataset.stale; };
 })();

@@ -5,10 +5,11 @@ There is one dashboard per machine. Every coordinator runs
 ones print "already serving" and exit. Give the user `http://localhost:4720/`
 (or the configured `dashboardPort`).
 
-`server.py` renders the page in memory from `leases.json`, `roster.json`,
-`ledger.jsonl`, `config.json`, `projects/*.json` and
+`server.py` renders the pages in memory from `leases.json`, `roster.json`,
+`ledger.jsonl`, `config.json`, `projects/*.json`, `memory/*.json` and
 `dashboard/*-state.json`, on any change and every 30 s (ETAs, heartbeat age).
-It pushes SSE `update` events, and the page swaps its body in place. Every 5 s
+It pushes SSE `update` events on `/stream`, and each page swaps its body in
+place. A Config or Rules form with unsaved edits holds its page until saved. Every 5 s
 it samples the host and pushes a `host` event; the host values update without a
 re-render. When the server stops, the green dot in the header turns red with
 "Offline".
@@ -17,8 +18,11 @@ A file opened in an editor side panel does not update; do not offer that.
 `server.py` fills the page shell `scripts/dashboard.html` (styles and the
 live-update script). It follows the system light or dark theme.
 
-Layout, desk mode: the header shows CPU, memory, swap and disk values, a
-Desk/Wall switch and a Ledger button. Every item is one quiet row (a dot, a
+Pages: Dashboard (`/`), Events (`/events`), Config (`/config`) and Rules
+(`/rules`). The header on each shows CPU, memory, swap and disk values and the
+page links.
+
+Dashboard: Every item is one quiet row (a dot, a
 title, the time since its last change); a click opens its detail, and open rows
 stay open across live updates. "Needs you" comes first, in groups: Alarms (host
 alarms, expired leases, admission holds, stale coordinators; never capped),
@@ -31,9 +35,21 @@ Work list groups the other tasks by stream (open streams in roster order, then
 stream. Each stream header shows its label, open tasks, owner, tasks under
 Needs you and its goal. With no streams, Work is one list. The side column
 shows the leases (only when leases are on or in use): one lane per class with
-its status, then the running, queued and held entries. The Ledger button opens
-a drawer with the coordinators (live, stale, idle or general; focus, streams,
-links and notes), then the newest 20 shared-ledger entries.
+its status, then the running, queued and held entries. Needs you groups, streams
+and Parked collapse; the browser keeps each collapsed group collapsed.
+
+Events: the coordinators (live, stale, idle or general; focus, streams, links
+and notes), then the newest 200 shared-ledger entries, newest first.
+
+Config: the machine limits (`config set-machine`), each lease class
+(`config set-class`, Remove class runs `config remove-class`, and New class
+adds one), and each configured project whose stored root exists
+(`config set-project`, one form for the project and one per class). Rules: the
+machine memory and each project's memory (`memory add|update|remove`). A save
+posts only the changed fields with an optional reason, and runs the command as
+`--by user`. The command records the change in the ledger and tells every live
+coordinator and member, as when a coordinator runs it. A project with no
+stored root shows its rules read only.
 
 Parked work (members with status paused) leaves Needs you and the work board
 and is listed in the Parked section, dated parks first. A park can carry a
@@ -66,16 +82,11 @@ They run `coordinator.py up|unwait --notify`, which tells each affected coordina
 (`references/leases.md`); a toast shows the result and the delivery. The
 server accepts these posts only from its own page.
 
-Wall mode is the same data, large, for a shared screen: host tiles, the
-"Needs you" count with a count per group, the first 8 rows, and the lease
-lanes.
-Open `http://localhost:4720/?mode=wall`; the page keeps the last mode.
-
 ## Writing for the dashboard
 
 The user reads the dashboard in a few seconds. Every text on it must be
 concise and readable. This applies to the state file, `member update`,
-`decision add`, `note` (the ledger drawer) and lease `--holder` names.
+`decision add`, `note` (the Events page) and lease `--holder` names.
 
 | Field | Limit | Says |
 | --- | --- | --- |
