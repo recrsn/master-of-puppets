@@ -345,6 +345,23 @@ BUILD lease", "this repo merges through a merge queue".
   set them with `coordinator.py config set-machine|set-class|set-project --by <slug> --reason "<the user's words>"`
   (`references/setup.md`). The command sends each old and new value to every
   live coordinator and member itself; do not relay it.
+- The user can also edit config and rules on the dashboard's Config and Rules
+  pages (`references/dashboard.md`). Each save runs the same command as
+  `--by user`. Every live coordinator and member gets
+  `CONFIG <what> by user: ...`, or a `MEMORY <scope> <id> ...` message that
+  names `by user`.
+- A change `by user` is the user's own decision, and it is already approved.
+  Approve it automatically:
+  - Apply it from your next step. Do not ask the user to confirm it, do not
+    add a decision about it, and do not wait for a peer.
+  - Do not revert it or change it again. Do not
+    `config propose` a different value for a field the user set, unless the
+    user asks. If your observations contradict the value, `note` what you saw
+    and keep the value.
+  - Do not relay it to your members; they get the same message. A direction
+    you already gave that the change contradicts ends now: send the member
+    the new direction.
+  - Do not `note` the change itself; the command already wrote the ledger line.
 - Lessons (what went wrong, why, and what to do next time) go into your own
   agent memory: Claude's memory directory, or Codex's memory. Not into the
   skill and not into `coordinator.py memory`. Turn a lesson into a rule only when

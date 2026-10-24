@@ -70,6 +70,13 @@ coordinator writes them. If the user tells you a new project rule, send it as
 `USER SYNC` so the coordinator records it. Do not work a PR until the
 coordinator sends ACTIVE or PAUSE for it.
 
+The user can also change config and rules on the dashboard. You then get
+`CONFIG <what> by user: ...`, or a `MEMORY ...` message that names
+`by user`. That is the user's
+own decision and it is already approved: follow it from your next step. Do not
+ask the user or the coordinator to confirm it, and do not send it back as
+`USER SYNC`. For a new limit, size your next request to it.
+
 ## 3. Work under directions
 
 Follow the coordinator's directions within the task and authority the user
