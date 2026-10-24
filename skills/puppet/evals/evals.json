@@ -28,7 +28,7 @@
         "commands.sh runs puppet.py request BUILD --coordinator claude-stack-a --name flaky-split-3f2a with an id that starts with claude-stack-a-q-flaky-split-3f2a-, the exact test command, an estimate and the worktree, after all edits are done",
         "messages.md has no LEASE REQUEST message, and commands.sh passes no --priority or --front to puppet.py request",
         "commands.sh waits with puppet.py await-grant BUILD --id ... (no until/while polling loop)",
-        "commands.sh runs only the granted command, then puppet.py release BUILD --id ...",
+        "commands.sh runs only the granted command, then puppet.py release BUILD --id ... --result pass|fail --note ...",
         "A LEASE RELEASED message reports pass or fail with the raw summary",
         "commands.sh runs no coordinator.py command (coordinate, member, enroll, note, decision, wait or acquire); the member never grants its own lease",
         "The command runs only after a GRANTED line (exit 0); NOT-GRANTED is never treated as a grant"
@@ -40,7 +40,7 @@
       "files": [],
       "assertions": [
         "The push happens before the handoff request, and the note records the pushed SHA with local equal to remote",
-        "commands.sh stops the port 3000 stack and runs puppet.py release BUILD --id codex-q-checkpointing-3 before the request",
+        "commands.sh stops the port 3000 stack and runs puppet.py release BUILD --id codex-q-checkpointing-3 --result ... before the request",
         "The note path is under $MACHINE_LEASE_DIR/handoffs/, not in the worktree",
         "The note has Header, State, Decisions and limits, Verification done, Owned resources and Done when sections",
         "HANDOFF REQUEST goes to codex, not to the Claude coordinator, and no coordinator.py say is used",

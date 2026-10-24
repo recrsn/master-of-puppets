@@ -36,7 +36,7 @@ These do not start a handoff:
 
    | From → to | Worktree |
    | --- | --- |
-   | Claude → Claude, Codex → Codex | The successor may reuse it. Keep it until SUCCESSOR JOINED. |
+   | Claude → Claude, Codex → Codex | The successor may reuse it. Keep it until the successor joins. |
    | Claude → Codex, Codex → Claude | No reuse. The successor makes its own worktree from `origin/<branch>`. After HANDOFF COMPLETE, the sender's tool removes the old one. |
 
    Uncommitted work does not cross tools. Finish it and push it, or tell the
@@ -100,16 +100,24 @@ Members use the puppet skill, section 8. Coordinators do the rest.
    - `coordinator.py stream update --coordinator <you> --name <stream> --owner <receiver>`,
      when the whole stream moves
    - remove the PRs from `prs-<you>.txt`
-   - `coordinator.py say --from <you> --to <receiver> --message "HANDOFF — <what> — PRs <n> — streams <slug> — members <names> — note <path>"`
+   - for each member that moves: `coordinator.py member transfer --coordinator <you> --name <member> --to <receiver> --note <path>`.
+     The receiver's `watch inbox` prints `TRANSFER`. Send no message.
+   - only when no member moves (PRs or streams alone):
+     `coordinator.py say --from <you> --to <receiver> --message "HANDOFF — <what> — PRs <n> — streams <slug> — note <path>"`
 
    The user asked for the handoff, so the offer is the release. The old member
-   is paused, so nobody works the PR while it has no owner.
+   is paused, so nobody works the PR while it has no owner. To withdraw an
+   offer: `member transfer --coordinator <you> --name <member> --cancel`.
 3. **Accept.** The receiving coordinator reads the note and checks each PR with
    `gh pr view`. Then it asks its own user, except for a HANDOFF that answers
    its own WORK REQUEST: it asked for that work. Yes:
-   - `coordinator.py heartbeat --name <you> --pr <your PRs and the new ones>`
+   - for each offered member: `coordinator.py member accept --coordinator <you> --name <member> --from <sender>`.
+     One locked write moves the member and its pending children, its queued
+     and held lease entries, its PRs (out of the sender's claim, into yours)
+     and its dashboard row. The sender's `watch inbox` shows the `accept`
+     event: send no CUSTODY ACCEPTED.
+   - for PRs without a member: `coordinator.py heartbeat --name <you> --pr <your PRs and the new ones>`
    - append the PRs to `prs-<you>.txt`
-   - `say` `CUSTODY ACCEPTED — <you> owns <what> — successor pending`
    - `note --pr <n>` the acceptance
    - when the task needs a new session (the successor):
      `enroll --coordinator <you> --task "<task>" --pr <n> --stream <stream>`.
@@ -121,18 +129,20 @@ Members use the puppet skill, section 8. Coordinators do the rest.
    No: give the stream back first (`stream update --coordinator <you> --name <stream> --owner <sender>`;
    only the stream's owner can move it), then `say` `HANDOFF DECLINED — <reason>`.
    The sender claims its PRs again with `heartbeat --pr` and tells its user.
-4. **Join.** On the successor's JOIN: `member add --pr <n> --stream <stream>`,
-   WELCOME, then `say` `SUCCESSOR JOINED — <name> — <tool> <session id>`. This
-   is a status, not a second acceptance.
-5. **Complete.** On SUCCESSOR JOINED, or on CUSTODY ACCEPTED for members that
-   only change coordinator, the sending coordinator runs `member remove` for
-   each moved member, `note`s the handoff, and sends:
-   - a replaced member: `HANDOFF COMPLETE — <name>`. It sends LEAVE. Same
-     tool: the worktree stays for the successor. Cross-tool: the sender's tool
-     removes the old worktree.
+4. **Join.** On the successor's JOIN: `member add --pr <n> --stream <stream>`
+   and WELCOME. The ledger and events show it; send no SUCCESSOR JOINED.
+5. **Complete.** The sending coordinator acts on the `accept` event (a member
+   that keeps its task) or on the successor's `member add` event (`events
+   --coordinator <receiver>`). It `note`s the handoff and sends the member, by
+   its direct route:
+   - a replaced member: `HANDOFF COMPLETE — <name>`. It sends LEAVE. The
+     receiver, which now has the member, runs `member remove`. Same tool: the
+     worktree stays for the successor. Cross-tool: the sender's tool removes
+     the old worktree.
    - a member that keeps its task: `HANDOFF COMPLETE — <name> — JOIN <receiver>`.
-     It sends JOIN to the receiver, which runs `member add` and sends WELCOME.
-     The member keeps its session and worktree.
+     It sends JOIN to the receiver, which runs `member add` (the entry is
+     already there; JOIN refreshes it) and sends WELCOME. The member keeps its
+     session and worktree; its new lease IDs start with `<receiver>-q-<name>-`.
 6. **Close.** When "Done when" is met, the receiver `note`s the merge SHA and
    the cleanup, and sends `HANDOFF CLOSED — <what> — merged <sha> — cleanup <done|left with the user: items>`.
    The sender acts on it only if the note asked for it (for example "resume

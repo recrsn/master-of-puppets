@@ -64,10 +64,9 @@ See `references/handoff.md` for the steps around each one.
 
 | Message | Sent by |
 | --- | --- |
-| `HANDOFF — <what> — PRs <n> — streams <slug> — members <names> — note <path>` | sender, after it dropped its claims |
-| `CUSTODY ACCEPTED — <you> owns <what> — successor pending` | receiver, after its user said yes |
+| `HANDOFF — <what> — PRs <n> — streams <slug> — note <path>` | sender, after it dropped its claims, only when no member moves (members move with `member transfer` and `member accept`) |
+| `CUSTODY ACCEPTED — <you> owns <what> — successor pending` | receiver, after its user said yes, only for a `HANDOFF` without members (`member accept` is the acceptance for a member) |
 | `HANDOFF DECLINED — <reason>` | receiver |
-| `SUCCESSOR JOINED — <name> — <tool> <session id>` | receiver |
 | `HANDOFF CLOSED — <what> — merged <sha> — cleanup <done\|left with the user: items>` | receiver |
 
 ## Routes
@@ -91,12 +90,25 @@ in the ledger; member messages need no shared inbox copy.
   `collaboration.followup_task` for new work). These IDs are not app thread IDs.
 - Coordinator to coordinator only:
   `coordinator.py say --from <name> --to <name> --message "<text>"`
-  Send only what the other coordinator must act on: handoffs, blockers, order
-  changes, rule changes. A general coordinator's one `WORK REQUEST` gets a
-  `HANDOFF` reply only from a coordinator with work to spare (SKILL.md, "When
-  your work is done"). Do not send acknowledgements of acknowledgements or
-  per-step progress such as "acquired" or "released"; `events.log` already
-  shows them.
+  Send only what the other coordinator must act on and the shared records do
+  not show: blockers, order changes that no command records. A general
+  coordinator's one `WORK REQUEST` gets a `HANDOFF` reply only from a
+  coordinator with work to spare (SKILL.md, "When your work is done"). Do not
+  send acknowledgements of acknowledgements or per-step progress such as
+  "acquired" or "released"; `events.log` already shows them.
+  These have a command; never send them by `say`:
+
+  | Instead of a message about | Use |
+  | --- | --- |
+  | a release, its result, a drain or cleanup receipt | the release event (`events --id <id>`), `drain-check` |
+  | "your entry is the head", a priority change | `watch inbox` HEAD and PRIORITY lines |
+  | an admission hold or its clearance | `admission hold\|clear` |
+  | a rule or limit change | `memory add\|update\|remove` or `config set-*` with `--reason` |
+  | a helper update: AGREE, installer, "installed" | `update propose\|agree\|object\|approve\|status`, `install --replace --by` |
+  | a member handoff: offer, custody accepted, complete | `member transfer`, `member accept` |
+  | who owns a PR, a worktree or a task | `who` |
+  | which open PRs touch a file | `prs --path` |
+  | the user's answer that concerns every coordinator | `decision add --scope machine` |
   (omit `--to` to reach every live coordinator). It appends to `inbox.jsonl`
   (`coordinator.py watch inbox` shows it), then delivers directly: a Claude session
   through its inbox socket, a Codex thread through `codex queue`.

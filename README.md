@@ -34,8 +34,9 @@ merged. Only a coordinator grants. The coordinator records membership and
 decisions.
 
 Four files in `master-of-puppets/scripts` do the work: `coordinator.py`
-(roster, members, leases, messaging, watchers, config), `puppet.py` (the
-commands a member runs: roster, memory, lease wait and release), `moplib.py`
+(roster, members, leases, messaging, shared-record reads, watchers, config,
+update votes), `puppet.py` (the commands a member runs: roster, memory, the
+shared-record reads, lease request, wait and release), `moplib.py`
 (the state code both share) and `server.py` (dashboard, with the page shell
 `dashboard.html`). All use only the Python standard library.
 

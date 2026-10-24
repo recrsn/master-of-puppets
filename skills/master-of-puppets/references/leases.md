@@ -18,13 +18,13 @@ default registry has two:
   45 min; settles BUILD for 60 s.
 
 Add or change one with
-`coordinator.py config set-class <NAME> --description "..." --default-gib <n> --max-minutes <n> [--settle OTHER=<s>]`,
-and cap it with `config set-machine --max-slots <NAME>=<n>`. A class with
+`coordinator.py config set-class <NAME> --by <slug> --description "..." --default-gib <n> --max-minutes <n> [--settle OTHER=<s>]`,
+and cap it with `config set-machine --by <slug> --max-slots <NAME>=<n>`. A class with
 `--default-gib 0` uses no memory budget, so only its slot cap limits it. That
 fits a single resource: one Chrome window for E2E screenshots
 (`BROWSER`, 0 GiB, 1 slot), a shared tunnel, a test database, a device.
 `--settle OTHER=<s>` makes OTHER wait `<s>` seconds after each grant of this
-class. `config remove-class <NAME>` is refused while the class has holders or
+class. `config remove-class <NAME> --by <slug>` is refused while the class has holders or
 queue entries. Add classes only on the user's word, then tell the other
 coordinators and your members.
 
@@ -66,9 +66,9 @@ sum(held GiB) + request GiB <= total RAM - reserve
   by hand when you know better.
 - Settings come from the first-run setup (`references/setup.md`): the memory
   reserve and optional slot caps per machine
-  (`coordinator.py config set-machine --reserve-gib <n> --max-slots BUILD=<n>`), and
+  (`coordinator.py config set-machine --by <slug> --reserve-gib <n> --max-slots BUILD=<n>`), and
   per project the peak mode, starting GiB and max minutes
-  (`coordinator.py config set-project --root <path> --class BUILD --peak learn --default-gib <n> --max-minutes <n>`).
+  (`coordinator.py config set-project --by <slug> --root <path> --class BUILD --peak learn --default-gib <n> --max-minutes <n>`).
   In fixed mode, samples are still recorded but not used.
 - `coordinator.py capacity` prints the budget, the class peaks and how many of each
   class fit now. The dashboard shows the same numbers.
@@ -100,7 +100,8 @@ The memory budget predicts; the host check observes. Both must pass, and
    To change an entry later, pass only `--id` and the fields that change.
    Start `--holder` with the task id (the dashboard matches on it, and the
    entry takes that task's priority).
-2. When that entry is the first ready one, run `coordinator.py acquire ... --measure`.
+2. When that entry is the first ready one (`watch inbox` prints
+   `HEAD <CLASS> <id>` for your entries), run `coordinator.py acquire ... --measure`.
    It runs the host check itself (about 25 s), then checks the queue, slot cap,
    settle time, max minutes and memory budget again under the lock.
    `--measure` starts `measure-peak` for the lease; the granted commands come
@@ -110,22 +111,43 @@ The memory budget predicts; the host check observes. Both must pass, and
    - 0: send LEASE GRANTED with the lease id, the recorded commands, expiry
      and release command.
    - 2: the run is over the class limit. Split it (above).
-   - 3: another entry is ahead, the class is at its slot cap, or `settling`
+   - 3: another entry is ahead, the class is at its slot cap, `settling`
      (another class's grant settles this one, for example BUILD for 60 s after
-     an E2E grant). Keep it queued and retry after that time.
+     an E2E grant), or `admission_hold` (below). Keep it queued and retry after
+     that time, or on the hold's `admission clear` event.
    - 4: the request does not fit the memory budget. Keep it queued and wait
      for a release.
    - 5: the host is BUSY or free disk is below the floor. Start
      `coordinator.py calm-wait` in the background (`--settle <s>` while a
      stack starts), tell the member it waits for the host, and run `acquire`
      again on CALM.
-4. On release: confirm with `coordinator.py status --brief` and `note` the result.
-   After an E2E release, run
-   `coordinator.py drain-check --worktree <path> [--port <n> ...] [--process <pattern> ...]`; grant
-   the next E2E only when it exits 0, else ask the holder to stop what is left.
-   If the next head belongs to another coordinator, tell it the slot is free.
+4. On release: the member's `puppet.py release <CLASS> --id <id> --result pass|fail|partial --note "..." [--port <n> ...]`
+   writes one event line, the shared record of the release:
+   `release <CLASS> <id> ran <n> min result=<r> drained=<n> coordinator=<c> note="..."`.
+   `drained` counts what the run left in the lease's worktree (agent session
+   processes and bare shells do not count). Read it with
+   `coordinator.py events --id <id>`. When `drained` is not 0, run
+   `coordinator.py drain-check --worktree <path> [--port <n> ...] [--process <pattern> ...]`
+   for the list; grant the next E2E only when it exits 0, else ask the holder
+   to stop what is left. When the next head belongs to another coordinator,
+   its `watch inbox` prints HEAD: send nothing.
+   **No receipts.** A coordinator never sends a release, drain or cleanup
+   receipt to another coordinator, and never asks for one. The event line is
+   the record; when it is not enough, run `drain-check` yourself.
 5. A member running commands outside the recorded scope breaks "use it or
    return it": ask it to release at once.
+6. An expired lease: `watch expiry` prints it once with `left=<n>`, the
+   processes its run still has. Ask its coordinator only when `left` is not 0
+   and the lease blocks your head.
+
+**Admission hold.** When no grant of a class may start, for example while a
+failed run's cleanup is uncertain or the disk is low:
+`coordinator.py admission hold <CLASS> --by <you> --reason "<why>"`. `acquire`
+refuses every grant of that class (exit 3, with the reason), and `status
+--brief` and the dashboard show it. Clear it when the cause is gone:
+`coordinator.py admission clear <CLASS> --by <you> [--reason "<what was done>"]`.
+The events reach every coordinator; do not announce a hold or its clearance
+by `say`.
 
 Each class queue goes by priority, then FIFO: only the first ready entry may
 acquire, whoever owns it. No coordinator jumps the queue; priority sets the
@@ -179,7 +201,7 @@ in the puppet skill, section 5. The coordinator's side:
   member that is paused or waits for the user.
 - **Stack start.** Starting a full local stack is often the heaviest event on
   the machine. `acquire` refuses BUILD for E2E's settle time after an E2E grant
-  (`config set-class E2E --settle BUILD=<s>`, 0 removes it); then trust the
+  (`config set-class E2E --by <slug> --settle BUILD=<s>`, 0 removes it); then trust the
   host check.
 
 ## Host check thresholds

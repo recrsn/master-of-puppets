@@ -12,6 +12,8 @@ Usage: python3 -I puppet.py <command> ...
   roster | whoami --session-id ID
        coordinators (with live: heartbeat newer than 40 minutes), members and streams
   memory list [--project-root P] [--json]      machine rules and notes, then the project's
+  inbox | ledger | events | who     the shared records, read-only (coordinator.py has the
+       same commands and flags); for example events --id ID shows a lease's grant and release
   request CLASS --coordinator C --name NAME --id ID --minutes N --commands TEXT --worktree P
           [--gib N] [--what TEXT]
        queue your own lease request; prints its position. The ID must start with C-q-NAME-,
@@ -23,8 +25,12 @@ Usage: python3 -I puppet.py <command> ...
        prints GRANTED or NOT-GRANTED <reason>. Exit 0 granted (the only grant);
        3 left the queue without a grant; 5 timeout while still queued; 6 never queued
        within --appear-timeout (default 600 s)
-  release CLASS --id ID [--peak-gib N]
-       release your own lease, never another's; records its run minutes and peak
+  release CLASS --id ID --result pass|fail|partial [--note TEXT] [--peak-gib N] [--port N ...] [--process PATTERN ...]
+       release your own lease, never another's; records its run minutes and peak, then
+       counts what the run left in the lease's worktree (agent session processes and bare
+       shells do not count) and writes one event line:
+         release CLASS ID ran N min result=R drained=N coordinator=C note="TEXT"
+       That line is the record of the release: coordinators read it with `events`.
 """
 import argparse
 import datetime as dt
@@ -39,7 +45,7 @@ sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import (
     PEAKS, SAMPLES_KEPT, MINUTES_KEPT, load_machine, registry, class_names,
     load_project, save_project, now, lock, unlock, log,
-    load, save, load_roster, queue_entry, READS, add_read_commands, read_cmd, version_warning,
+    load, save, load_roster, queue_entry, READS, add_read_commands, read_cmd, version_warning, drain,
 )
 
 
@@ -107,7 +113,10 @@ def await_grant(args):
 
 
 def release(args):
-    """Release the caller's own lease: record its run minutes and measured peak."""
+    """Release the caller's own lease: record its run minutes and measured peak, then
+    check what the run left in its worktree (after the lock: the check scans every
+    process) and write one event line with the result and the drain count. That line is
+    the shared record of the release; other coordinators read it, no one sends a receipt."""
     lock()
     try:
         state, machine = load(), load_machine()
@@ -138,10 +147,16 @@ def release(args):
             os.remove(peak_file)
         state[args.cls] = [h for h in holders if h["id"] != args.id]
         save(state, machine)
-        log(f"release {args.cls} {args.id} ran {ran} min" + (f" peak {round(peak, 1)} GiB" if peak else ""))
-        return 0
     finally:
         unlock()
+    left = drain(held["worktree"], args.port or [], args.process or []) if held.get("worktree") else []
+    for line in left:
+        print(f"  {line}")
+    log(f"release {args.cls} {args.id} ran {ran} min" + (f" peak {round(peak, 1)} GiB" if peak else "")
+        + f" result={args.result} drained={len(left)} coordinator={held['coordinator']}"
+        + (f" note={json.dumps(args.note)}" if args.note else ""))
+    print(f"released {args.cls} {args.id} ({args.result}); {'drained' if not left else 'not drained'}: {len(left)} left in {held.get('worktree')}")
+    return 0
 
 
 def main():
@@ -168,6 +183,10 @@ def main():
     r.add_argument("cls", metavar="CLASS")
     r.add_argument("--id", required=True)
     r.add_argument("--peak-gib", type=float, help="measured peak; default: peaks/<id>.gib from measure-peak")
+    r.add_argument("--result", required=True, choices=("pass", "fail", "partial"), help="the outcome of the granted commands")
+    r.add_argument("--note", help="one short line, for example 'pushed #123' or the first failure")
+    r.add_argument("--port", type=int, action="append", help="also check for listeners on this port (E2E)")
+    r.add_argument("--process", action="append", help="also count processes matching this pattern (pgrep -f)")
     args = p.parse_args()
     name = getattr(args, "cls", None)
     if name and name not in registry():

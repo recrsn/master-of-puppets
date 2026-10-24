@@ -31,8 +31,8 @@ not write product code.
 
 | File | What it does |
 | --- | --- |
-| `scripts/coordinator.py` | Coordinator commands: roster and members, streams, leases, messaging, watchers, config and install. Run with `python3 -I`; the docstring lists every command. |
-| `scripts/puppet.py` | Member commands: roster, whoami, memory list, and for the member's own lease `request`, `await-grant` and `release`. It cannot grant. Members run only this file. |
+| `scripts/coordinator.py` | Coordinator commands: roster and members, streams, leases, messaging, shared-record reads, watchers, config, update votes and install. Run with `python3 -I`; the docstring lists every command. |
+| `scripts/puppet.py` | Member commands: roster, whoami, memory list, the shared-record reads (`inbox`, `ledger`, `events`, `who`), and for the member's own lease `request`, `await-grant` and `release`. It cannot grant. Members run only this file. |
 | `scripts/moplib.py` | State code that both CLIs import. |
 | `scripts/server.py` | The one dashboard, on `http://localhost:4720/`, with the page shell `scripts/dashboard.html`: host meters, "Needs you" first, the work board, lease timelines and coordinators; a Wall mode for a shared screen. Live by SSE. Exits with "already serving" when one runs. |
 
@@ -42,12 +42,28 @@ uses them. Below, `coordinator.py` means
 `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/coordinator.py"`.
 `coordinator.py install` (run from the skill copy) installs the three files
 when absent. When a live copy differs, it prints the diff and installs none:
-other sessions use them now, so agree a change with the other coordinators
-and the user, then replace them with `install --replace`. A full install also
-removes obsolete helpers (an old `lease.py`); never run one. `install` records
-the skill copy, and `roster`, `whoami`, `coordinate`, `heartbeat` and `status`
-then print a warning when an update is due. On that warning, tell the user
-and the other coordinators.
+other sessions use them now. An update goes through the shared vote, not
+through messages:
+
+1. One coordinator runs `update propose --by <you> --text "<what changes>"`
+   from the skill copy. It records the exact files and adds a machine
+   decision that asks the user Install or Do not install on the dashboard.
+2. Each other coordinator sees the `update propose` event, reads the diff
+   (`install` without `--replace` prints it), and runs
+   `update agree --by <you>` or `update object --by <you> --text "<why>"`.
+3. The user answers the machine decision. When the user approves in your own
+   session instead, record it: `update approve --by <you> --quote "<the user's words>"`.
+   Either one is the user's approval for every coordinator.
+4. Any coordinator runs `update status`; on "ready to install", it runs
+   `install --replace --by <you>` once. The command refuses while a lease is
+   granted, while a live coordinator has not agreed, or after another install,
+   and it writes the file hashes to the ledger. Restart a dashboard you own.
+
+No coordinator sends AGREE, installer elections or install reports by `say`.
+A full install also removes obsolete helpers (an old `lease.py`); never run
+one. `install` records the skill copy, and `roster`, `whoami`, `coordinate`,
+`heartbeat` and `status` then print a warning when an update is due. On that
+warning, start step 1, or check `update status` when a proposal exists.
 
 Read `references/setup.md` on the first run in a project,
 `references/protocol.md` before you message anyone, `references/rules.md` for
@@ -81,7 +97,7 @@ skill; `references/protocol.md` lists the coordinator side.
 ## Coordinator start
 
 1. Run `coordinator.py install` from the skill copy. On DIFFERS, use the live copy
-   and tell the user; replace it only after the agreement above. Run `coordinator.py config show --project-root "$PWD"`; exit 3
+   and tell the user; replace it only through the update vote above. Run `coordinator.py config show --project-root "$PWD"`; exit 3
    means the machine or project is not configured yet: follow
    `references/setup.md` (detect, then ask setup questions) before step 2.
 2. Claim: `coordinator.py coordinate --name <slug> --tool <claude|codex> --session-id <session-or-thread-id> --focus "<stack in a few words>" --pr <n> [...]`.
@@ -313,15 +329,18 @@ BUILD lease", "this repo merges through a merge queue".
 - When the user states a rule for this project or machine (directly,
   or relayed as USER SYNC), record it:
   `coordinator.py memory add --by <slug> --kind rule|note --text "..." [--project-root <path>]`.
-  Omit `--project-root` for a machine-wide entry. Tell your members and the
-  other coordinators, and `note` it.
-- Remove a rule the user withdraws: `coordinator.py memory remove --id <id> [--project-root <path>]`.
+  Omit `--project-root` for a machine-wide entry. Add `--reason "<the user's words>"`.
+  The command writes the event and the ledger line, so the other coordinators
+  see it in `watch inbox`; tell your members.
+- Change a rule and keep its ID: `coordinator.py memory update --by <slug> --id <id> --text "<full new text>" --reason "..."`.
+- Remove a rule the user withdraws: `coordinator.py memory remove --by <slug> --id <id> --reason "..." [--project-root <path>]`.
 - A rule that should hold in every project is a change to the skill itself,
   not a memory entry.
 - A limit is never a memory entry. Slots, GiB, minutes, settle times, disk,
   swap and load thresholds are config numbers that `coordinator.py` enforces:
-  set them with `coordinator.py config set-machine|set-class|set-project`
-  (`references/setup.md`), then tell your members and the other coordinators.
+  set them with `coordinator.py config set-machine|set-class|set-project --by <slug> --reason "<the user's words>"`
+  (`references/setup.md`). The event shows each old and new value to the
+  other coordinators; tell your members.
 - Lessons (what went wrong, why, and what to do next time) go into your own
   agent memory: Claude's memory directory, or Codex's memory. Not into the
   skill and not into `coordinator.py memory`. Turn a lesson into a rule only when
@@ -341,7 +360,14 @@ BUILD lease", "this repo merges through a merge queue".
 - **A session that has not joined asks for directions**: tell it to run
   `/puppet` first.
 - **A peer coordinator** asks about order or shared files: answer, then `note`
-  the agreement.
+  the agreement. Before you ask a peer, check the shared records:
+  `who --pr <n>` (who owns it), `prs --path <glob>` (which open PRs touch a
+  file), `events --id <id>` or `events --coordinator <name>` (a lease's grant,
+  release result and drain count), `inbox` and `ledger`. Ask only what they
+  do not answer.
+- **A question for the user that concerns every coordinator** (a machine rule,
+  a shared limit, a helper update): one `decision add --scope machine`, not
+  one per coordinator. Its answer is the user's own answer for each of them.
 
 ## Reporting to the user
 

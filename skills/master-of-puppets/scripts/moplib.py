@@ -2,8 +2,9 @@
 
 Both CLIs import this module. It holds the state paths, JSON I/O, the state lock,
 the event log and ledger, machine and project config, the roster, the lease state
-and memory budget, direct message delivery to Claude and Codex sessions, and the
-read-only commands both CLIs offer (roster, whoami, memory list).
+and memory budget, the drain check, direct message delivery to Claude and Codex
+sessions, and the read-only commands both CLIs offer (roster, whoami, memory list,
+inbox, ledger, events, who).
 
 State lives in $MACHINE_LEASE_DIR (default ~/.local/state/machine-leases), not beside
 these files, so every session that runs any copy shares one state.
@@ -204,6 +205,15 @@ def note(by, text, pr=None):
         f.write(json.dumps(rec) + "\n")
 
 
+def id_owner(lease_id, names):
+    """The coordinator whose name prefixes lease_id ("<coordinator>-q-..."), longest name
+    first, so claude-kb-q-x belongs to claude-kb, not to claude. None when none does."""
+    for n in sorted(names, key=len, reverse=True):
+        if lease_id.startswith(n + "-"):
+            return n
+    return None
+
+
 def load_roster():
     roster = json.load(open(ROSTER)) if os.path.exists(ROSTER) else {}
     roster.setdefault("leases", "off")
@@ -263,9 +273,10 @@ def task_priority(roster, coord, holder):
 
 
 def queue_entry(state, roster, cls, id, coordinator=None, holder=None, minutes=None, gib=None,
-                commands=None, worktree=None, priority=None, front=False, by=None):
+                commands=None, worktree=None, priority=None, front=False, by=None, changed_by=None):
     """Add queue entry id to class cls, or change the given fields of an existing one, and
-    re-order the queue. The caller holds the lock and saves. Returns (exit, text):
+    re-order the queue. The caller holds the lock and saves. changed_by names the
+    coordinator in a priority change's event. Returns (exit, text):
     0 with the position, 2 when minutes is over the class limit or a new entry lacks
     coordinator and holder."""
     queue = state["queue"][cls]
@@ -288,7 +299,7 @@ def queue_entry(state, roster, cls, id, coordinator=None, holder=None, minutes=N
             existing["project"] = project_key(worktree)[0]
         if priority is not None and priority != existing.get("priority", 0):
             existing["priority"] = priority
-            log(f"priority {cls} {id} {priority}")
+            log(f"priority {cls} {id} {priority}" + (f" by={changed_by}" if changed_by else ""))
         if by:
             log(f"request {cls} {existing['coordinator']} {id} changed {existing['holder']} by={by}")
     else:
@@ -375,6 +386,80 @@ def budget(state, machine):
     }
 
 
+# ---------------------------------------------------------------- processes and drain
+
+
+SHELLS = {"sh", "bash", "zsh", "fish", "dash", "ksh", "tcsh", "login"}
+AGENTS = {"claude", "codex", "disclaimer"}  # session programs; disclaimer is the Claude app's launcher
+
+
+def run(cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=20).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def worktree_pids(tree):
+    tree = os.path.realpath(tree)
+    pids, pid = set(), None
+    for line in run(["lsof", "-nP", "-d", "cwd", "-Fpn"]).splitlines():
+        if line.startswith("p"):
+            pid = line[1:]
+        elif line.startswith("n") and pid:
+            path = line[1:]
+            if path == tree or path.startswith(tree + "/"):
+                pids.add(pid)
+    return sorted(pids, key=int)
+
+
+def session_pids():
+    """Processes that belong to agent sessions, not to a run: this process and its
+    ancestors, its own process group (the pipeline of the command that runs it; each
+    agent shell command gets its own group), agent programs (claude, codex), their
+    direct children that are not shells (MCP servers and helpers), and every bare shell.
+    A heuristic: a run that an earlier command started is a shell child or deeper, in
+    another process group, so it still counts."""
+    procs, group = {}, str(os.getpgid(0))
+    for line in run(["ps", "-axo", "pid=,ppid=,pgid=,comm="]).splitlines():
+        f = line.split(None, 3)
+        if len(f) == 4:
+            procs[f[0]] = (f[1], f[2], os.path.basename(f[3]).lstrip("-"))
+    skip, pid = set(), str(os.getpid())
+    while pid in procs and pid not in skip:
+        skip.add(pid)
+        pid = procs[pid][0]
+    for pid, (ppid, pgid, comm) in procs.items():
+        parent = procs.get(ppid, ("", "", ""))[2]
+        if pgid == group or comm in AGENTS or comm in SHELLS or (parent in AGENTS and comm not in SHELLS):
+            skip.add(pid)
+    return skip
+
+
+def drain(worktree, ports=(), patterns=()):
+    """What a run left behind: processes working in the worktree (except session
+    processes), listeners on the given ports, processes matching each pattern.
+    Returns a list of report lines, one per process left. It only reports; it never kills."""
+    lines, skip = [], session_pids()
+    for pid in worktree_pids(worktree):
+        if pid in skip:
+            continue
+        cmd = run(["ps", "-o", "command=", "-p", pid]).strip()[:100]
+        if not cmd:
+            continue
+        listen = [l[1:] for l in run(["lsof", "-nP", "-a", "-p", pid, "-iTCP", "-sTCP:LISTEN", "-Fn"]).splitlines() if l.startswith("n")]
+        lines.append(f"worktree {pid} {'[listen ' + ' '.join(listen) + '] ' if listen else ''}{cmd}")
+    for port in ports:
+        for line in run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fpc"]).splitlines():
+            if line.startswith("p"):
+                lines.append(f"port {port} {line[1:]} {run(['ps', '-o', 'command=', '-p', line[1:]]).strip()[:100]}")
+    for pattern in patterns:
+        for line in run(["pgrep", "-fl", pattern]).splitlines():
+            if line.split()[0] not in skip:  # the caller's own command line names the pattern
+                lines.append(f"process {pattern}: {line[:110]}")
+    return lines
+
+
 # ---------------------------------------------------------------- helper versions
 
 
@@ -407,8 +492,8 @@ def version_warning():
     obsolete = [n for n in OBSOLETE if os.path.exists(os.path.join(DIR, n))]
     if differ:
         print(f"warning: an update is due: the live {', '.join(differ)} in {DIR} {'differs' if len(differ) == 1 else 'differ'} from the skill copy in {src}. "
-              f"Agree it with the other coordinators and the user, then run "
-              f"python3 -I {os.path.join(src, 'coordinator.py')} install --replace", file=sys.stderr)
+              f"Check python3 -I {os.path.join(src, 'coordinator.py')} update status; with no open proposal, run "
+              f"python3 -I {os.path.join(src, 'coordinator.py')} update propose --by <you>", file=sys.stderr)
     if obsolete:
         print(f"warning: obsolete {', '.join(obsolete)} in {DIR}: do not run it; "
               f"python3 -I {os.path.join(src, 'coordinator.py')} install removes it", file=sys.stderr)
@@ -496,7 +581,9 @@ def notify(to, message):
 # ---------------------------------------------------------------- read commands (coordinator.py and puppet.py)
 
 
-READS = ("roster", "whoami", "memory")
+READS = ("roster", "whoami", "memory", "inbox", "ledger", "events", "who")
+AGO = re.compile(r"^(\d+)([smhd])$")
+AGO_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 
 
 def memory_path(project_root=None):
@@ -504,9 +591,18 @@ def memory_path(project_root=None):
     return os.path.join(MEMORY, f"{name}.json"), name
 
 
+def since_time(text):
+    """--since: an ISO time, or an age such as 90s, 30m, 2h or 1d."""
+    m = AGO.match(text)
+    if m:
+        return now() - dt.timedelta(**{AGO_UNITS[m.group(2)]: int(m.group(1))})
+    t = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    return t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)
+
+
 def add_read_commands(sub, memory=None):
-    """roster, whoami and memory list. Both CLIs offer them; coordinator.py passes its
-    memory subparsers so add and remove sit beside list."""
+    """roster, whoami, memory list, inbox, ledger, events and who. Both CLIs offer them;
+    coordinator.py passes its memory subparsers so add and remove sit beside list."""
     sub.add_parser("roster")
     wh = sub.add_parser("whoami")
     wh.add_argument("--session-id", required=True)
@@ -515,10 +611,141 @@ def add_read_commands(sub, memory=None):
     ml = memory.add_parser("list")
     ml.add_argument("--project-root")
     ml.add_argument("--json", action="store_true")
+    for name, what in (("inbox", "coordinator messages (inbox.jsonl)"), ("ledger", "the shared ledger (ledger.jsonl)"),
+                       ("events", "lease and roster events (events.log)")):
+        r = sub.add_parser(name, help=what)
+        r.add_argument("--since", help="ISO time or an age: 90s, 30m, 2h, 1d")
+        r.add_argument("--grep", help="case-insensitive text match")
+        r.add_argument("-n", type=int, default=20, help="the last N matches (0: all)")
+        r.add_argument("--json", action="store_true", help="the raw records")
+        if name == "inbox":
+            r.add_argument("--from", dest="sender")
+            r.add_argument("--to", help="messages C receives: sent to C or to every coordinator")
+        elif name == "ledger":
+            r.add_argument("--by")
+            r.add_argument("--pr", type=int)
+        else:
+            r.add_argument("--id", help="lease or queue ID")
+            r.add_argument("--class", dest="lcls", metavar="CLASS")
+            r.add_argument("--coordinator", help="C's grants, queue entries, lease IDs and actions")
+    w = sub.add_parser("who", help="who owns a PR, worktree, repository or task")
+    g = w.add_mutually_exclusive_group(required=True)
+    g.add_argument("--pr", type=int)
+    g.add_argument("--worktree")
+    g.add_argument("--repo", help="owner/repo")
+    g.add_argument("--text", help="case-insensitive match on names, tasks, focus, labels and goals")
+
+
+def event_coordinator(f, names):
+    """The coordinator an events.log line (split into fields) is about, or None."""
+    if len(f) > 3 and f[1] in ("wait", "request", "acquire", "refuse"):
+        return f[3]
+    for x in f:
+        if x.startswith("coordinator="):
+            return x.partition("=")[2]
+    if len(f) > 3 and f[1] in ("release", "unwait", "hold", "ready", "extend", "priority", "up"):
+        return id_owner(f[3], names)
+    if f[1] in ("coordinate", "resign", "active", "idle"):
+        return f[2]
+    return None
+
+
+def log_cmd(args):
+    """inbox, ledger and events: filter, then print the last -n matches."""
+    since = since_time(args.since) if args.since else None
+    grep = args.grep.lower() if args.grep else None
+    names = list(load_roster()["coordinators"])
+    rows = []
+    path = {"inbox": INBOX, "ledger": LEDGER, "events": LOG}[args.cmd]
+    try:
+        lines = open(path).read().splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        if not line.strip() or (grep and grep not in line.lower()):
+            continue
+        if args.cmd == "events":
+            f = line.split()
+            try:
+                at = dt.datetime.fromisoformat(f[0])
+            except (ValueError, IndexError):
+                continue
+            if ((since and at < since) or (args.id and args.id not in f[2:5])
+                    or (args.lcls and (len(f) < 3 or f[2] != args.lcls))
+                    or (args.coordinator and event_coordinator(f, names) != args.coordinator and f"by={args.coordinator}" not in f)):
+                continue
+            rows.append((line, line))
+            continue
+        try:
+            rec = json.loads(line)
+            at = dt.datetime.fromisoformat(rec["at"])
+        except (ValueError, KeyError, TypeError):
+            continue
+        if since and at < since:
+            continue
+        if args.cmd == "inbox":
+            if (args.sender and rec.get("from") != args.sender) or (args.to and rec.get("to") not in (args.to, None, "all")):
+                continue
+            text = f"{rec['at'][:19]}Z {rec.get('from')} -> {rec.get('to') or 'all'}: {rec.get('message')}"
+        else:
+            if (args.by and rec.get("by") != args.by) or (args.pr and rec.get("pr") != args.pr):
+                continue
+            text = f"{rec['at'][:19]}Z {rec.get('by')}{' #' + str(rec['pr']) if rec.get('pr') else ''}: {rec.get('text')}"
+        rows.append((line, text))
+    for raw, text in rows[-args.n:] if args.n else rows:
+        print(raw if args.json else text)
+    return 0
+
+
+def who_cmd(args):
+    """Owners of a PR, worktree, repository or text, from the roster, the PR and cloud
+    watch lists, and the lease state. Exit 3 when nothing matches."""
+    roster, state = load_roster(), load()
+    hits = []
+
+    def match(*fields):
+        if args.text:
+            return any(args.text.lower() in str(x or "").lower() for x in fields)
+        return False
+
+    tree = os.path.realpath(os.path.expanduser(args.worktree)) if args.worktree else None
+
+    def same_tree(path):
+        return bool(tree and path and (os.path.realpath(os.path.expanduser(path)) + "/").startswith(tree + "/"))
+    for name, c in roster["coordinators"].items():
+        if (args.pr and args.pr in c.get("prs", [])) or match(name, c.get("focus")):
+            hits.append(f"coordinator {name} ({'live' if live(c) else 'not live'}): {c.get('focus', '')}")
+    for coord, members in roster["members"].items():
+        for m in members:
+            if ((args.pr and args.pr in m.get("prs", [])) or (args.repo and m.get("repo") == args.repo)
+                    or same_tree(m.get("worktree")) or match(m["name"], m.get("task"), m.get("sessionId"))):
+                hits.append(f"member {coord}/{m['name']} ({m.get('status', 'active')}): {m.get('task', '')}"
+                            + (f" · {m['repo']}" if m.get("repo") else "") + (f" · PRs {' '.join('#' + str(n) for n in m['prs'])}" if m.get("prs") else ""))
+    for slug, s in roster["streams"].items():
+        if (args.pr and args.pr in s.get("prs", [])) or match(slug, s.get("label"), s.get("goal")):
+            hits.append(f"stream {slug} ({s.get('coordinator')}, {s.get('status')}): {s.get('label', '')}")
+    for kind in ("prs", "cloud"):
+        for path in sorted(p for p in os.listdir(DIR) if p.startswith(kind + "-") and p.endswith(".txt")) if os.path.isdir(DIR) else []:
+            coord = path[len(kind) + 1:-4]
+            for raw in open(os.path.join(DIR, path)).read().splitlines():
+                ref = raw.split()[0] if raw.split() else ""
+                repo, _, num = ref.rpartition("#")
+                if ((args.pr and num == str(args.pr)) or (args.repo and repo == args.repo) or match(raw)):
+                    hits.append(f"{kind} watch of {coord}: {raw.strip()}")
+    for c in class_names():
+        for h in state[c] + state["queue"][c]:
+            if same_tree(h.get("worktree")) or match(h["id"], h.get("holder")):
+                hits.append(f"{c} {'held' if h in state[c] else 'queued'} {h['id']} ({h['coordinator']}): {h.get('holder', '')[:60]}")
+    print("\n".join(dict.fromkeys(hits)) if hits else "no owner")
+    return 0 if hits else 3
 
 
 def read_cmd(args):
     """Read-only, so no lock."""
+    if args.cmd in ("inbox", "ledger", "events"):
+        return log_cmd(args)
+    if args.cmd == "who":
+        return who_cmd(args)
     roster = load_roster()
     if args.cmd == "whoami":
         me = find_session(roster, args.session_id)
