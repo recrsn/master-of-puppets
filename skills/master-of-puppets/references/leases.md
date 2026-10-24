@@ -62,17 +62,19 @@ whether to grant it, from rules and its own observations.
   recorded minutes, GiB and core samples per class). `--minutes` is always its
   call: the smallest time that finishes the whole current unit of work, never
   a unit cut to fit the suggestion. It adds `--gib` and `--cpus` (peak memory
-  and cores) when it knows them; a figure it leaves out takes the project's
-  class peak.
+  and cores) when it knows them. A GiB figure it leaves out takes the
+  project's class peak; a core figure it leaves out takes the class
+  `defaultCpus` (0: no core charge).
 - **Coordinator.** It charges the request as asked. It does not raise or
   lower a member's figures. It decides with:
   - rules: the config limits (`maxMinutes`, both budgets, slot caps) and the
     project rules in memory;
   - observations: the peaks it measured (`measure-peak`, recorded at
-    release). `acquire` refuses (exit 6) a GiB or core figure below the
-    observed peak by more than `sizeMargin` (machine config, default 25%).
-    Only learn mode with three or more samples counts as an observation; a
-    default is not one.
+    release). `acquire` refuses (exit 6) a GiB figure below the observed
+    peak by more than `sizeMargin` (machine config, default 25%). Only learn
+    mode with three or more samples counts as an observation; a default is
+    not one. Measured cores are never charged or checked by themselves: they
+    are the evidence for a `defaultCpus` vote ("Class defaults by vote").
   An undersized request gets LEASE RESIZE. The member requests again with the
   same id, or sends LEASE SIZE with why this run is smaller (for example only
   the typecheck of a full build). When the reason fits the recorded commands,
@@ -113,9 +115,10 @@ sum(held cores) + request cores <= CPU cores - reserveCpus
 ```
 
 - A request's GiB and cores are the member's figures (`request|wait|acquire
-  ... --gib <n> --cpus <n>`). A figure it leaves out takes the project's class
-  peak. Learn mode: the starting value (default 0) is a floor until three
-  measurements exist, then the maximum of the last five. Fixed mode: the starting value. Pass `--worktree` to `wait` so
+  ... --gib <n> --cpus <n>`). A GiB figure it leaves out takes the project's
+  class peak. Learn mode: the starting value (default 0) is a floor until
+  three measurements exist, then the maximum of the last five. A core figure
+  it leaves out takes the class `defaultCpus`, never the measured cores. Fixed mode: the starting value. Pass `--worktree` to `wait` so
   the right project's peak applies.
 - A request over a whole budget can never fit: `request` and `wait` refuse it
   with exit 2. Split it.
@@ -186,7 +189,7 @@ The budgets predict; the host check observes. Both must pass, and
      `coordinator.py calm-wait` in the background (`--settle <s>` while a
      stack starts), tell the member it waits for the host, and run `acquire`
      again on CALM.
-   - 6: undersized: a GiB or core figure is below the observed peak by more
+   - 6: undersized: a GiB figure is below the observed peak by more
      than the size margin. Send LEASE RESIZE ("Sizing", above). Run `acquire
      --accept-size` only on a LEASE SIZE reason that fits the commands.
 4. On release: the member's `puppet.py release <CLASS> --id <id> --result pass|fail|partial --note "..." [--port <n> ...]`

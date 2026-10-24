@@ -48,7 +48,7 @@ DEFAULT_REGISTRY = {
     "BUILD": {"description": "builds, typecheck, lint/format, tests, codegen", "defaultGiB": 0, "defaultCpus": 0, "maxMinutes": 0, "settle": {}},
     "E2E": {"description": "local servers/stacks and interacting with them", "defaultGiB": 0, "defaultCpus": 0, "maxMinutes": 0, "settle": {"BUILD": 60}},
 }
-SPIN = '<span class="spin" role="img" aria-label="Running"></span>'  # queue-position slot of a running lease
+RUNNING = '<span class="dot ontrack live" role="img" aria-label="Running"></span>'  # queue-position slot of a running lease
 LIVE_MINUTES = 40
 FORCE_EVERY = 30
 HOST_EVERY = 5
@@ -537,7 +537,8 @@ def render_page(host):
                 + (f'<span class="mono sm t2">{e(when)}</span>' if when else "")
                 + (f'<div class="links">{"".join(link(l) for l in links)}</div>' if links else "")
                 + actions(open_button(t.get("session", "")) + park_buttons(coord, tid)))
-        return row(dom_id("t", coord, tid), KIND_DOT[kind], t.get("name") or tid, last, body, title_cls="t2")
+        dot = KIND_DOT[kind] + (" live" if kind in ("work", "ok") and not p else "")
+        return row(dom_id("t", coord, tid), dot, t.get("name") or tid, last, body, title_cls="t2")
 
     def newest_first(x):
         last = last_update(x[0], x[1].get("id", ""))
@@ -626,22 +627,27 @@ def render_page(host):
             return (f'<button type="button" class="ghost{" cancel" if action == "unwait" else ""}" data-q="{action}" '
                     f'data-cls="{e(cls)}" data-id="{e(entry_id)}">{label}</button>')
 
+        def requested(minutes, x):
+            return " · ".join([f"{minutes:g}m"] + [f"{fmt(x[k])} {unit}" for k, unit in (("cpus", "cores"), ("gib", "GiB")) if x.get(k) is not None])
+
         def lane_entries(cls):
-            """(pos, holder, duration, duration color, detail, commands, buttons) for each held and queued entry."""
+            """(pos, holder, duration, duration color, request, detail, commands, buttons) for each held and queued entry."""
             out = []
             for h in holders(leases, cls):
                 end = parse(h["expiresAt"])
                 left = int((end - now).total_seconds() // 60)
                 dur, color = (("expired", "danger") if left < 0 else (f"{left}m left", "t2"))
-                out.append((SPIN, h, dur, color, f'{fmt(h.get("gib"))} GiB · {fmt(h.get("cpus"))} cores · {eta_text(cls, h["id"])}', h.get("commands", ""), ""))
+                mins = h.get("minutes") or (end - parse(h["grantedAt"])).total_seconds() / 60
+                out.append((RUNNING, h, dur, color, requested(round(mins), h), eta_text(cls, h["id"]), h.get("commands", ""), ""))
             pos = 0
             for q in queue.get(cls, []):
                 pos += 0 if q.get("hold") else 1
                 buttons = (qbutton("up", cls, q["id"], "Move up") if pos > 1 and not q.get("hold") else "") + qbutton("unwait", cls, q["id"], "Cancel")
                 prio = f"priority {q['priority']} · " if q.get("priority") else ""
                 start = eta[cls][q["id"]][1]
-                dur = "hold" if q.get("hold") else f"~{local(start)} · {est_minutes(cls, q):g}m"
-                out.append(("–" if q.get("hold") else str(pos), q, dur, "t3", f"{prio}{eta_text(cls, q['id'])}", "", buttons))
+                dur = "hold" if q.get("hold") else f"~{local(start)}"
+                out.append(("–" if q.get("hold") else str(pos), q, dur, "t3", requested(est_minutes(cls, q), q),
+                            f"{prio}{eta_text(cls, q['id'])}", "", buttons))
             return out
 
         desk_lanes = wall_lanes = ""
@@ -654,25 +660,28 @@ def render_page(host):
             entries = lane_entries(cls)
             rows = "".join(
                 f'<details class="row q" id="{dom_id("q", cls, h["id"])}"><summary class="row-h"><span class="q-pos">{pos}</span>'
-                f'<span class="row-t {"t1" if pos == SPIN else "t2"}">{e(h.get("holder", ""))}</span>'
+                f'<span class="q-t"><span class="row-t {"t1" if pos == RUNNING else "t2"}">{e(h.get("holder", ""))}</span>'
+                f'<span class="q-req">{e(req)}</span></span>'
                 f'<span class="row-ago {dcolor}">{e(dur)}</span></summary><div class="row-b">'
                 + meta_line(h.get("coordinator", ""), detail)
                 + (f'<span class="mono sm t2 wrap">{e(commands)}</span>' if commands else "")
                 + f'<span class="mono sm t3 wrap">{e(h["id"])}</span>{actions(buttons)}</div></details>'
-                for pos, h, dur, dcolor, detail, commands, buttons in entries)
+                for pos, h, dur, dcolor, req, detail, commands, buttons in entries)
             desk_lanes += (f'<div class="lane"><div class="lane-h" title="{e(desc)}"><b>{e(cls)}</b><span class="{color}">{e(text)}</span></div>'
                            f'{rows}</div>')
             wall_rows = "".join(
-                f'<div class="wq"><span class="q-pos">{pos}</span><span class="row-t">{e(h.get("holder", ""))}</span>'
-                f'<span class="mono {dcolor}">{e(dur)}</span></div>'
-                for pos, h, dur, dcolor, *_ in entries)
+                f'<div class="wq"><span class="q-pos">{pos}</span><span class="q-t"><span class="row-t">{e(h.get("holder", ""))}</span>'
+                f'<span class="q-req">{e(req)}</span></span><span class="mono {dcolor}">{e(dur)}</span></div>'
+                for pos, h, dur, dcolor, req, *_ in entries)
             wall_lanes += f'<div class="lane"><div class="lane-h"><b>{e(cls)}</b><span class="{color}">{e(text)}</span></div>{wall_rows}</div>'
+        ends = [end for cls in classes for kind, _, end in eta[cls].values() if kind == "queued"]
+        clears = f"Queue clears ~{local(max(ends))}" if ends else "Queue empty"
         lease_panel = (
             f'<section class="sec leases" id="leases"><div class="sec-h"><h2>Leases</h2>'
-            f'<span class="n">{fmt(budget.get("freeGiB"))} of {fmt(budget.get("limitGiB"))} GiB · '
-            f'{fmt(budget.get("freeCpus"))} of {fmt(budget.get("limitCpus"))} cores free</span></div>{desk_lanes}</section>'
+            f'<span class="n">{clears}</span></div>{desk_lanes}</section>'
         )
-        wall_leases = f'<section class="w-leases"><span class="wl">Leases</span>{wall_lanes}</section>'
+        wall_leases = (f'<section class="w-leases"><div class="lane-h"><span class="wl">Leases</span>'
+                       f'<span class="wl t3">{clears}</span></div>{wall_lanes}</section>')
 
     # ---- coordinators (in the ledger drawer)
     coord_rows = ""

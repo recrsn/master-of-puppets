@@ -62,7 +62,7 @@ observed peak unless you tell me why the run is smaller.
 | Lease queued | `LEASE QUEUED — <id> (<min> min, ~<GiB> GiB, ~<n> cores), <CLASS> position <n>. Ahead: <who>. ETA ~<time>.` |
 | Head, host busy | `LEASE QUEUED — <id> is at the head, but the host is busy (<numbers>). I grant when two samples are calm.` |
 | Head, no memory or cores | `LEASE QUEUED — <id> is at the head; it needs <n> GiB / <c> cores and <m> GiB / <d> cores are free. I grant after the next release.` |
-| Undersized | `LEASE RESIZE — <id> asks <n> GiB / <c> cores; I observed <m> GiB / <d> cores in <CLASS> runs. Request again with the same id at the observed peak, or send LEASE SIZE with why this run is smaller.` |
+| Undersized | `LEASE RESIZE — <id> asks <n> GiB; I observed <m> GiB in <CLASS> runs. Request again with the same id at the observed peak, or send LEASE SIZE with why this run is smaller.` |
 | Grant | `LEASE GRANTED — <CLASS> <id> for <task>, until <time>. Covers: <commands>. Release: <command>.` |
 | Priority move | `LEASE QUEUED — <id> is now <CLASS> position <n>: <task> has priority <p>.` |
 | Extension granted | `LEASE EXTENDED — <id> until <time>. Covers: <commands>.` |
