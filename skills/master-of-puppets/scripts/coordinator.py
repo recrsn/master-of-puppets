@@ -104,8 +104,9 @@ show who, why and each changed key with its old and new value)
   config remove-class NAME        refused while the class has holders or queue entries
        project: --name --base-branch --merge-method merge|squash|rebase|auto --leases-default
                 [--class CLASS --max-minutes N --minutes learn|fixed --peak learn|fixed --default-gib N]
-       release records run minutes; with --minutes learn the limit is p90 of the last 10
-       runs + 25% (at least 5, at most --max-minutes); config show prints maxMinutesEffective.
+       --max-minutes is the hard lease limit. release records run minutes; with --minutes learn
+       config show prints suggestedMinutes, p90 of the last 10 runs + 25% (at least 5, at most
+       --max-minutes), a reference that never limits a lease or sets its length.
 
 Roster and members (coordinators write; members send messages, and request and release their own leases)
   roster | whoami --session-id ID
@@ -248,7 +249,7 @@ from moplib import (
     DIR, CONFIG, TOOLS, MEMBER_TOOLS, SLUG, FILES, OBSOLETE, SOURCE, version_warning, PEAKS,
     INBOX, CLASS_NAME, read_json, write_json, load_machine, registry,
     class_names, project_key, load_project, save_project, class_peak, typical_minutes,
-    max_minutes, over_limit, extend_lease, now, lock, unlock, log, note,
+    suggested_minutes, over_limit, extend_lease, now, lock, unlock, log, note,
     load_roster, save_roster, live, load, save, budget, order, queue_entry,
     say, deliver, notify, READS, memory_path, add_read_commands,
     read_cmd, run, worktree_pids, drain,
@@ -387,7 +388,7 @@ def config_cmd(args):
         proj = load_project(key, base)
         for c in class_names():
             proj["classes"][c]["peakGiB"] = class_peak(proj, c)
-            proj["classes"][c]["maxMinutesEffective"] = max_minutes(proj, c)
+            proj["classes"][c]["suggestedMinutes"] = suggested_minutes(proj, c)
             proj["classes"][c]["typicalMinutes"] = typical_minutes(proj, c)
         out["project"] = proj
         if not proj["configured"]:
@@ -1873,7 +1874,7 @@ def main():
     cpj.add_argument("--leases-default", choices=("on", "off"))
     cpj.add_argument("--class", dest="pcls", metavar="CLASS")
     cpj.add_argument("--max-minutes", type=int)
-    cpj.add_argument("--minutes", choices=("learn", "fixed"), help="learn: adapt the limit to recorded run times, capped by --max-minutes")
+    cpj.add_argument("--minutes", choices=("learn", "fixed"), help="learn: suggest a request length from recorded run times; the limit stays --max-minutes")
     cpj.add_argument("--peak", choices=("learn", "fixed"))
     cpj.add_argument("--default-gib", type=float)
     sc = csub.add_parser("set-class")

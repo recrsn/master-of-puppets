@@ -114,9 +114,15 @@ never by a relay.
    requests), and queue it yourself; no message is needed:
    `puppet.py request <CLASS> --coordinator <coord> --name <name> --id <id> --minutes <estimate> --commands "<exact commands>" --worktree <worktree> [--gib <n>] [--what "<short label>"]`.
    The classes and their scope are in WELCOME (BUILD and E2E by default).
+   **Duration.** You choose `--minutes`. Ask for the smallest time that lets
+   the whole current unit of work finish in one lease, for example the full
+   build and its tests. Do not cut a unit of work to fit a shorter time. A
+   suggested time in WELCOME is what past runs took; it is a reference, not
+   a target.
    It prints your position. Your coordinator sees the request and grants it.
-   - Exit 2: the run is over the class limit. Split it into parts that fit
-     and request each part when the one before it is done.
+   - Exit 2: the run is over the class limit. Split it at unit boundaries
+     (for example build, then tests) into parts that fit, and request each
+     part when the one before it is done.
    - Exit 3: refused (leases off, not a member, a foreign id, or the id is
      already held). Fix what it names; ask your coordinator when you cannot.
    To change your request (commands, estimate), run `request` again with the

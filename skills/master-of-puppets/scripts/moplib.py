@@ -142,20 +142,23 @@ def typical_minutes(proj, cls):
     return runs[len(runs) // 2] if len(runs) >= SAMPLES_TRUSTED else None
 
 
-def max_minutes(proj, cls):
+def suggested_minutes(proj, cls):
     """learn: p90 of the last 10 runs plus 25%, at least 5, at most the configured maximum.
-    fixed (or fewer than 3 runs): the configured maximum."""
+    A reference for members; it never limits a lease or sets its length. fixed (or fewer than 3 runs): None."""
     c = proj["classes"][cls] if proj else project_class_defaults(cls)
     runs = sorted(c.get("runMinutes", []))
     if c.get("minutesMode") != "learn" or len(runs) < SAMPLES_TRUSTED:
-        return c["maxMinutes"]
+        return None
     p90 = runs[max(0, -(-9 * len(runs) // 10) - 1)]
     return int(min(c["maxMinutes"], max(5, -(-p90 * 1.25 // 1))))
 
 
 def length_limit(cls, key):
-    """Effective max lease minutes of class cls in project key (the registry default without one)."""
-    return max_minutes(load_project(key) if key else None, cls)
+    """Max lease minutes of class cls in project key: the configured maximum (the registry
+    default without one). Learned run times never lower it: runs cannot outlast the limit,
+    so a limit learned from them could only shrink."""
+    proj = load_project(key) if key else None
+    return (proj["classes"][cls] if proj else project_class_defaults(cls))["maxMinutes"]
 
 
 def over_limit(cls, key, minutes):

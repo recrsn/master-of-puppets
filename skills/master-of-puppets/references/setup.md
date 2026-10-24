@@ -71,10 +71,12 @@ Ask these four questions:
    Fixed at those values. Learn from smaller starting values (BUILD 6, E2E 4):
    the class default is a floor until three samples exist, so a low start
    admits more early on.
-2. **Lease time limits** (header "Max time"): Learn from recorded runs, capped
-   at BUILD 20 / E2E 45 min (Recommended). Fixed at 20 and 45. Fixed short: 10
-   and 30. Fixed long: 30 and 60. Longer runs are split. Learn mode sets the
-   limit to p90 of the last 10 runs + 25% (at least 5 min), never above the cap.
+2. **Lease time limits** (header "Max time"): BUILD 20 / E2E 45 min with
+   learned suggestions (Recommended). Fixed at 20 and 45. Fixed short: 10
+   and 30. Fixed long: 30 and 60. Longer runs are split. The limit is always
+   the chosen value. Learn mode adds a suggested time, p90 of the last 10
+   runs + 25% (at least 5 min), for reference; it never lowers the limit, and
+   members still choose their own length.
 3. **Merge setup** (header "Merging"): the detected default branch with the
    allowed merge method (Recommended), for example "main + squash
    (detected)". When the repository uses a merge queue or a required default

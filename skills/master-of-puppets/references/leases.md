@@ -37,9 +37,13 @@ and include them in WELCOME.
 browser-only work against remote sites, unless a class or a project rule
 covers it.
 
-Maximum length: `maxMinutesEffective` per class from `coordinator.py config show`. Every release records the run minutes;
-in learn mode the limit adapts to p90 of the last 10 runs + 25%, capped by
-the configured maximum, and queue ETAs use the median run. `wait`, `acquire`
+Maximum length: `maxMinutes` per class from `coordinator.py config show`. Learned
+run times never lower it: a run cannot outlast the limit, so a limit learned
+from runs could only shrink. Every release records the run minutes; queue ETAs
+use the median run, and in learn mode `suggestedMinutes` (p90 of the last 10
+runs + 25%, at most `maxMinutes`) shows what past runs took. Members choose
+their own length: the smallest time that finishes the whole current unit of
+work in one lease, never a unit cut to fit the suggestion. `wait`, `acquire`
 and both `extend` commands refuse a longer lease with exit 2. Split a longer request: the
 first part keeps the queue place, later parts join the back of their priority.
 
