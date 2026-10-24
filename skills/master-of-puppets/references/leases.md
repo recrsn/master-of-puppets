@@ -102,9 +102,10 @@ that class, then `config agree --by <slug> --id <id>`, or `config object --by
 live coordinator agrees, or 30 minutes after it was made with no objection: a
 live coordinator that has not voted by then agrees. One objection closes it,
 and the proposer may propose again with new observations. The applying
-command records the change and sends CONFIG to every live coordinator and
-member. `config proposals` lists open proposals and who has not agreed, and
-applies those that are due.
+command records the change and sends CONFIG to every live coordinator.
+Members get no CONFIG message: tell a member only what changes for its own
+task, for example a new limit on a request it has queued. `config proposals`
+lists open proposals and who has not agreed, and applies those that are due.
 
 Each heartbeat round ("Heartbeat round" in SKILL.md, step 4):
 
