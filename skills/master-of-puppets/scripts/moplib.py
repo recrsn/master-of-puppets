@@ -88,9 +88,11 @@ def load_machine():
 
 
 def registry(machine=None):
-    """Lease classes: config.json "classes", else the default BUILD and E2E."""
+    """Lease classes: config.json "classes", else the default BUILD and E2E. A stored class
+    takes the default registry's fields it lacks (a custom class: defaultCpus 0)."""
     machine = machine or load_machine()
-    return machine.get("classes") or json.loads(json.dumps(DEFAULT_REGISTRY))
+    stored = machine.get("classes") or DEFAULT_REGISTRY
+    return {n: json.loads(json.dumps({"defaultCpus": 0, **DEFAULT_REGISTRY.get(n, {}), **c})) for n, c in stored.items()}
 
 
 def class_names(machine=None):
