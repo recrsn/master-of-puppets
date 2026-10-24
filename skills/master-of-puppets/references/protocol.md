@@ -45,6 +45,7 @@ observed peak unless you tell me why the run is smaller.
 | `USER SYNC — <one line>` | `note`, `member update --latest` |
 | `REQUEST <CLASS> <id> ...` in `watch inbox` (sent by the member's `puppet.py request`) | check and grant (`references/leases.md`, "Granting") |
 | `LEASE SIZE — <id> — <why this run is smaller than the observed peak>` | your decision: `acquire --accept-size` when the reason fits the commands, else LEASE RESIZE (`references/leases.md`, "Sizing") |
+| `CLASS DEFAULTS PROPOSED <id> ...` in `watch inbox` (a peer's `config propose`) | check your observations of that class, then `config agree` or `config object --text` (`references/leases.md`, "Class defaults by vote") |
 | `EXTEND <CLASS> <id> <n> min ...` in `watch inbox` (sent by the member's `puppet.py extend`) | your decision: `coordinator.py extend`, or tell it to release (`references/leases.md`, "Extending") |
 | `LEAVE — <name>` | `member remove` |
 | `HANDOFF REQUEST — <name> — to <coordinator\|any> — PRs <n> — note <path>` | `PAUSE` its PRs, then offer (`references/handoff.md`) |

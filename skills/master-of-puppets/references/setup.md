@@ -76,10 +76,13 @@ Ask these four questions:
    8 GiB and 2 cores, then measure each lease with `coordinator.py measure-peak`
    (Recommended). Fixed at those values. Learn from smaller starting values
    (BUILD 6 GiB and 2 cores, E2E 4 GiB and 1 core): the class default is a
-   floor until three samples exist, so a low start admits more early on.
+   floor until three samples exist, so a low start admits more early on. No
+   limit: 0 GiB and 0 cores, so only what members ask for is charged until
+   coordinators vote values in (`references/leases.md`, "Class defaults by
+   vote").
 2. **Lease time limits** (header "Max time"): BUILD 20 / E2E 45 min with
-   learned suggestions (Recommended). Fixed at 20 and 45. Fixed short: 10
-   and 30. Fixed long: 30 and 60. Longer runs are split. The limit is always
+   learned suggestions (Recommended). No limit (0) until coordinators vote
+   one. Fixed short: 10 and 30. Fixed long: 30 and 60. Longer runs are split. The limit is always
    the chosen value. Learn mode adds a suggested time, p90 of the last 10
    runs + 25% (at least 5 min), for reference; it never lowers the limit, and
    members still choose their own length.

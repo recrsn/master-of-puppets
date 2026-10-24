@@ -40,8 +40,8 @@ OBSOLETE = ("lease.py",)  # helpers that earlier versions installed; install rem
 SOURCE = os.path.join(DIR, "source.json")  # the skill copy that install last copied from
 CLASS_NAME = re.compile(r"^[A-Z][A-Z0-9_-]{0,23}$")
 DEFAULT_REGISTRY = {
-    "BUILD": {"description": "builds, typecheck, lint/format, tests, codegen", "defaultGiB": 10, "defaultCpus": 4, "maxMinutes": 20, "settle": {}},
-    "E2E": {"description": "local servers/stacks and interacting with them", "defaultGiB": 8, "defaultCpus": 2, "maxMinutes": 45, "settle": {"BUILD": 60}},
+    "BUILD": {"description": "builds, typecheck, lint/format, tests, codegen", "defaultGiB": 0, "defaultCpus": 0, "maxMinutes": 0, "settle": {}},
+    "E2E": {"description": "local servers/stacks and interacting with them", "defaultGiB": 0, "defaultCpus": 0, "maxMinutes": 0, "settle": {"BUILD": 60}},
 }
 MACHINE_DEFAULTS = {
     "reserveGiB": 6,
@@ -101,7 +101,7 @@ def class_names(machine=None):
 
 def project_class_defaults(cls):
     reg = registry().get(cls, {})
-    return {"maxMinutes": reg.get("maxMinutes", 20), "minutesMode": "fixed", "peakMode": "learn",
+    return {"maxMinutes": reg.get("maxMinutes", 0), "minutesMode": "fixed", "peakMode": "learn",
             "defaultGiB": reg.get("defaultGiB", 0), "defaultCpus": reg.get("defaultCpus", 0)}
 
 
@@ -179,20 +179,21 @@ def typical_minutes(proj, cls):
 
 
 def suggested_minutes(proj, cls):
-    """learn: p90 of the last 10 runs plus 25%, at least 5, at most the configured maximum.
+    """learn: p90 of the last 10 runs plus 25%, at least 5, at most the configured maximum (0: no maximum).
     A reference for members; it never limits a lease or sets its length. fixed (or fewer than 3 runs): None."""
     c = proj["classes"][cls] if proj else project_class_defaults(cls)
     runs = sorted(c.get("runMinutes", []))
     if c.get("minutesMode") != "learn" or len(runs) < SAMPLES_TRUSTED:
         return None
     p90 = runs[max(0, -(-9 * len(runs) // 10) - 1)]
-    return int(min(c["maxMinutes"], max(5, -(-p90 * 1.25 // 1))))
+    suggested = int(max(5, -(-p90 * 1.25 // 1)))
+    return min(c["maxMinutes"], suggested) if c["maxMinutes"] else suggested
 
 
 def length_limit(cls, key):
     """Max lease minutes of class cls in project key: the configured maximum (the registry
-    default without one). Learned run times never lower it: runs cannot outlast the limit,
-    so a limit learned from them could only shrink."""
+    default without one); 0 means no limit. Learned run times never lower it: runs cannot
+    outlast the limit, so a limit learned from them could only shrink."""
     proj = load_project(key) if key else None
     return (proj["classes"][cls] if proj else project_class_defaults(cls))["maxMinutes"]
 
@@ -200,7 +201,7 @@ def length_limit(cls, key):
 def over_limit(cls, key, minutes):
     """Refusal text when minutes is over the class limit, else None."""
     limit = length_limit(cls, key)
-    if minutes > limit:
+    if limit and minutes > limit:
         return f"{minutes} min is over the {limit}-min {cls} limit; split the run into parts of at most {limit} min"
     return None
 
@@ -211,7 +212,7 @@ def extension_refusal(held, cls, minutes):
     expires = now() + dt.timedelta(minutes=minutes)
     total = (expires - dt.datetime.fromisoformat(held["grantedAt"])).total_seconds() / 60
     limit = length_limit(cls, held.get("project"))
-    if total > limit:
+    if limit and total > limit:
         return f"the lease would run {total:.0f} min, over the {limit}-min {cls} limit; release it and queue the rest"
     return None
 

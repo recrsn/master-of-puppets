@@ -23,7 +23,7 @@ database, a device). Leases are optional and machine-wide. Default registry:
   BUILD: builds (incl. setup scripts that build), typecheck, lint/format, test runs, codegen.
   E2E:   starting local servers/stacks and interacting with them.
 Each class has a description, defaultGiB and defaultCpus (0 = that budget does not
-apply; with both 0 only maxSlots limits it), maxMinutes and settle {OTHER: seconds} (after a grant of this class,
+apply; with both 0 only maxSlots limits it), maxMinutes (0 = no limit) and settle {OTHER: seconds} (after a grant of this class,
 OTHER waits that long; E2E settles BUILD for 60 s by default). Names are upper-case.
 No lease: a plain dependency install, source edits, reading code, browser-only work
 against remote sites (unless a class or a project rule in `memory` covers it).
@@ -116,6 +116,14 @@ show who, why and each changed key with its old and new value)
   config set-class NAME [--description T] [--default-gib N] [--default-cpus N] [--max-minutes N]
                 [--settle OTHER=S ...]
   config remove-class NAME        refused while the class has holders or queue entries
+  config propose CLASS --by C --reason TEXT [--project-root P] [--default-gib N] [--default-cpus N]
+                [--max-minutes N]
+       class defaults from C's observations (sizes, capacity, release events); 0 = no limit.
+       Without --project-root it sets the machine class; with it, that project's class (which
+       wins over the machine class). Every live peer gets CLASS DEFAULTS PROPOSED.
+  config agree --by C --id ID | config object --by C --id ID --text TEXT | config proposals
+       a proposal applies when every live coordinator agrees (the event and ledger record
+       it, and every live coordinator and member gets CONFIG); one objection closes it
        project: --name --base-branch --merge-method merge|squash|rebase|auto --leases-default
                 [--class CLASS --max-minutes N --minutes learn|fixed --peak learn|fixed --default-gib N
                  --default-cpus N]
@@ -222,6 +230,8 @@ Watchers and install
          ACCEPT NAME ...        another coordinator took a member C offered
          EXTEND CLASS ID N min ...  C's member asks for more time (puppet.py extend): extend or refuse
          CONFIG, MEMORY, LEASES, ADMISSION, INSTALLED, UPDATE   a peer changed a machine rule
+         CLASS DEFAULTS PROPOSED ID ...  a peer proposes class defaults: check your observations,
+                                then config agree or config object
        and, from the queue state each 2 s:
          HEAD CLASS ID ...      an entry of C became the first ready entry: acquire it
        watch expiry prints each expired lease once, with left=N processes in its worktree.
@@ -311,8 +321,90 @@ def record_config(by, reason, what, old, new):
              + (f" (reason: {reason})" if reason else ""), members=True)
 
 
+PROPOSALS = os.path.join(DIR, "class-proposals.json")
+VOTED = (("default_gib", "defaultGiB"), ("default_cpus", "defaultCpus"), ("max_minutes", "maxMinutes"))
+
+
+def apply_class_defaults(p):
+    """Write proposal p's values into its scope: the machine class registry, or one
+    project's class. Returns (before, after) for record_config."""
+    if p["project"]:
+        proj = load_project(p["project"])
+        before = json.loads(json.dumps(proj))
+        proj["classes"][p["class"]].update(p["values"])
+        proj["updatedAt"] = now().isoformat()
+        save_project(proj)
+        return before, proj
+    raw = read_json(CONFIG) or {}
+    before = json.loads(json.dumps({**raw, "classes": raw.get("classes") or registry()}))
+    raw.setdefault("classes", registry())[p["class"]].update(p["values"])
+    raw["updatedAt"] = now().isoformat()
+    write_json(CONFIG, raw)
+    return before, raw
+
+
+def class_vote_cmd(args):
+    """propose, agree, object and proposals: class defaults (GiB, cores, max minutes) that
+    coordinators set from their observations. A proposal applies when every live
+    coordinator agrees; one objection closes it. The caller holds the lock."""
+    data = read_json(PROPOSALS) or {"proposals": []}
+    roster = load_roster()
+    if args.ccmd == "proposals":
+        for p in data["proposals"]:
+            if p["status"] == "open":
+                waiting = [n for n, c in roster["coordinators"].items() if live(c) and p["votes"].get(n, {}).get("vote") != "agree"]
+                print(f"{p['id']} {p['class']} {p['project'] or 'machine'} {json.dumps(p['values'])} by {p['by']}"
+                      f" · observations: {p['reason']} · waiting: {', '.join(waiting) or 'none'}")
+        return 0
+    if not live(roster["coordinators"].get(args.by)):
+        print(f"{args.by} is not a live coordinator")
+        return 3
+    if args.ccmd == "propose":
+        if args.name not in registry():
+            print(f"unknown lease class {args.name}; known: {', '.join(class_names())}")
+            return 2
+        values = {field: getattr(args, flag) for flag, field in VOTED if getattr(args, flag) is not None}
+        if not values:
+            print("propose at least one of --default-gib, --default-cpus, --max-minutes (0 = no limit)")
+            return 2
+        if any(v < 0 for v in values.values()):
+            print("values are 0 (no limit) or more")
+            return 2
+        key = project_key(args.project_root)[0] if args.project_root else None
+        p = {"id": uuid.uuid4().hex[:8], "class": args.name, "project": key, "values": values, "by": args.by,
+             "reason": args.reason, "at": now().isoformat(), "status": "open",
+             "votes": {args.by: {"vote": "agree", "at": now().isoformat()}}}
+        data["proposals"].append(p)
+        log(f"class-propose {p['id']} {args.name} {key or 'machine'} {json.dumps(values, separators=(',', ':'))} by={args.by}")
+        announce(args.by, f"CLASS DEFAULTS PROPOSED {p['id']} by {args.by}: {args.name} ({key or 'machine'}) {json.dumps(values)}. "
+                 f"Observations: {args.reason}. Check your own (sizes, capacity, events), then config agree --id {p['id']} "
+                 f"or config object --id {p['id']} --text.")
+    else:
+        p = next((x for x in data["proposals"] if x["id"] == args.id), None)
+        if not p or p["status"] != "open":
+            print(f"no open class proposal {args.id}")
+            return 3
+        p["votes"][args.by] = {"vote": args.ccmd, "text": args.text or "", "at": now().isoformat()}
+        log(f"class-{args.ccmd} {p['id']} by={args.by}" + (f" text={json.dumps(args.text)}" if args.text else ""))
+        if args.ccmd == "object":
+            p["status"] = "rejected"
+            announce(args.by, f"CLASS DEFAULTS {p['id']}: {args.by} objects — {args.text}. Closed; propose again with new observations.")
+    waiting = [n for n, c in roster["coordinators"].items() if live(c) and p["votes"].get(n, {}).get("vote") != "agree"]
+    if p["status"] == "open" and not waiting:
+        before, after = apply_class_defaults(p)
+        p["status"], p["appliedAt"] = "applied", now().isoformat()
+        what = f"class {p['class']}" + (f" project {p['project']}" if p["project"] else "")
+        record_config(args.by, f"vote {p['id']}: {p['reason']}", what, before, after)
+        announce(args.by, f"CONFIG {what} defaults {json.dumps(p['values'])} applied by vote {p['id']}", members=True)
+    write_json(PROPOSALS, data)
+    print(f"{p['id']} {p['status']}" + (f"; waiting for {', '.join(waiting)}" if p["status"] == "open" else ""))
+    return 0
+
+
 def config_cmd(args):
     machine = load_machine()
+    if args.ccmd in ("propose", "agree", "object", "proposals"):
+        return class_vote_cmd(args)
     if args.ccmd == "project-key":
         key, base = project_key(args.path)
         print(json.dumps({"key": key, "root": base}))
@@ -366,7 +458,7 @@ def config_cmd(args):
                 other.get("settle", {}).pop(args.name, None)
             raw.get("maxSlots", {}).pop(args.name, None)
         else:
-            c = reg.setdefault(args.name, {"description": "", "defaultGiB": 0, "defaultCpus": 0, "maxMinutes": 20, "settle": {}})
+            c = reg.setdefault(args.name, {"description": "", "defaultGiB": 0, "defaultCpus": 0, "maxMinutes": 0, "settle": {}})
             for flag, field in (("description", "description"), ("default_gib", "defaultGiB"), ("default_cpus", "defaultCpus"),
                                 ("max_minutes", "maxMinutes")):
                 if getattr(args, flag) is not None:
@@ -1940,6 +2032,20 @@ def main():
     rc.add_argument("--by", required=True)
     rc.add_argument("--reason", help="why, for example the user's words")
     rc.add_argument("name", metavar="CLASS")
+    cp = csub.add_parser("propose", help="class defaults from your observations; applies when every live coordinator agrees")
+    cp.add_argument("--by", required=True)
+    cp.add_argument("name", metavar="CLASS")
+    cp.add_argument("--project-root", help="one project's class; default: the machine class registry")
+    cp.add_argument("--default-gib", type=float, help="0 = no memory charge")
+    cp.add_argument("--default-cpus", type=float, help="0 = no core charge")
+    cp.add_argument("--max-minutes", type=int, help="0 = no limit")
+    cp.add_argument("--reason", required=True, help="your observations, for example sizes figures and recent release peaks")
+    for name in ("agree", "object"):
+        cv = csub.add_parser(name)
+        cv.add_argument("--by", required=True)
+        cv.add_argument("--id", required=True)
+        cv.add_argument("--text", required=name == "object", help="the reason (required to object)")
+    csub.add_parser("proposals", help="open class proposals and who has not agreed")
     ck = csub.add_parser("project-key")
     ck.add_argument("path")
     m = sub.add_parser("say")
