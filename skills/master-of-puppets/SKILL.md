@@ -264,7 +264,9 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    above. Confirm with one `gh pr view` before each stack move, not on a timer.
 4. Leases on: expiry check and grants (`references/leases.md`). Run
    `coordinator.py status --brief`: a ready entry of yours that you have not
-   acted on is a member request that `watch inbox` did not show you.
+   acted on is a member request that `watch inbox` did not show you. Then
+   vote on and propose class defaults (`references/leases.md`, "Class
+   defaults by vote"); this never involves the user.
 5. Check on members, higher priority first; do not wait for them to report.
    `coordinator.py member stale --coordinator <slug> --minutes 30` lists members with
    no recorded update. For each one: read its PRs in the latest `watch prs`

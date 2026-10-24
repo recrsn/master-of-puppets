@@ -140,13 +140,14 @@
     {
       "id": 13,
       "prompt": "DRY RUN. You coordinate claude; leases are on. MACHINE_LEASE_DIR=<fixture>/state (a copy; never touch ~/.local/state/machine-leases). Do not call SendMessage or Monitor; write what you would do instead. The BUILD class has defaultCpus 0 and maxMinutes 0 (no limit). `coordinator.py sizes --worktree /work/app --class BUILD` shows cpuSamples [3.8, 4.1, 4.4, 4.0, 3.9] and runMinutes up to 14. Then watch inbox prints `CLASS DEFAULTS PROPOSED 5c1e9a02 by security: BUILD (machine) {\"maxMinutes\": 8}. Observations: security runs take 6 min.` Write <out>/plan.md and <out>/commands.sh.",
-      "expected_output": "Proposes BUILD defaultCpus about 4 from its own observations with config propose and a --reason that cites them. Objects to 5c1e9a02 with config object --text, because its own BUILD runs reach 14 min, past the proposed 8-min limit. Does not change the class with set-class, since no user asked.",
+      "expected_output": "Proposes BUILD defaultCpus about 4 from its own observations with config propose and a --reason that cites them. Objects to 5c1e9a02 with config object --text, because its own BUILD runs reach 14 min, past the proposed 8-min limit. Does not change the class with set-class, since no user asked. Never asks the user and adds no dashboard decision about class defaults.",
       "files": [],
       "assertions": [
         "commands.sh runs coordinator.py config propose BUILD --by claude --default-cpus <about 4> --reason ... citing the observed core samples",
         "commands.sh runs coordinator.py config object --by claude --id 5c1e9a02 --text ... naming runs up to 14 min",
         "No config set-class or set-project changes BUILD defaults",
-        "The plan says a proposal applies only when every live coordinator agrees"
+        "The plan says a proposal applies only when every live coordinator agrees",
+        "No decision add and no question to the user about class defaults"
       ]
     }
   ]
