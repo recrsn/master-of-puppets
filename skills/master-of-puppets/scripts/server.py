@@ -10,9 +10,9 @@ Inputs ($MACHINE_LEASE_DIR, default ~/.local/state/machine-leases):
   dashboard/<coordinator>-state.json (one per coordinator).
 The page is rendered in memory when an input changes and every 30 s (ETAs and
 heartbeat age). Every 5 s the server samples the host (CPU, load, memory, swap, disk).
-  /            the page (shell: dashboard.html). Desk mode: host meters in the header,
-               "Needs you" first (worst first), the work board, then lease timelines,
-               queues and coordinators; the ledger opens in a drawer. Wall mode: the
+  /            the page (shell: dashboard.html). Desk mode: host values in the header,
+               "Needs you" first (grouped, alarms first), the work list, then the lease
+               lanes; coordinators and the ledger open in a drawer. Wall mode: the
                same, large, for a shared screen (add ?mode=wall to the URL)
   POST /park   {"action": "park"|"unpark", "coord", "name", "until"?} from the Park and Unpark
                buttons: runs `coordinator.py park|unpark ... --notify`, so the coordinator is told.
@@ -123,7 +123,14 @@ def sample_host(prev_swapouts, interval):
 SEV_ORDER = {"critical": 0, "serious": 1, "warning": 2, "ok": 3}
 STALE_MINUTES = 30
 PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
-KINDS = [("warn", "blocked", "Blocked"), ("work", "progress", "In progress"), ("ok", "ontrack", "On track"), ("done", "done", "Done")]
+KIND_LABEL = {"warn": "Blocked", "work": "In progress", "ok": "On track", "done": "Done"}
+KIND_DOT = {"warn": "blocked", "work": "progress", "ok": "ontrack", "done": "done"}
+# Needs you groups, in order: key, label, wall label, dot, color of the "ago" time
+NEED_GROUPS = [("alarm", "Alarms", "alarms", "blocked", "danger"), ("decision", "Decisions", "decisions", "decision", "t2"),
+               ("blocked", "Blocked", "blocked", "blocked", "t2"), ("stale", "Stale ({}+ min)", "stale", "stale", "warn"),
+               ("revisit", "Revisit", "revisit", "stale", "warn")]
+NEED_CAP = 8  # rows shown per Needs you group before "Show N more" (alarms are never capped)
+WALL_ROWS = 8
 
 
 def fmt(v, unit=""):
@@ -145,15 +152,15 @@ def host_tiles(h):
     outs, max_outs = h.get("swapoutsPer12s"), h.get("maxSwapouts", 200)
     return [
         {"id": "cpu", "label": "CPU", "value": f(h.get("cpuPct"), "%"), "pct": h.get("cpuPct") or 0,
-         "short": f"{f(h.get('cpuPct'), '%')} · load {f(h['load1'])}",
+         "short": f(h.get("cpuPct"), "%"),
          "sub": f"load {f(h['load1'])} of {f(h['maxLoad'])} · {h['cores']} cores",
          "sev": "critical" if load_ratio >= 1 else "warning" if load_ratio >= 0.8 else "ok"},
         {"id": "memory", "label": "Memory", "value": f"{f(h.get('memUsedGiB'))} GiB", "pct": mem_pct,
-         "short": f"{f(h.get('memUsedGiB'))} / {f(h['memTotalGiB'])}G",
+         "short": f"{mem_pct:.0f}%",
          "sub": f"of {f(h['memTotalGiB'])} GiB · {f(h.get('memFreePct'), '%')} free · reserve {f(h['reserveGiB'])} GiB",
          "sev": "critical" if mem_pct >= 90 else "warning" if mem_pct >= 80 else "ok"},
         {"id": "swap", "label": "Swap", "value": f"{f(h.get('swapUsedGiB'))} GiB", "pct": swap_pct,
-         "short": f"{f(h.get('swapUsedGiB'))} / {f(h.get('swapTotalGiB'))}G",
+         "short": f"{swap_pct:.0f}%",
          "sub": f"of {f(h.get('swapTotalGiB'))} GiB · {f(outs)} swap-outs/12 s (max {max_outs})",
          "sev": "critical" if outs is not None and outs >= max_outs else "warning" if outs is not None and outs >= max_outs / 2 else "ok"},
         {"id": "disk", "label": "Disk", "value": f"{f(h['diskFreeGiB'])} GiB free", "pct": disk_pct,
@@ -189,16 +196,16 @@ def ago(t, now):
 
 def ago_short(t, now):
     mins = int((now - t).total_seconds() // 60)
-    return "just now" if mins < 1 else f"{mins}m ago" if mins < 60 else f"{mins // 60}h {mins % 60}m ago"
+    return "now" if mins < 1 else f"{mins}m" if mins < 60 else f"{mins // 60}h {mins % 60}m"
 
 
 def link(item):
     return f'<a href="{e(item["href"])}">{e(item["label"])}</a>'
 
 
-def agent_class(tool):
-    tool = (tool or "").lower()
-    return "ag-claude" if "claude" in tool else "ag-codex" if "codex" in tool else "ag-other"
+def dom_id(*parts):
+    """A stable element id; the page script keeps open rows open across body swaps by it."""
+    return re.sub(r"[^A-Za-z0-9_-]+", "-", "-".join(str(p) for p in parts))
 
 
 def clamp(pct):
@@ -206,21 +213,19 @@ def clamp(pct):
 
 
 def host_mini(t):
-    """Compact host meter for the header; the page script repaints it on each host event."""
+    """Compact host value for the header; the page script repaints it on each host event."""
     return (
-        f'<div class="mini" data-host="{t["id"]}" data-sev="{t["sev"]}" title="{e(t["label"] + " " + t["value"] + " · " + t["sub"])}">'
-        f'<div class="vbar"><i class="fill" data-axis="h" style="height:{clamp(t["pct"]):.1f}%"></i></div>'
-        f'<div class="mini-t"><span class="cap">{e(t["label"])}</span><span class="hv" data-k="short">{e(t["short"])}</span></div></div>'
+        f'<span class="hs" data-host="{t["id"]}" data-sev="{t["sev"]}" title="{e(t["label"] + " " + t["value"] + " · " + t["sub"])}">'
+        f'<span class="t3">{e(t["label"])}</span><span class="hv" data-k="short">{e(t["short"])}</span></span>'
     )
 
 
 def host_wall(t):
     """Large host tile for wall mode."""
     return (
-        f'<div class="wtile" data-host="{t["id"]}" data-sev="{t["sev"]}"><span class="wl">{e(t["label"])}</span>'
-        f'<span class="hv" data-k="value">{e(t["value"])}</span>'
-        f'<div class="hbar"><i class="fill" style="width:{clamp(t["pct"]):.1f}%"></i></div>'
-        f'<span class="hd" data-k="sub">{e(t["sub"])}</span></div>'
+        f'<div class="wtile" data-host="{t["id"]}" data-sev="{t["sev"]}" title="{e(t["label"] + " " + t["value"] + " · " + t["sub"])}">'
+        f'<div class="wtile-h"><span class="wl">{e(t["label"])}</span><span class="hv" data-k="value">{e(t["value"])}</span></div>'
+        f'<div class="hbar"><i class="fill" style="width:{clamp(t["pct"]):.1f}%"></i></div></div>'
     )
 
 
@@ -230,6 +235,15 @@ def open_button(href):
     label = ("Open session" if href.startswith(("claude://", "codex://"))
              else "Open task" if "/code/tasks/" in href else "Open")
     return f'<a class="btn" href="{e(href)}">{label}</a>'
+
+
+def meta_line(*parts):
+    parts = [p for p in parts if p]
+    return f'<span class="row-m">{" · ".join(e(p) for p in parts)}</span>' if parts else ""
+
+
+def actions(html_):
+    return f'<div class="acts">{html_}</div>' if html_ else ""
 
 
 def render_page(host):
@@ -309,15 +323,12 @@ def render_page(host):
         row = next((t for t in src.get("tasks", []) if t.get("id") == task_id), {})
         return row.get("session", "")
 
-    def tool_of(coord):
-        return coords.get(coord, {}).get("tool") or coord
-
-    def who(coord, when=None):
-        """Agent swatch and name, then the time of the last change."""
-        out = f'<span class="agent {agent_class(tool_of(coord))}"><i class="sw"></i>{e(coord)}</span>' if coord else ""
-        if when:
-            out += f'<span class="when">{local(when)} · {ago_short(when, now)}</span>'
-        return f'<div class="who">{out}</div>' if out else ""
+    def row(rid, dot, title, when, body, ago_cls="t3", title_cls="t1"):
+        """One quiet 36 px row; a click opens its detail. A <details id> so it stays open across body swaps."""
+        ago_html = (f'<span class="row-ago {ago_cls}" title="last change {local(when)}">{ago_short(when, now)}</span>'
+                    if when else "")
+        return (f'<details class="row" id="{rid}"><summary class="row-h"><span class="dot {dot}"></span>'
+                f'<span class="row-t {title_cls}">{e(title)}</span>{ago_html}</summary><div class="row-b">{body}</div></details>')
 
     tasks = {(coord, t.get("id", "")): t for coord, src in sources.items() for t in src.get("tasks", [])}
     member_of = {(coord, m.get("name")): m for coord, mlist in members.items() for m in mlist}
@@ -351,9 +362,6 @@ def render_page(host):
     def priority_of(coord, task_id):
         return (member_of.get((coord, task_id)) or {}).get("priority", 0)
 
-    def priority_chip(p):
-        return f'<span class="chip" title="Higher goes first; 0 is the default">Priority {p}</span>' if p else ""
-
     streams = roster.get("streams", {})
 
     def stream_of(coord, task_id):
@@ -363,10 +371,7 @@ def render_page(host):
     def stream_label(slug):
         return (streams.get(slug) or {}).get("label") or slug
 
-    def stream_chip(slug):
-        return f'<a class="chip" href="#stream-{e(slug)}" title="Stream {e(slug)}">{e(stream_label(slug))}</a>' if slug else ""
-
-    # ---- needs you: everything that needs a person, one card per task, worst first
+    # ---- needs you: everything that needs a person, one row per task, grouped by why
     needs = {}
 
     def need(key, sev, reason, **card):
@@ -389,20 +394,22 @@ def render_page(host):
     tiles = host_tiles(host)
     for t in tiles:
         if t["sev"] != "ok":
-            need(("host", t["id"]), t["sev"], f"Host {t['label'].lower()}", title=t["value"], status=t["sub"])
+            need(("host", t["id"]), t["sev"], f"Host {t['label'].lower()}", title=f"Host {t['label'].lower()} {t['value']}", status=t["sub"])
     for cls in classes:
         for h in holders(leases, cls):
             if parse(h["expiresAt"]) < now:
-                need(("lease", h["id"]), "critical", f"Expired {cls} lease · {ago(parse(h['expiresAt']), now)}",
-                     id=h["id"], title=h.get("holder", ""), coord=h.get("coordinator", ""))
+                need(("lease", h["id"]), "critical", f"Expired {cls} lease",
+                     id=h["id"], title=f"Expired {cls} lease · {h.get('holder', '')}", coord=h.get("coordinator", ""),
+                     when=parse(h["expiresAt"]))
     for cls, hold in (leases.get("admission") or {}).items():
-        need(("admission", cls), "serious", f"{cls} admission hold · {ago(parse(hold['at']), now)}",
-             title=hold.get("reason", ""), coord=hold.get("by", ""))
+        need(("admission", cls), "serious", f"{cls} admission hold",
+             title=f"{cls} admission hold · {hold.get('reason', '')}", coord=hold.get("by", ""), when=parse(hold["at"]))
     for name, c in coords.items():
         if not coord_live(c) and c.get("status") != "idle":
             hb = f"Last heartbeat {ago(parse(c['heartbeat']), now)}" if c.get("heartbeat") else "No heartbeat"
-            need(("coord", name), "critical", "Stale coordinator", title=name, status=hb, coord=name,
-                 href=(sources.get(name, {}).get("coordinator") or {}).get("href", ""))
+            need(("coord", name), "critical", "Stale coordinator", title=f"Stale coordinator {name}", status=hb, coord=name,
+                 href=(sources.get(name, {}).get("coordinator") or {}).get("href", ""),
+                 when=parse(c["heartbeat"]) if c.get("heartbeat") else None)
     for (coord, task_id), t in tasks.items():
         if kind_of(t) == "warn" and not parked_away(coord, task_id):
             task_need(coord, task_id, "warning", f"Blocked · {t['phase']}" if t.get("phase") else "Blocked")
@@ -417,7 +424,8 @@ def render_page(host):
             if (coord, task) in tasks:
                 n = task_need(coord, task, "serious", "Decision needed")
             else:
-                n = need(("decision", coord, i), "serious", "Decision needed", id=task, coord=coord, href=session_of(coord, task))
+                n = need(("decision", coord, i), "serious", "Decision needed", id=task, title=d.get("text", ""), coord=coord,
+                         href=session_of(coord, task))
             n["asks"].append({"text": d.get("text", ""), "coord": coord, "id": d.get("id", ""), "options": d.get("options") or []})
             if d.get("href"):
                 n["href"] = d["href"]
@@ -444,8 +452,32 @@ def render_page(host):
             else:
                 need(("member", coord, name), "warning", why, id=name, title=m.get("task", ""), coord=coord,
                      when=last_update(coord, name), stream=m.get("stream", ""))
-    need_list = sorted(needs.values(), key=lambda n: SEV_ORDER[n["sev"]])
-    worst = "danger" if any(n["sev"] == "critical" for n in need_list) else "warn" if need_list else "ok"
+
+    def group_of(key, n):
+        if key[0] in ("host", "lease", "admission", "coord"):
+            return "alarm"
+        if n["asks"]:
+            return "decision"
+        if any(r.startswith("Blocked") for r in n["reasons"]):
+            return "blocked"
+        if any(r.startswith("Revisit") for r in n["reasons"]):
+            return "revisit"
+        return "stale"
+
+    def need_order(item):
+        """Alarms worst first; inside every group, oldest change first."""
+        n = item[1]
+        return (SEV_ORDER[n["sev"]] if item[0][0] in ("host", "lease", "admission", "coord") else 0,
+                n["when"] is None, n["when"] or now)
+
+    groups = []
+    for gkey, label, short, dot, ago_cls in NEED_GROUPS:
+        items = sorted(((k, n) for k, n in needs.items() if group_of(k, n) == gkey), key=need_order)
+        if items:
+            groups.append({"key": gkey, "label": label.format(STALE_MINUTES), "short": short, "dot": dot, "ago": ago_cls,
+                           "items": items})
+    need_count = len(needs)
+    worst = "danger" if any(n["sev"] == "critical" for n in needs.values()) else "warn" if needs else "ok"
 
     def park_buttons(coord, name):
         """Park (optional deadline) for any member; Unpark when it is parked."""
@@ -457,9 +489,9 @@ def render_page(host):
             out += f'<button type="button" class="ghost" data-park="unpark" {attrs}>Unpark</button>'
         return out
 
-    def ask_html(a):
-        """The question, then one button per suggested answer (only for a decision with an id)."""
-        out = f'<p class="t1">{e(a["text"])}</p>' if a["text"] else ""
+    def ask_html(a, title):
+        """The question (unless it is the row title), then one button per suggested answer (only for a decision with an id)."""
+        out = f'<p class="t1">{e(a["text"])}</p>' if a["text"] and a["text"] != title else ""
         if a["id"] and a["options"]:
             attrs = f'data-coord="{e(a["coord"])}" data-id="{e(a["id"])}"'
             out += '<div class="opts">' + "".join(
@@ -467,68 +499,60 @@ def render_page(host):
                 for i, o in enumerate(a["options"], 1)) + "</div>"
         return out
 
-    def reasons_html(n):
-        return f'<div class="reasons">{"".join(f"<span>{e(r)}</span>" for r in n["reasons"])}</div>'
+    def need_row(g, key, n):
+        title = n["title"] or n["reasons"][0]
+        prio = priority_of(n["coord"], n["id"]) if n["id"] else 0
+        meta = meta_line(n["id"], n["coord"], stream_label(n["stream"]) if n["stream"] else "",
+                         *[r for r in n["reasons"] if r != title], f"Priority {prio}" if prio else "",
+                         f"last change {local(n['when'])}" if n["when"] else "")
+        body = (meta + "".join(ask_html(a, title) for a in n["asks"])
+                + (f'<p class="t2">{e(n["status"])}</p>' if n["status"] else "")
+                + actions(open_button(n["href"]) + park_buttons(n["coord"], n["id"])))
+        return row(dom_id("n", *key), g["dot"], title, n["when"], body, g["ago"])
 
-    def need_card(n):
-        idl = (stream_chip(n["stream"]) + priority_chip(priority_of(n["coord"], n["id"]) if n["id"] else 0)
-               + (f'<span class="id">{e(n["id"])}</span>' if n["id"] else "")
-               + (f'<span class="ttl">{e(n["title"])}</span>' if n["title"] else ""))
-        side = who(n["coord"], n["when"]) + open_button(n["href"]) + park_buttons(n["coord"], n["id"])
-        return (
-            f'<article class="need{" critical" if n["sev"] == "critical" else ""}"><div class="need-main">{reasons_html(n)}'
-            + (f'<div class="idl">{idl}</div>' if idl else "")
-            + "".join(ask_html(a) for a in n["asks"])
-            + (f'<p class="st">{e(n["status"])}</p>' if n["status"] else "")
-            + "</div>" + (f'<div class="need-side">{side}</div>' if side else "") + "</article>"
-        )
+    def need_group(g):
+        rows = [need_row(g, key, n) for key, n in g["items"]]
+        cap = len(rows) if g["key"] == "alarm" else NEED_CAP
+        more = ""
+        if len(rows) > cap:
+            more = (f'<details class="more" id="more-{g["key"]}"><summary class="ghost" data-more="{len(rows) - cap}"></summary>'
+                    f'{"".join(rows[cap:])}</details>')
+        return (f'<div class="grp"><div class="grp-h"><span class="grp-l">{e(g["label"])}</span><span class="n">{len(rows)}</span></div>'
+                f'{"".join(rows[:cap])}{more}</div>')
 
-    def wall_card(n):
-        ident = f'<span class="id">{e(n["id"])}</span>' if n["id"] else ""
-        agent = f'<div class="agent {agent_class(tool_of(n["coord"]))}"><i class="sw"></i>{e(n["coord"])}</div>' if n["coord"] else ""
-        chip = f'<span class="chip">{e(stream_label(n["stream"]))}</span>' if n["stream"] else ""
-        return (f'<article class="wneed{" critical" if n["sev"] == "critical" else ""}">{reasons_html(n)}'
-                f'<div class="wt">{ident}{e(n["title"])}</div><div class="wmeta">{chip}{agent}</div></article>')
-
-    # ---- work board: tasks not under Needs you, grouped by stream, then by work state
+    # ---- work board: tasks not under Needs you, grouped by stream; newest change first
     def task_row(coord, t):
         tid = t.get("id", "")
-        name = e(t.get("name", ""))
-        title = (f'<a class="ttl" href="{e(t["session"])}" title="Open session">{name}</a>' if t.get("session")
-                 else f'<span class="ttl">{name}</span>')
+        kind = kind_of(t)
         p = park_state(coord, tid)
-        meta = ([f'<span class="warn">Parked{" until " + p["until"].strftime("%b %-d") if p["until"] else " · no deadline"}</span>']
-                if p else [])
-        meta += [priority_chip(priority_of(coord, tid))] if priority_of(coord, tid) else []
-        meta += [f'<span class="t1">{e(t["phase"])}</span>'] if t.get("phase") else []
+        prio = priority_of(coord, tid)
+        last = last_update(coord, tid)
+        parked = (f"Parked until {p['until'].strftime('%b %-d')}" if p["until"] else "Parked · no deadline") if p else ""
+        meta = meta_line(tid, coord, t.get("phase") or KIND_LABEL[kind], f"Priority {prio}" if prio else "", parked,
+                         f"last change {local(last)}" if last else "")
         when = task_eta(tid) or t.get("eta", "")
-        if when:
-            meta.append(f'<span class="mono t2">{e(when)}</span>')
-        meta += [link(l) for l in t.get("links", [])]
-        return (
-            f'<article class="row{" done" if kind_of(t) == "done" else ""}"><div class="row-main">'
-            f'<div class="idl"><span class="id">{e(tid)}</span>{title}</div>'
-            + (f'<p class="st">{e(t["latest"])}</p>' if t.get("latest") else "")
-            + (f'<div class="meta">{"".join(meta)}</div>' if meta else "")
-            + f'</div><div class="row-side">{who(coord, last_update(coord, tid))}{park_buttons(coord, tid)}</div></article>'
-        )
+        links = t.get("links", [])
+        body = (meta + (f'<p class="t2">{e(t["latest"])}</p>' if t.get("latest") else "")
+                + (f'<span class="mono sm t2">{e(when)}</span>' if when else "")
+                + (f'<div class="links">{"".join(link(l) for l in links)}</div>' if links else "")
+                + actions(open_button(t.get("session", "")) + park_buttons(coord, tid)))
+        return row(dom_id("t", coord, tid), KIND_DOT[kind], t.get("name") or tid, last, body, title_cls="t2")
 
-    def state_groups(items, key):
-        out = ""
-        for kind, dot, label in KINDS:
-            group = sorted(((coord, t) for coord, t in items if kind_of(t) == kind), key=lambda x: -priority_of(x[0], x[1].get("id", "")))
-            rows = [task_row(coord, t) for coord, t in group]
-            if not rows:
-                continue
-            head = f'<span class="dot {dot}"></span>{label}<span class="n">{len(rows)}</span>'
-            inner = f'<div class="card list">{"".join(rows)}</div>'
-            board_part = (f'<details class="grp" id="grp-done-{e(key)}"><summary class="grp-h">{head}</summary>{inner}</details>' if kind == "done"
-                          else f'<div class="grp"><div class="grp-h">{head}</div>{inner}</div>')
-            out += board_part
+    def newest_first(x):
+        last = last_update(x[0], x[1].get("id", ""))
+        return (-priority_of(x[0], x[1].get("id", "")), -(last.timestamp() if last else 0))
+
+    def task_list(items, key):
+        open_ = sorted(((c, t) for c, t in items if kind_of(t) != "done"), key=newest_first)
+        done = sorted(((c, t) for c, t in items if kind_of(t) == "done"), key=newest_first)
+        out = "".join(task_row(c, t) for c, t in open_)
+        if done:
+            out += (f'<details class="done" id="{dom_id("done", key)}"><summary class="grp-h"><span class="dot done"></span>'
+                    f'<span class="grp-l">Done</span><span class="n">{len(done)}</span></summary>'
+                    f'{"".join(task_row(c, t) for c, t in done)}</details>')
         return out
 
     rest = [(coord, t) for (coord, tid), t in tasks.items() if ("task", coord, tid) not in needs and not parked_away(coord, tid)]
-    listed = sum(1 for k in needs if k[0] == "task")
     in_stream = {}  # slug -> (open tasks, tasks under Needs you)
     for (coord, tid), t in tasks.items():
         slug = stream_of(coord, tid)
@@ -545,22 +569,20 @@ def render_page(host):
             if not slug and not items:
                 continue
             st = streams.get(slug, {})
-            owner = st.get("coordinator", "")
             head = (
-                f'<div class="stream-h"><h3>{e(stream_label(slug)) if slug else "No stream"}</h3>'
-                + (f'<span class="agent {agent_class(tool_of(owner))}"><i class="sw"></i>{e(owner)}</span>' if owner else "")
-                + f'<span class="n">{total} open</span>'
-                + (f'<span class="sm warn">{waiting} under Needs you</span>' if waiting else "")
-                + ('<span class="sm t3">closed</span>' if st.get("status") == "closed" else "") + "</div>"
-                + (f'<p class="stream-goal">{e(st["goal"])}</p>' if st.get("goal") else "")
+                f'<div class="grp-h"><span class="grp-l">{e(stream_label(slug)) if slug else "No stream"}</span>'
+                f'<span class="n">{total}</span>'
+                + (f'<span>{e(st["coordinator"])}</span>' if st.get("coordinator") else "")
+                + (f'<span class="warn">{waiting} under Needs you</span>' if waiting else "")
+                + ('<span>closed</span>' if st.get("status") == "closed" else "") + "</div>"
+                + (f'<p class="grp-goal">{e(st["goal"])}</p>' if st.get("goal") else "")
             )
-            body = state_groups(items, slug or "none") or f'<p class="sm t3">{"All open tasks are under Needs you." if total else "No tasks."}</p>'
-            board += f'<section class="stream" id="stream-{e(slug or "none")}">{head}{body}</section>'
+            body = task_list(items, slug or "none") or f'<p class="none">{"All open tasks are under Needs you." if total else "No tasks."}</p>'
+            board += f'<div class="grp" id="stream-{e(slug or "none")}">{head}{body}</div>'
     else:
-        board = state_groups(rest, "all")
-    board = board or '<p class="t3">No tasks.</p>'
-    work_note = (f"{len(rest)} tasks" + (f" in {len([x for x in shown if x])} streams" if shown else "")
-                 + (f" · {listed} under Needs you" if listed else ""))
+        board = task_list(rest, "all")
+    board = board or '<p class="none">No tasks.</p>'
+    work_count = sum(1 for _, t in rest if kind_of(t) != "done")
 
     # ---- parked: out of Needs you and the board until unparked or past their deadline
     parked_rows = []
@@ -572,63 +594,16 @@ def render_page(host):
         parked_rows.append(((until is None, until or today, name), task_row(coord, t)))
     parked_rows.sort(key=lambda r: r[0])
     parked_html = (
-        f'<section class="sec parked" id="parked"><div class="sec-h"><h2>Parked</h2><span class="mono sm t3">{len(parked_rows)}</span>'
-        '<span class="sm t3">Out of Needs you; a task returns there as Revisit after its date</span></div>'
-        f'<div class="card list">{"".join(r for _, r in parked_rows)}</div></section>'
+        f'<section class="sec" id="parked"><div class="sec-h"><h2>Parked</h2><span class="n">{len(parked_rows)}</span></div>'
+        '<p class="grp-goal">Out of Needs you; a task returns there as Revisit after its date.</p>'
+        f'{"".join(r for _, r in parked_rows)}</section>'
         if parked_rows else ""
     )
 
-    # ---- leases: a timeline per class, then every held and queued entry
+    # ---- leases: one lane per class, running then queued entries
     leases_on = roster.get("leases") == "on" or any(holders(leases, c) or queue.get(c) for c in classes)
     lease_panel = wall_leases = ""
     if leases_on:
-        spans = {}
-        for cls in classes:
-            items = []
-            for h in holders(leases, cls):
-                end = parse(h["expiresAt"])
-                start = parse(h["grantedAt"]) if h.get("grantedAt") else now
-                items.append(("expired" if end < now else "run", "", start, max(now, end), h))
-            pos = 0
-            for q in queue.get(cls, []):
-                kind, start, end = eta[cls].get(q["id"], (None, None, None))
-                if kind == "queued":
-                    pos += 1
-                    items.append(("queued", f"#{pos}", start, end, q))
-            spans[cls] = items
-        w0 = now - dt.timedelta(minutes=5)
-        last_end = max([i[3] for items in spans.values() for i in items] + [w0])
-        span = max(30, min(120, -(-int((last_end - w0).total_seconds()) // 300) * 5))
-        step = 5 if span <= 40 else 10 if span <= 80 else 15
-        w1 = w0 + dt.timedelta(minutes=span)
-
-        def pct(t):
-            return clamp((t - w0) / (w1 - w0) * 100)
-
-        lw = w0.astimezone().replace(second=0, microsecond=0)
-        tick = lw + dt.timedelta(minutes=step - lw.minute % step)
-        ticks = []
-        while tick < w1:
-            ticks.append((pct(tick), tick.strftime("%H:%M")))
-            tick += dt.timedelta(minutes=step)
-        tick_lines = "".join(f'<span class="tk" style="left:{p:.2f}%"></span>' for p, _ in ticks)
-        tick_labels = "".join(f'<span style="left:{p:.2f}%">{label}</span>' for p, label in ticks)
-        now_line = f'<span class="now" style="left:{pct(now):.2f}%"></span>'
-
-        def track(cls, big=False):
-            blocks = ""
-            for kind, pos, start, end, h in spans[cls]:
-                if end <= w0 or start >= w1:
-                    continue
-                left, right = pct(start), pct(end)
-                title = f'{h.get("holder", "")} · {h["id"]} · {local(start)}–{local(end)}'
-                blocks += (
-                    f'<div class="blk {kind} {agent_class(tool_of(h.get("coordinator", "")))}" title="{e(title)}" '
-                    f'style="left:{left:.2f}%;width:calc({right - left:.2f}% - 2px)">'
-                    + (f"<b>{pos}</b>" if pos else "") + f'<span>{e(h.get("holder", "").split(" ")[0])}</span></div>'
-                )
-            return f'<div class="track{" big" if big else ""}">{tick_lines}{blocks}{now_line}</div>'
-
         def lane_status(cls):
             cur, cap = holders(leases, cls), capacity.get(cls)
             ready = [q for q in queue.get(cls, []) if not q.get("hold")]
@@ -638,9 +613,9 @@ def render_page(host):
             elif cur:
                 full = cap is not None and len(cur) >= max(1, cap)
                 text = (f"Running {len(cur)}/{cap}" if cap and cap > 1 else "Running") + queued
-                color = "warn" if full and ready else "t1"
+                color = "warn" if full and ready else "t2"
             else:
-                text, color = "Free" + queued, "t2" if ready else "ok"
+                text, color = ("Free" + queued, "t3") if ready else ("Free", "ok")
             left = settle_left(cls)
             if left > 0:
                 text = f"Settling {int(left)} s · " + text
@@ -650,43 +625,52 @@ def render_page(host):
             return (f'<button type="button" class="ghost{" cancel" if action == "unwait" else ""}" data-q="{action}" '
                     f'data-cls="{e(cls)}" data-id="{e(entry_id)}">{label}</button>')
 
-        def qrow(cls, tag, h, detail, commands="", actions=""):
-            task, _, what = h.get("holder", "").partition(" ")
-            return (
-                f'<div class="qrow"><span class="q-pos">{e(cls)} {e(tag)}</span><div class="q-b">'
-                f'<span><b>{e(task)}</b> <span class="t2">{e(what)}</span></span>'
-                f'<span class="sm t3">{e(h.get("coordinator", ""))} · {e(detail)}</span>'
-                + (f'<span class="mono xs t2 wrap">{e(commands)}</span>' if commands else "")
-                + f'<span class="mono xs t3 wrap">{e(h["id"])}</span>'
-                + (f'<div class="q-act">{actions}</div>' if actions else "") + "</div></div>"
-            )
+        def lane_entries(cls):
+            """(pos, holder, duration, duration color, detail, commands, buttons) for each held and queued entry."""
+            out = []
+            for h in holders(leases, cls):
+                end = parse(h["expiresAt"])
+                left = int((end - now).total_seconds() // 60)
+                dur, color = (("expired", "danger") if left < 0 else (f"{left}m left", "t2"))
+                out.append(("▸", h, dur, color, f'{fmt(h.get("gib"))} GiB · {eta_text(cls, h["id"])}', h.get("commands", ""), ""))
+            pos = 0
+            for q in queue.get(cls, []):
+                pos += 0 if q.get("hold") else 1
+                buttons = (qbutton("up", cls, q["id"], "Move up") if pos > 1 and not q.get("hold") else "") + qbutton("unwait", cls, q["id"], "Cancel")
+                prio = f"priority {q['priority']} · " if q.get("priority") else ""
+                out.append(("–" if q.get("hold") else str(pos), q, "hold" if q.get("hold") else f"{est_minutes(cls, q):g}m", "t3",
+                            f"{prio}{eta_text(cls, q['id'])}", "", buttons))
+            return out
 
-        desk_lanes, wall_lanes, qrows = f'<span></span><div class="ticks">{tick_labels}</div>', "", ""
+        desk_lanes = wall_lanes = ""
         for cls in classes:
             text, color = lane_status(cls)
             cap = capacity.get(cls)
             desc = (f'{registry[cls].get("description", "")} · capacity {cap if cap is not None else "∞"}'
                     f' · peak ~{fmt((budget.get("peakGiB") or {}).get(cls))} GiB')
-            desk_lanes += f'<div class="lane-l" title="{e(desc)}"><b>{e(cls)}</b><span class="{color}">{e(text)}</span></div>{track(cls)}'
-            wall_lanes += f'<div class="blane"><div class="blane-h"><b>{e(cls)}</b><span class="{color}">{e(text)}</span></div>{track(cls, True)}</div>'
-            for h in holders(leases, cls):
-                qrows += qrow(cls, "running", h, f'{fmt(h.get("gib"))} GiB · {eta_text(cls, h["id"])}', h.get("commands", ""))
-            pos = 0
-            for q in queue.get(cls, []):
-                pos += 0 if q.get("hold") else 1
-                actions = (qbutton("up", cls, q["id"], "Move up") if pos > 1 and not q.get("hold") else "") + qbutton("unwait", cls, q["id"], "Cancel")
-                prio = f"priority {q['priority']} · " if q.get("priority") else ""
-                qrows += qrow(cls, "on hold" if q.get("hold") else f"#{pos}", q, f"{prio}~{est_minutes(cls, q):g} min · {eta_text(cls, q['id'])}",
-                              actions=actions)
-        qrows = qrows or '<div class="qempty sm t3">Nothing queued.</div>'
+            entries = lane_entries(cls)
+            rows = "".join(
+                f'<details class="row q" id="{dom_id("q", cls, h["id"])}"><summary class="row-h"><span class="q-pos">{pos}</span>'
+                f'<span class="row-t {"t1" if pos == "▸" else "t2"}">{e(h.get("holder", ""))}</span>'
+                f'<span class="row-ago {dcolor}">{e(dur)}</span></summary><div class="row-b">'
+                + meta_line(h.get("coordinator", ""), detail)
+                + (f'<span class="mono sm t2 wrap">{e(commands)}</span>' if commands else "")
+                + f'<span class="mono sm t3 wrap">{e(h["id"])}</span>{actions(buttons)}</div></details>'
+                for pos, h, dur, dcolor, detail, commands, buttons in entries)
+            desk_lanes += (f'<div class="lane"><div class="lane-h" title="{e(desc)}"><b>{e(cls)}</b><span class="{color}">{e(text)}</span></div>'
+                           f'{rows}</div>')
+            wall_rows = "".join(
+                f'<div class="wq"><span class="q-pos">{pos}</span><span class="row-t">{e(h.get("holder", ""))}</span>'
+                f'<span class="mono {dcolor}">{e(dur)}</span></div>'
+                for pos, h, dur, dcolor, *_ in entries)
+            wall_lanes += f'<div class="lane"><div class="lane-h"><b>{e(cls)}</b><span class="{color}">{e(text)}</span></div>{wall_rows}</div>'
         lease_panel = (
-            f'<section class="card panel" id="leases"><div class="panel-h"><h2>Leases</h2>'
-            f'<span class="sm t3">Priority, then FIFO · {fmt(budget.get("freeGiB"))} of {fmt(budget.get("limitGiB"))} GiB free</span></div>'
-            f'<div class="lanes">{desk_lanes}</div><div>{qrows}</div></section>'
+            f'<section class="sec leases" id="leases"><div class="sec-h"><h2>Leases</h2>'
+            f'<span class="n">{fmt(budget.get("freeGiB"))} of {fmt(budget.get("limitGiB"))} GiB free</span></div>{desk_lanes}</section>'
         )
-        wall_leases = f'<section class="w-leases"><h2>Leases</h2>{wall_lanes}<div class="ticks big">{tick_labels}</div></section>'
+        wall_leases = f'<section class="w-leases"><span class="wl">Leases</span>{wall_lanes}</section>'
 
-    # ---- coordinators
+    # ---- coordinators (in the ledger drawer)
     coord_rows = ""
     for name in sorted(set(coords) | set(sources)):
         c, src = coords.get(name, {}), sources.get(name, {})
@@ -697,32 +681,21 @@ def render_page(host):
         href = (src.get("coordinator") or {}).get("href", "")
         label = (f'<a class="c-n" href="{e(href)}" title="Open coordinator session">{e(name)}</a>' if href
                  else f'<span class="c-n">{e(name)}</span>')
-        links, notes = [link(l) for l in src.get("links", [])], src.get("notes", [])
-        more = ""
-        if links or notes:
-            summary = " · ".join(([f"Links ({len(links)})"] if links else []) + ([f"Notes ({len(notes)})"] if notes else []))
-            more = (
-                f'<details id="coord-more-{e(name)}"><summary class="ghost"><span class="cl">{summary}</span><span class="op">Hide</span></summary>'
-                + (f'<div class="links">{"".join(links)}</div>' if links else "")
-                + (f'<ul class="notes">{"".join(f"<li>{e(n)}</li>" for n in notes)}</ul>' if notes else "")
-                + "</details>"
-            )
+        state = (f'<span class="t3">idle{f" · {paused} parked" if paused else ""}</span>' if c.get("status") == "idle"
+                 else f'<span class="{"ok" if live else "danger"}">{"live" if live else "stale"}</span>')
         owned = [slug for slug, st in streams.items() if st.get("coordinator") == name and st.get("status") != "closed"]
-        owned_html = "".join(
-            f'<a href="#stream-{e(slug)}">{e(stream_label(slug))}</a><span class="n">{in_stream.get(slug, (0, 0))[0]}</span>'
-            for slug in owned
-        )
-        more = (f'<div class="c-streams">{owned_html}</div>' if owned else "") + more
+        links, notes = [link(l) for l in src.get("links", [])], src.get("notes", [])
         coord_rows += (
-            f'<div class="coord" id="coord-{e(name)}"><div class="c-h"><i class="sw {agent_class(tool_of(name))}"></i>{label}'
-            + (f'<span class="sm t3">idle{f" · {paused} parked" if paused else ""}</span>' if c.get("status") == "idle"
-               else f'<span class="sm {"ok" if live else "danger"}">{"live" if live else "stale"}</span>')
-            + ('<span class="sm t3">general</span>' if c.get("general") else "")
-            + f'<span class="c-m">{len(mlist) - pending} members{f" · {pending} pending" if pending else ""}'
-            f' · <span class="mono">{e(src.get("updated", "?"))}</span></span></div>'
-            + (f'<p class="c-s">{e(c["focus"])}</p>' if c.get("focus") else "") + more + "</div>"
+            f'<div class="coord" id="coord-{e(name)}"><div class="c-h">{label}{state}'
+            + ('<span class="t3">general</span>' if c.get("general") else "")
+            + f'<span class="c-m">{len(mlist) - pending} members{f" · {pending} pending" if pending else ""} · {e(src.get("updated", "?"))}</span></div>'
+            + (f'<p class="c-s">{e(c["focus"])}</p>' if c.get("focus") else "")
+            + (f'<p class="c-s">Streams: {e(", ".join(f"{stream_label(s)} ({in_stream.get(s, (0, 0))[0]})" for s in owned))}</p>' if owned else "")
+            + (f'<div class="links">{"".join(links)}</div>' if links else "")
+            + (f'<ul class="notes">{"".join(f"<li>{e(n)}</li>" for n in notes)}</ul>' if notes else "")
+            + "</div>"
         )
-    coord_rows = coord_rows or '<p class="coord t3">None</p>'
+    coord_rows = coord_rows or '<p class="none">None</p>'
 
     # ---- ledger drawer
     ledger = []
@@ -740,50 +713,43 @@ def render_page(host):
             at = local(parse(x.get("at", "")))
         except (TypeError, ValueError):
             at = str(x.get("at", ""))[11:16]
-        by = x.get("by", "")
-        return (f'<div class="entry"><div class="entry-h"><span class="mono t3">{e(at)}</span>'
-                f'<i class="sw {agent_class(tool_of(by))}"></i><b>{e(by)}</b></div><p class="st">{e(x.get("text", ""))}</p></div>')
+        return (f'<div class="entry"><span class="mono sm t3">{e(" · ".join(p for p in (at, x.get("by", "")) if p))}</span>'
+                f'<p class="t2">{e(x.get("text", ""))}</p></div>')
 
     ledger_html = "".join(entry(x) for x in ledger) or '<div class="entry t3">Empty</div>'
 
     header = (
-        '<header class="top"><div class="top-l"><span class="brand">Master of puppets</span><span class="live"></span>'
-        f'<span class="mono sm t3">updated {time.strftime("%H:%M:%S")}</span></div><div class="top-r">'
+        '<header class="top"><div class="top-l"><span class="brand">Master of puppets</span>'
+        f'<span class="live" title="Live · updated {time.strftime("%H:%M:%S")}"></span></div><div class="top-r">'
         f'<div class="minis" id="minis">{"".join(host_mini(t) for t in tiles)}</div>'
-        '<div class="seg"><button type="button" data-mode-btn="desk">Desk</button><button type="button" data-mode-btn="wall">Wall</button></div>'
-        f'<button type="button" class="btn" data-ledger-open>Ledger<span class="mono sm t3">{len(ledger)}</span></button></div></header>'
+        '<div class="modes"><button type="button" class="mode" data-mode-btn="desk">Desk</button>'
+        '<button type="button" class="mode" data-mode-btn="wall">Wall</button>'
+        '<button type="button" class="ghost" data-ledger-open>Ledger</button></div></div></header>'
     )
     desk = (
         '<main class="desk"><div class="col-main">'
-        f'<section class="sec"><div class="sec-h"><h2>Needs you</h2><span class="mono sm {worst}">{len(need_list)}</span>'
-        f'<span class="sm t3">Alarms, decisions, blocked tasks, or no update for {STALE_MINUTES} min</span></div>'
-        + ("".join(need_card(n) for n in need_list) or '<div class="empty">Nothing needs you right now.</div>')
-        + f'</section><section class="sec work"><div class="sec-h"><h2>Work</h2><span class="sm t3">{e(work_note)}</span></div>{board}</section>{parked_html}</div>'
-        f'<aside class="col-side">{lease_panel}<section class="card coords"><h2>Coordinators</h2>{coord_rows}</section></aside></main>'
+        f'<section class="sec needs"><div class="sec-h"><h2>Needs you</h2><span class="n {worst}">{need_count}</span></div>'
+        + ("".join(need_group(g) for g in groups) or '<p class="none">None</p>')
+        + f'</section><section class="sec"><div class="sec-h"><h2>Work</h2><span class="n">{work_count}</span></div>{board}</section>'
+        f'{parked_html}</div><aside class="col-side">{lease_panel}</aside></main>'
     )
-    counts = "".join(
-        f'<div class="count"><b>{sum(1 for t in tasks.values() if kind_of(t) == kind)}</b><span><span class="dot {dot}"></span>{label}</span></div>'
-        for kind, dot, label in KINDS[:3]
-    )
-    wall_streams = "".join(
-        f'<div class="wstream"><span class="wl">{e(stream_label(slug)) if slug else "No stream"}</span>'
-        f'<span class="t2">{in_stream.get(slug, (0, 0))[0]} open</span>'
-        + (f'<span class="warn">{in_stream[slug][1]} need you</span>' if in_stream.get(slug, (0, 0))[1] else "") + "</div>"
-        for slug in shown + ([""] if "" in in_stream else [])
-    ) if shown else ""
+    flat = [(g, n) for g in groups for _, n in g["items"]]
+    group_counts = "".join(f'<span><i class="dot {g["dot"]}"></i><b>{len(g["items"])}</b>{e(g["short"])}</span>' for g in groups)
+    wall_rows = "".join(
+        f'<div class="wn"><span class="dot {g["dot"]}"></span><span class="row-t">{e(n["title"] or n["reasons"][0])}</span>'
+        f'<span class="mono {g["ago"]}">{ago_short(n["when"], now) if n["when"] else ""}</span></div>'
+        for g, n in flat[:WALL_ROWS])
+    wall_more = f'<div class="wn t3">{len(flat) - WALL_ROWS} more</div>' if len(flat) > WALL_ROWS else ""
     wall = (
-        f'<main class="wall"><div class="w-host">{"".join(host_wall(t) for t in tiles)}</div>'
-        f'<section class="w-needs"><div class="w-count"><b class="{worst}">{len(need_list)}</b>'
-        f'<span>{"needs you" if len(need_list) == 1 else "need you"}</span></div>'
-        + "".join(wall_card(n) for n in need_list)
-        + f'<div class="counts">{counts}</div>'
-        + (f'<div class="wstreams"><h2>Streams</h2>{wall_streams}</div>' if wall_streams else "")
-        + f'</section>{wall_leases}</main>'
+        f'<main class="wall"><div class="w-host">{"".join(host_wall(t) for t in tiles)}</div><div class="w-body">'
+        f'<section class="w-needs"><div class="w-count"><div class="w-big"><b class="{worst}">{need_count}</b><span>Needs you</span></div>'
+        f'<div class="w-groups">{group_counts}</div></div>'
+        f'<div class="w-list">{wall_rows}{wall_more}</div></section>{wall_leases}</div></main>'
     )
     drawer = (
         '<div class="scrim" data-ledger-close></div><aside class="drawer" aria-label="Ledger"><div class="drawer-h">'
-        '<div class="sec-h"><span class="brand">Ledger</span><span class="sm t3">All coordinators · newest first</span></div>'
-        f'<button type="button" class="ghost" data-ledger-close>Close</button></div><div class="drawer-b">{ledger_html}</div></aside>'
+        '<span class="brand">Ledger</span><button type="button" class="ghost" data-ledger-close>Close</button></div>'
+        f'<div class="drawer-b"><div class="coords"><span class="sub">Coordinators</span>{coord_rows}</div>{ledger_html}</div></aside>'
     )
     with open(PAGE) as f:
         return f.read().replace("{{BODY}}", header + desk + wall + drawer)

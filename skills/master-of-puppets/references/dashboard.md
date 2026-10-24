@@ -9,42 +9,46 @@ ones print "already serving" and exit. Give the user `http://localhost:4720/`
 `ledger.jsonl`, `config.json`, `projects/*.json` and
 `dashboard/*-state.json`, on any change and every 30 s (ETAs, heartbeat age).
 It pushes SSE `update` events, and the page swaps its body in place. Every 5 s
-it samples the host and pushes a `host` event; the host meters update without a
-re-render. When the server stops, "Live" in the header turns to "Offline".
+it samples the host and pushes a `host` event; the host values update without a
+re-render. When the server stops, the green dot in the header turns red with
+"Offline".
 A file opened in an editor side panel does not update; do not offer that.
 
 `server.py` fills the page shell `scripts/dashboard.html` (styles and the
 live-update script). It follows the system light or dark theme.
 
-Layout, desk mode: the header shows CPU, memory, swap and disk meters, a
-Desk/Wall switch and a Ledger button. "Needs you" comes first, worst first:
-host alarms, expired leases, admission holds, stale coordinators, decisions, blocked tasks and
-members with no update for 30 min. One card per task holds all its reasons,
-with a chip for its stream. Then the work board groups the other tasks by
-stream (open streams in roster order, then "No stream"), and by state inside
-each stream (Done is collapsed). Each stream header shows its label, owner,
-open tasks, tasks under Needs you and its goal. With no streams, the board
-groups by state only. The side column shows lease timelines and queues (only
-when leases are on or in use), then the coordinators with their open streams,
-links and notes. An idle coordinator shows "idle" (with its count of parked
-members), not "stale", and raises no alarm; a general-purpose one shows
-"general". The Ledger button opens the newest 20 shared-ledger entries in a
-drawer.
+Layout, desk mode: the header shows CPU, memory, swap and disk values, a
+Desk/Wall switch and a Ledger button. Every item is one quiet row (a dot, a
+title, the time since its last change); a click opens its detail, and open rows
+stay open across live updates. "Needs you" comes first, in groups: Alarms (host
+alarms, expired leases, admission holds, stale coordinators; never capped),
+Decisions, Blocked, Stale (members with no update for 30 min, or not joined) and
+Revisit. A group shows 8 rows, then "Show N more". One row per task holds all
+its reasons; its detail shows the task id, coordinator, stream, reasons, the
+question and answer buttons, the latest status, Open session and Park. Then the
+Work list groups the other tasks by stream (open streams in roster order, then
+"No stream"), newest change first, with Done collapsed at the end of each
+stream. Each stream header shows its label, open tasks, owner, tasks under
+Needs you and its goal. With no streams, Work is one list. The side column
+shows the leases (only when leases are on or in use): one lane per class with
+its status, then the running, queued and held entries. The Ledger button opens
+a drawer with the coordinators (live, stale, idle or general; focus, streams,
+links and notes), then the newest 20 shared-ledger entries.
 
 Parked work (members with status paused) leaves Needs you and the work board
 and is listed in the Parked section, dated parks first. A park can carry a
 deadline (`parkedUntil`); after it the task returns to Needs you as
-"Revisit · parked until <date>". Every member's card has a Park button (an
+"Revisit · parked until <date>". Every member's row has a Park button (an
 optional date; no date means until unparked), and parked ones have Unpark.
 They run `coordinator.py park|unpark --notify`, so the coordinator gets a message
 from "dashboard", as with the queue buttons.
 
 A task or queue entry with a priority other than 0 shows it ("Priority 2");
-inside each state group, higher-priority tasks come first, and each lease
+inside each stream, higher-priority tasks come first, and each lease
 queue lists entries by priority, then FIFO.
 
 A decision with suggested answers (`decision add --option`) shows one button
-per option on its Needs you card. A click asks first, then runs
+per option in its Needs you row. A click asks first, then runs
 `coordinator.py decision answer --notify`: the decision clears, the ledger
 records the answer, and the coordinator gets a message from "dashboard" with
 the answer and the question. Only the option number crosses the post; the
@@ -63,8 +67,8 @@ They run `coordinator.py up|unwait --notify`, which tells each affected coordina
 server accepts these posts only from its own page.
 
 Wall mode is the same data, large, for a shared screen: host tiles, the
-"need you" count and cards, task counts by state and by stream, and the lease
-timelines.
+"Needs you" count with a count per group, the first 8 rows, and the lease
+lanes.
 Open `http://localhost:4720/?mode=wall`; the page keeps the last mode.
 
 ## Writing for the dashboard
