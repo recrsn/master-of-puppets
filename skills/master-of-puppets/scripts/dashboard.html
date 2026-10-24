@@ -103,6 +103,10 @@ main.desk{max-width:1280px;margin:0 auto;padding:32px 24px;flex-wrap:wrap;gap:48
 .sec:not(.needs) .grp+.grp{margin-top:20px}
 .grp-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;padding:0 12px 4px;font-size:12px;line-height:16px;color:var(--text-color-cui-tertiary)}
 .grp-l{font-weight:500;color:var(--text-color-cui-secondary)}
+details[data-fold]>summary{align-items:center}
+details[data-fold]>summary::before{content:"";flex:none;width:5px;height:5px;margin:0 2px;border:solid currentColor;border-width:0 1.5px 1.5px 0;transform:rotate(45deg) translate(-1px,-1px);transition:transform .15s}
+details[data-fold]:not([open])>summary::before{transform:rotate(-45deg)}
+details[data-fold]>summary:hover>:is(.grp-l,h2){color:var(--text-color-cui-primary)}
 .grp-goal{padding:0 12px 6px;font-size:12px;line-height:16px;color:var(--text-color-cui-tertiary)}
 details.done{margin-top:4px} details.done>summary{align-items:center;height:28px;padding-bottom:0;border-radius:6px}
 details.done>summary:hover{background:var(--background-color-cui-subtle)}
@@ -209,6 +213,8 @@ html[data-ledger] .scrim{display:block} html[data-ledger] .drawer{display:flex}
 
   // The page body is replaced on each update; this state lives outside it.
   const open = new Set(JSON.parse(localStorage.getItem("mop-open") || "[]"));
+  // Groups marked data-fold start open; this holds the ones collapsed.
+  const shut = new Set(JSON.parse(localStorage.getItem("mop-shut") || "[]"));
   let ledgerTop = 0;
   // An open Park form: {coord, name, until}; redrawn after each body swap.
   let parkForm = null;
@@ -315,7 +321,7 @@ html[data-ledger] .scrim{display:block} html[data-ledger] .drawer{display:flex}
   };
 
   const sync = () => {
-    for (const d of document.querySelectorAll("details[id]")) d.open = open.has(d.id);
+    for (const d of document.querySelectorAll("details[id]")) d.open = "fold" in d.dataset ? !shut.has(d.id) : open.has(d.id);
     drawToast();
     const b = document.querySelector(".drawer-b");
     if (b) b.scrollTop = ledgerTop;
@@ -326,6 +332,11 @@ html[data-ledger] .scrim{display:block} html[data-ledger] .drawer{display:flex}
   document.addEventListener("toggle", (ev) => {
     const d = ev.target;
     if (!d.id) return;
+    if ("fold" in d.dataset) {
+      if (d.open) shut.delete(d.id); else shut.add(d.id);
+      localStorage.setItem("mop-shut", JSON.stringify([...shut]));
+      return;
+    }
     if (d.open) open.add(d.id); else open.delete(d.id);
     localStorage.setItem("mop-open", JSON.stringify([...open]));
   }, true);

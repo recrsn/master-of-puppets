@@ -532,8 +532,8 @@ def render_page(host):
         if len(rows) > cap:
             more = (f'<details class="more" id="more-{g["key"]}"><summary class="ghost" data-more="{len(rows) - cap}"></summary>'
                     f'{"".join(rows[cap:])}</details>')
-        return (f'<div class="grp"><div class="grp-h"><span class="grp-l">{e(g["label"])}</span><span class="n">{len(rows)}</span></div>'
-                f'{"".join(rows[:cap])}{more}</div>')
+        return (f'<details class="grp" id="grp-{g["key"]}" data-fold><summary class="grp-h"><span class="grp-l">{e(g["label"])}</span>'
+                f'<span class="n">{len(rows)}</span></summary>{"".join(rows[:cap])}{more}</details>')
 
     # ---- work board: tasks not under Needs you, grouped by stream; newest change first
     def task_row(coord, t):
@@ -586,15 +586,15 @@ def render_page(host):
                 continue
             st = streams.get(slug, {})
             head = (
-                f'<div class="grp-h"><span class="grp-l">{e(stream_label(slug)) if slug else "No stream"}</span>'
+                f'<summary class="grp-h"><span class="grp-l">{e(stream_label(slug)) if slug else "No stream"}</span>'
                 f'<span class="n">{total}</span>'
                 + (f'<span>{e(st["coordinator"])}</span>' if st.get("coordinator") else "")
                 + (f'<span class="warn">{waiting} under Needs you</span>' if waiting else "")
-                + ('<span>closed</span>' if st.get("status") == "closed" else "") + "</div>"
+                + ('<span>closed</span>' if st.get("status") == "closed" else "") + "</summary>"
                 + (f'<p class="grp-goal">{e(st["goal"])}</p>' if st.get("goal") else "")
             )
             body = task_list(items, slug or "none") or f'<p class="none">{"All open tasks are under Needs you." if total else "No tasks."}</p>'
-            board += f'<div class="grp" id="stream-{e(slug or "none")}">{head}{body}</div>'
+            board += f'<details class="grp" id="stream-{e(slug or "none")}" data-fold>{head}{body}</details>'
     else:
         board = task_list(rest, "all")
     board = board or '<p class="none">No tasks.</p>'
@@ -610,9 +610,10 @@ def render_page(host):
         parked_rows.append(((until is None, until or today, name), task_row(coord, t)))
     parked_rows.sort(key=lambda r: r[0])
     parked_html = (
-        f'<section class="sec" id="parked"><div class="sec-h"><h2>Parked</h2><span class="n">{len(parked_rows)}</span></div>'
+        f'<section class="sec" id="parked"><details class="grp" id="fold-parked" data-fold><summary class="sec-h"><h2>Parked</h2>'
+        f'<span class="n">{len(parked_rows)}</span></summary>'
         '<p class="grp-goal">Out of Needs you; a task returns there as Revisit after its date.</p>'
-        f'{"".join(r for _, r in parked_rows)}</section>'
+        f'{"".join(r for _, r in parked_rows)}</details></section>'
         if parked_rows else ""
     )
 
