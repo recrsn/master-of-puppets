@@ -4,7 +4,7 @@ Both CLIs import this module. It holds the state paths, JSON I/O, the state lock
 the event log and ledger, machine and project config, the roster, the lease state
 and memory budget, the drain check, direct message delivery to Claude and Codex
 sessions, and the read-only commands both CLIs offer (roster, whoami, memory list,
-inbox, ledger, events, who).
+inbox, ledger, events, who, sizes).
 
 State lives in $MACHINE_LEASE_DIR (default ~/.local/state/machine-leases), not beside
 these files, so every session that runs any copy shares one state.
@@ -40,11 +40,13 @@ OBSOLETE = ("lease.py",)  # helpers that earlier versions installed; install rem
 SOURCE = os.path.join(DIR, "source.json")  # the skill copy that install last copied from
 CLASS_NAME = re.compile(r"^[A-Z][A-Z0-9_-]{0,23}$")
 DEFAULT_REGISTRY = {
-    "BUILD": {"description": "builds, typecheck, lint/format, tests, codegen", "defaultGiB": 10, "maxMinutes": 20, "settle": {}},
-    "E2E": {"description": "local servers/stacks and interacting with them", "defaultGiB": 8, "maxMinutes": 45, "settle": {"BUILD": 60}},
+    "BUILD": {"description": "builds, typecheck, lint/format, tests, codegen", "defaultGiB": 10, "defaultCpus": 4, "maxMinutes": 20, "settle": {}},
+    "E2E": {"description": "local servers/stacks and interacting with them", "defaultGiB": 8, "defaultCpus": 2, "maxMinutes": 45, "settle": {"BUILD": 60}},
 }
 MACHINE_DEFAULTS = {
     "reserveGiB": 6,
+    "reserveCpus": 2,
+    "sizeMargin": 0.25,
     "diskFloorGiB": 4,
     "diskAlarmGiB": 10,
     "maxSwapouts": 200,
@@ -97,7 +99,8 @@ def class_names(machine=None):
 
 def project_class_defaults(cls):
     reg = registry().get(cls, {})
-    return {"maxMinutes": reg.get("maxMinutes", 20), "minutesMode": "fixed", "peakMode": "learn", "defaultGiB": reg.get("defaultGiB", 0)}
+    return {"maxMinutes": reg.get("maxMinutes", 20), "minutesMode": "fixed", "peakMode": "learn",
+            "defaultGiB": reg.get("defaultGiB", 0), "defaultCpus": reg.get("defaultCpus", 0)}
 
 
 def project_key(root):
@@ -117,7 +120,7 @@ def load_project(key, root=None):
     proj = {**PROJECT_DEFAULTS, "key": key, "root": root, **raw}
     proj["configured"] = bool(raw.get("configured"))
     stored = proj.get("classes", {})
-    proj["classes"] = {c: {**project_class_defaults(c), "samples": [], "runMinutes": [], **stored.get(c, {})} for c in class_names()}
+    proj["classes"] = {c: {**project_class_defaults(c), "samples": [], "cpuSamples": [], "runMinutes": [], **stored.get(c, {})} for c in class_names()}
     return proj
 
 
@@ -125,15 +128,46 @@ def save_project(proj):
     write_json(os.path.join(PROJECTS, f"{proj['key']}.json"), proj)
 
 
-def class_peak(proj, cls):
-    """learn: max of the last 5 samples, the default a floor until 3 exist. fixed: the default."""
+RESOURCES = {"gib": ("samples", "defaultGiB"), "cpus": ("cpuSamples", "defaultCpus")}
+
+
+def class_peak(proj, cls, kind="gib"):
+    """Expected peak GiB (kind gib) or cores (kind cpus) of a class run. learn: max of the
+    last 5 samples, the default a floor until 3 exist. fixed: the default."""
     c = proj["classes"][cls] if proj else project_class_defaults(cls)
-    samples = c.get("samples", [])
+    samples_key, default_key = RESOURCES[kind]
+    samples = c.get(samples_key, [])
     if c.get("peakMode") == "fixed":
-        return c["defaultGiB"]
+        return c[default_key]
     if len(samples) >= SAMPLES_TRUSTED:
         return max(samples)
-    return max([c["defaultGiB"], *samples])
+    return max([c[default_key], *samples])
+
+
+def observed_peak(proj, cls, kind="gib"):
+    """The coordinator's own observation: max of the last 5 measured samples once 3
+    exist in learn mode; else None (a default is a rule, not an observation)."""
+    c = proj["classes"][cls] if proj else {}
+    samples = c.get(RESOURCES[kind][0], [])
+    if c.get("peakMode") == "fixed" or len(samples) < SAMPLES_TRUSTED:
+        return None
+    return max(samples)
+
+
+def undersized(cls, key, gib, cpus, margin):
+    """Refusal text when a requested GiB or core count is below the observed peak of the
+    class in project key by more than margin (a fraction), else None. A figure the
+    request leaves out is not checked: the coordinator charges its own figure for it."""
+    proj = load_project(key) if key else None
+    short = []
+    for kind, asked, unit in (("gib", gib, "GiB"), ("cpus", cpus, "cores")):
+        seen = observed_peak(proj, cls, kind)
+        if asked and seen and asked < seen * (1 - margin):
+            short.append(f"{asked:g} {unit} asked, {seen:g} {unit} observed")
+    if not short:
+        return None
+    return (f"undersized {cls}: {'; '.join(short)} (margin {margin:.0%}); ask for at least the observed peak, "
+            "or tell your coordinator why this run is smaller")
 
 
 def typical_minutes(proj, cls):
@@ -297,15 +331,19 @@ def task_priority(roster, coord, holder):
     return (m or {}).get("priority", 0)
 
 
-def queue_entry(state, roster, cls, id, coordinator=None, holder=None, minutes=None, gib=None,
+def queue_entry(state, roster, cls, id, coordinator=None, holder=None, minutes=None, gib=None, cpus=None,
                 commands=None, worktree=None, priority=None, front=False, by=None, changed_by=None):
     """Add queue entry id to class cls, or change the given fields of an existing one, and
     re-order the queue. The caller holds the lock and saves. changed_by names the
     coordinator in a priority change's event. Returns (exit, text):
-    0 with the position, 2 when minutes is over the class limit or a new entry lacks
-    coordinator and holder."""
+    0 with the position, 2 when minutes is over the class limit, gib or cpus is over the
+    whole budget, or a new entry lacks coordinator and holder."""
     queue = state["queue"][cls]
     existing = next((q for q in queue if q["id"] == id), None)
+    b = budget(state, load_machine())
+    for asked, limit, unit in ((gib, b["limitGiB"], "GiB"), (cpus, b["limitCpus"], "cores")):
+        if asked and asked > limit:
+            return 2, f"{asked:g} {unit} is over the whole {limit:g}-{unit} budget; split the run into smaller parts"
     if minutes:
         key = project_key(worktree)[0] if worktree else (existing or {}).get("project")
         why = over_limit(cls, key, minutes)
@@ -316,6 +354,8 @@ def queue_entry(state, roster, cls, id, coordinator=None, holder=None, minutes=N
             existing["minutes"] = minutes
         if gib:
             existing["gib"] = gib
+        if cpus:
+            existing["cpus"] = cpus
         if holder:
             existing["holder"] = holder
         if commands:
@@ -342,6 +382,8 @@ def queue_entry(state, roster, cls, id, coordinator=None, holder=None, minutes=N
             entry["minutes"] = minutes
         if gib:
             entry["gib"] = gib
+        if cpus:
+            entry["cpus"] = cpus
         if commands:
             entry["commands"] = commands
         if worktree:
@@ -385,28 +427,32 @@ def known_projects():
     return [load_project(n) for n in names]
 
 
-def fleet_peak(cls):
+def fleet_peak(cls, kind="gib"):
     """Largest class peak over known projects, for the capacity display."""
-    peaks = [class_peak(p, cls) for p in known_projects()]
-    return max(peaks) if peaks else project_class_defaults(cls)["defaultGiB"]
+    peaks = [class_peak(p, cls, kind) for p in known_projects()]
+    return max(peaks) if peaks else project_class_defaults(cls)[RESOURCES[kind][1]]
 
 
 def budget(state, machine):
-    """Memory budget, plus per-class capacity = holders + how many more of that class fit now."""
-    total = total_gib()
-    limit = total - machine["reserveGiB"]
+    """Memory and core budgets, plus per-class capacity = holders + how many more of that
+    class fit both budgets now."""
+    total, cores = total_gib(), os.cpu_count() or 1
+    limit, cpu_limit = total - machine["reserveGiB"], cores - machine["reserveCpus"]
     names = class_names(machine)
     peaks = {c: fleet_peak(c) for c in names}
+    cpu_peaks = {c: fleet_peak(c, "cpus") for c in names}
     held = sum(h["gib"] for c in names for h in state[c])
-    free = limit - held
+    held_cpus = sum(h["cpus"] for c in names for h in state[c])
+    free, free_cpus = limit - held, cpu_limit - held_cpus
     capacity = {}
     for c in names:
         cap = machine["maxSlots"].get(c)
-        if peaks[c] > 0:
-            n = len(state[c]) + max(0, int(free // peaks[c]))
+        fits = [int(f // p) for f, p in ((free, peaks[c]), (free_cpus, cpu_peaks[c])) if p > 0]
+        if fits:
+            n = len(state[c]) + max(0, min(fits))
             capacity[c] = min(n, cap) if cap else n
         else:
-            capacity[c] = cap  # None: not memory-bound and uncapped
+            capacity[c] = cap  # None: uses neither budget and uncapped
     return {
         "totalGiB": round(total, 1),
         "reserveGiB": machine["reserveGiB"],
@@ -414,6 +460,12 @@ def budget(state, machine):
         "heldGiB": round(held, 1),
         "freeGiB": round(free, 1),
         "peakGiB": peaks,
+        "totalCpus": cores,
+        "reserveCpus": machine["reserveCpus"],
+        "limitCpus": cpu_limit,
+        "heldCpus": round(held_cpus, 1),
+        "freeCpus": round(free_cpus, 1),
+        "peakCpus": cpu_peaks,
         "capacity": capacity,
     }
 
@@ -613,7 +665,7 @@ def notify(to, message):
 # ---------------------------------------------------------------- read commands (coordinator.py and puppet.py)
 
 
-READS = ("roster", "whoami", "memory", "inbox", "ledger", "events", "who")
+READS = ("roster", "whoami", "memory", "inbox", "ledger", "events", "who", "sizes")
 AGO = re.compile(r"^(\d+)([smhd])$")
 AGO_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 
@@ -666,6 +718,9 @@ def add_read_commands(sub, memory=None):
     g.add_argument("--worktree")
     g.add_argument("--repo", help="owner/repo")
     g.add_argument("--text", help="case-insensitive match on names, tasks, focus, labels and goals")
+    sz = sub.add_parser("sizes", help="a project's recorded run sizes per class: the figures to size a lease from")
+    sz.add_argument("--worktree", required=True)
+    sz.add_argument("--class", dest="lcls", metavar="CLASS")
 
 
 def event_coordinator(f, names):
@@ -772,12 +827,37 @@ def who_cmd(args):
     return 0 if hits else 3
 
 
+def sizes_cmd(args):
+    """Per class of the worktree's project: limits, defaults, the recorded samples, the
+    peaks the coordinator charges and checks against, and the run-minute figures."""
+    if args.lcls and args.lcls not in class_names():
+        print(f"unknown lease class {args.lcls}; known: {', '.join(class_names())}")
+        return 2
+    key = project_key(args.worktree)[0]
+    proj, margin = load_project(key), load_machine()["sizeMargin"]
+    out = {}
+    for cls in [args.lcls] if args.lcls else class_names():
+        c = proj["classes"][cls]
+        out[cls] = {
+            "maxMinutes": c["maxMinutes"], "suggestedMinutes": suggested_minutes(proj, cls),
+            "typicalMinutes": typical_minutes(proj, cls), "runMinutes": c["runMinutes"],
+            "peakMode": c["peakMode"], "defaultGiB": c["defaultGiB"], "defaultCpus": c["defaultCpus"],
+            "gibSamples": c["samples"], "cpuSamples": c["cpuSamples"],
+            "chargedGiB": class_peak(proj, cls), "chargedCpus": class_peak(proj, cls, "cpus"),
+            "observedGiB": observed_peak(proj, cls), "observedCpus": observed_peak(proj, cls, "cpus"),
+        }
+    print(json.dumps({"project": key, "sizeMargin": margin, "classes": out}, indent=1))
+    return 0
+
+
 def read_cmd(args):
     """Read-only, so no lock."""
     if args.cmd in ("inbox", "ledger", "events"):
         return log_cmd(args)
     if args.cmd == "who":
         return who_cmd(args)
+    if args.cmd == "sizes":
+        return sizes_cmd(args)
     roster = load_roster()
     if args.cmd == "whoami":
         me = find_session(roster, args.session_id)

@@ -25,9 +25,12 @@ Leases are <on|off>. <If on, the lease addendum follows.>
 
 ```
 LEASES ON — <slug> grants these classes (puppet skill, section 5):
-<CLASS — description — maxMinutes (suggestedMinutes when set) from config show, one per line>
-Choose the smallest time that finishes the whole current unit of work; do not
-cut a unit to fit the suggested time. Split only runs longer than the limit.
+<CLASS — description — maxMinutes (suggestedMinutes when set) — peak GiB and cores, from sizes, one per line>
+You size each run: --minutes, and --gib and --cpus when you know them
+(puppet skill, section 5). Choose the smallest time that finishes the whole
+current unit of work; do not cut a unit to fit the suggested time. Split only
+runs longer than the limit. I charge what you ask and refuse a size below my
+observed peak unless you tell me why the run is smaller.
 ```
 
 ## Messages members send
@@ -41,6 +44,7 @@ cut a unit to fit the suggested time. Split only runs longer than the limit.
 | `CLOUD TASK — <name> — <taskId> — <url> — <task> — PRs <n>` | `member add --tool coderabbit`, `cloud-<slug>.txt`, `watch cloud` (`references/coderabbit-cloud.md`, "Record") |
 | `USER SYNC — <one line>` | `note`, `member update --latest` |
 | `REQUEST <CLASS> <id> ...` in `watch inbox` (sent by the member's `puppet.py request`) | check and grant (`references/leases.md`, "Granting") |
+| `LEASE SIZE — <id> — <why this run is smaller than the observed peak>` | your decision: `acquire --accept-size` when the reason fits the commands, else LEASE RESIZE (`references/leases.md`, "Sizing") |
 | `EXTEND <CLASS> <id> <n> min ...` in `watch inbox` (sent by the member's `puppet.py extend`) | your decision: `coordinator.py extend`, or tell it to release (`references/leases.md`, "Extending") |
 | `LEAVE — <name>` | `member remove` |
 | `HANDOFF REQUEST — <name> — to <coordinator\|any> — PRs <n> — note <path>` | `PAUSE` its PRs, then offer (`references/handoff.md`) |
@@ -54,9 +58,10 @@ cut a unit to fit the suggested time. Split only runs longer than the limit.
 | Bottom merged | `ACTIVE — #<n>: #<m> merged (<sha>). I retargeted #<n> to main. Merge origin/main into your branch, resolve, push.` |
 | Heartbeat round | `STATUS? — phase, PR state, blockers, anything the user decided.` |
 | Not a member | `Run /puppet to join a coordinator first.` |
-| Lease queued | `LEASE QUEUED — <id> (<min> min, ~<GiB> GiB), <CLASS> position <n>. Ahead: <who>. ETA ~<time>.` |
+| Lease queued | `LEASE QUEUED — <id> (<min> min, ~<GiB> GiB, ~<n> cores), <CLASS> position <n>. Ahead: <who>. ETA ~<time>.` |
 | Head, host busy | `LEASE QUEUED — <id> is at the head, but the host is busy (<numbers>). I grant when two samples are calm.` |
-| Head, no memory | `LEASE QUEUED — <id> is at the head; it needs <n> GiB and <m> GiB is free. I grant after the next release.` |
+| Head, no memory or cores | `LEASE QUEUED — <id> is at the head; it needs <n> GiB / <c> cores and <m> GiB / <d> cores are free. I grant after the next release.` |
+| Undersized | `LEASE RESIZE — <id> asks <n> GiB / <c> cores; I observed <m> GiB / <d> cores in <CLASS> runs. Request again with the same id at the observed peak, or send LEASE SIZE with why this run is smaller.` |
 | Grant | `LEASE GRANTED — <CLASS> <id> for <task>, until <time>. Covers: <commands>. Release: <command>.` |
 | Priority move | `LEASE QUEUED — <id> is now <CLASS> position <n>: <task> has priority <p>.` |
 | Extension granted | `LEASE EXTENDED — <id> until <time>. Covers: <commands>.` |

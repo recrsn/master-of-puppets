@@ -9,8 +9,8 @@ the user asks to reconfigure.
 
 | Scope | File | Reused | Settings |
 | --- | --- | --- | --- |
-| Machine | `$DIR/config.json` | All projects on this machine | memory reserve, disk alarm, pressure gate, dashboard port, optional slot caps |
-| Project | `$DIR/projects/<key>.json` | All worktrees of one repository | base branch, merge method, leases default, per class: max lease minutes, peak mode, starting GiB |
+| Machine | `$DIR/config.json` | All projects on this machine | memory and core reserve, size margin, disk alarm, pressure gate, dashboard port, optional slot caps |
+| Project | `$DIR/projects/<key>.json` | All worktrees of one repository | base branch, merge method, leases default, per class: max lease minutes, peak mode, starting GiB and cores |
 
 Nothing is written into the repository. Every limit is a config number that
 `coordinator.py` enforces. When the user later changes a limit, change it here
@@ -36,9 +36,10 @@ gh repo view --json defaultBranchRef,squashMergeAllowed,mergeCommitAllowed,rebas
 Ask these four questions. Put the recommended option
 first and add "(Recommended)" to its label.
 
-1. **Memory reserve** (header "RAM floor"): GiB kept free for the OS, apps and
-   agent sessions; leases never use it. Options: 6 GiB (Recommended for
-   16-32 GiB), 4 GiB, 10 GiB. On 64 GiB or more, recommend about 10%.
+1. **Reserve** (header "Reserve"): memory and cores kept free for the OS, apps
+   and agent sessions; leases never use them. Options: 6 GiB and 2 cores
+   (Recommended for 16-32 GiB), 4 GiB and 1 core, 10 GiB and 4 cores. On
+   64 GiB or more, recommend about 10% of each. Show the RAM and core count.
 2. **Disk alarm** (header "Disk alarm"): below the alarm level, the host check
    warns; below the floor, no lease is granted. Options: alarm 10 / floor 4 GiB
    (Recommended), 20 / 10 GiB, 6 / 2 GiB. Show the free space you measured in
@@ -46,8 +47,9 @@ first and add "(Recommended)" to its label.
 3. **Pressure gate** (header "Host gate"): Standard: 200 swap-outs per 12 s in
    two samples, load below 2.5 × cores (Recommended). Strict: 100 and 1.5 ×
    cores. Loose: 500 and 4 × cores. Show the core count.
-4. **Slot caps** (header "Slot caps"): a hard limit on top of the memory
-   budget. Compute the budget (RAM − reserve) with the class peaks. When it
+4. **Slot caps** (header "Slot caps"): a hard limit on top of the memory and
+   core budgets. Compute the budgets (RAM − reserve, cores − reserve) with the
+   class peaks. When they
    fits two of any class (for example two E2E stacks) but not one of every
    class alongside it, recommend "BUILD 1, E2E 1"; otherwise recommend "No
    caps (memory budget only)". Offer "E2E 1 only" as the third option. If
@@ -56,8 +58,12 @@ first and add "(Recommended)" to its label.
 Then run:
 
 ```bash
-coordinator.py config set-machine --by <slug> --reserve-gib <n> --disk-floor-gib <n> --disk-alarm-gib <n> --max-swapouts <n> --swap-interval-s 12 --load-per-core <k> --dashboard-port 4720 [--max-slots BUILD=1 --max-slots E2E=1]
+coordinator.py config set-machine --by <slug> --reserve-gib <n> --reserve-cpus <n> --disk-floor-gib <n> --disk-alarm-gib <n> --max-swapouts <n> --swap-interval-s 12 --load-per-core <k> --dashboard-port 4720 [--max-slots BUILD=1 --max-slots E2E=1]
 ```
+
+The size margin (`--size-margin`, default 0.25) is how far a member's request
+may be below the observed peak before `acquire` refuses it. Keep the default
+unless the user names another.
 
 If the user names other shared actions (one browser window, a test database, a
 tunnel), add each with `coordinator.py config set-class` (`references/leases.md`).
@@ -66,11 +72,11 @@ tunnel), add each with `coordinator.py config set-class` (`references/leases.md`
 
 Ask these four questions:
 
-1. **Memory peaks** (header "Peaks"): Learn: start at BUILD 10 GiB and E2E
-   8 GiB, then measure each lease with `coordinator.py measure-peak` (Recommended).
-   Fixed at those values. Learn from smaller starting values (BUILD 6, E2E 4):
-   the class default is a floor until three samples exist, so a low start
-   admits more early on.
+1. **Peaks** (header "Peaks"): Learn: start at BUILD 10 GiB and 4 cores, E2E
+   8 GiB and 2 cores, then measure each lease with `coordinator.py measure-peak`
+   (Recommended). Fixed at those values. Learn from smaller starting values
+   (BUILD 6 GiB and 2 cores, E2E 4 GiB and 1 core): the class default is a
+   floor until three samples exist, so a low start admits more early on.
 2. **Lease time limits** (header "Max time"): BUILD 20 / E2E 45 min with
    learned suggestions (Recommended). Fixed at 20 and 45. Fixed short: 10
    and 30. Fixed long: 30 and 60. Longer runs are split. The limit is always
@@ -89,8 +95,8 @@ Then run, one call per class for class settings:
 
 ```bash
 coordinator.py config set-project --by <slug> --root "$PWD" --name "<repo>" --base-branch <b> --merge-method <m> --leases-default <on|off>
-coordinator.py config set-project --by <slug> --root "$PWD" --class BUILD --max-minutes <n> --minutes <learn|fixed> --peak <learn|fixed> --default-gib <n>
-coordinator.py config set-project --by <slug> --root "$PWD" --class E2E --max-minutes <n> --minutes <learn|fixed> --peak <learn|fixed> --default-gib <n>
+coordinator.py config set-project --by <slug> --root "$PWD" --class BUILD --max-minutes <n> --minutes <learn|fixed> --peak <learn|fixed> --default-gib <n> --default-cpus <n>
+coordinator.py config set-project --by <slug> --root "$PWD" --class E2E --max-minutes <n> --minutes <learn|fixed> --peak <learn|fixed> --default-gib <n> --default-cpus <n>
 ```
 
 ## 4. Confirm

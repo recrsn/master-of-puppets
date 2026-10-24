@@ -4,24 +4,26 @@ memory, peer messaging, leases, the host gate, watchers, config and install.
 Members use puppet.py. Shared code is in moplib.py.
 
 Configuration (asked once through the skill's first-run setup):
-  machine  $DIR/config.json             reserveGiB, diskFloorGiB, diskAlarmGiB, maxSwapouts,
-                                        swapIntervalS, loadPerCore, dashboardPort, maxSlots, classes
+  machine  $DIR/config.json             reserveGiB, reserveCpus, sizeMargin, diskFloorGiB,
+                                        diskAlarmGiB, maxSwapouts, swapIntervalS, loadPerCore,
+                                        dashboardPort, maxSlots, classes
   project  $DIR/projects/<key>.json     root, baseBranch, mergeMethod, leasesDefault and per
-                                        class maxMinutes, peakMode (learn|fixed), defaultGiB, samples
+                                        class maxMinutes, peakMode (learn|fixed), defaultGiB,
+                                        defaultCpus, samples, cpuSamples
 The project key comes from the repository's git common dir, so all worktrees of one
 repository share a file; nothing is written into the repository.
 
 Every limit is a number in this config, and coordinator.py enforces it: memory
-budget, slot caps, settle times, max lease minutes, swap-outs, load and the disk
-floor. Never put a limit in `memory`; set it with `config`.
+and core budgets, the size margin, slot caps, settle times, max lease minutes,
+swap-outs, load and the disk floor. Never put a limit in `memory`; set it with `config`.
 
 Lease classes are a registry in config.json: any shared action that sessions must
 take turns on (builds, local stacks, one browser window, a shared tunnel, a test
 database, a device). Leases are optional and machine-wide. Default registry:
   BUILD: builds (incl. setup scripts that build), typecheck, lint/format, test runs, codegen.
   E2E:   starting local servers/stacks and interacting with them.
-Each class has a description, defaultGiB (0 = not memory-bound; then only maxSlots
-limits it), maxMinutes and settle {OTHER: seconds} (after a grant of this class,
+Each class has a description, defaultGiB and defaultCpus (0 = that budget does not
+apply; with both 0 only maxSlots limits it), maxMinutes and settle {OTHER: seconds} (after a grant of this class,
 OTHER waits that long; E2E settles BUILD for 60 s by default). Names are upper-case.
 No lease: a plain dependency install, source edits, reading code, browser-only work
 against remote sites (unless a class or a project rule in `memory` covers it).
@@ -31,13 +33,19 @@ No edits or repairs while holding one. When a check fails, clean up owned resour
 then join the queue again at the back.
 
 Capacity is adaptive. There is no fixed slot count. A grant is admitted when the
-expected peak memory of all holders plus the request fits in the memory budget:
-  sum(held GiB) + request GiB <= total RAM - reserve
-A request's GiB defaults to its project's class peak. In learn mode that is the max
-of the last 5 measured peaks (`measure-peak` writes peaks/<id>.gib; release
-records it), with the default as a floor until 3 samples exist; in fixed mode it is
-the default. Example: on a 24 GiB machine with a 6 GiB reserve, BUILD ~10 GiB and
-E2E ~8 GiB admit one of each; 64 GiB admits more. A 0 GiB class uses no budget.
+expected peaks of all holders plus the request fit both budgets:
+  sum(held GiB) + request GiB <= total RAM - reserveGiB
+  sum(held cores) + request cores <= CPU cores - reserveCpus
+The member sizes its run: minutes always, GiB and cores when it knows them. A size
+it leaves out takes its project's class peak. In learn mode that is the max of the
+last 5 measured peaks (`measure-peak` writes peaks/<id>.gib and .cpus; release
+records them), with the default as a floor until 3 samples exist; in fixed mode it
+is the default. The coordinator decides on the request as asked: it charges the
+member's figures, and acquire refuses (exit 6) a GiB or core figure below the
+observed peak (3+ samples, learn mode) by more than sizeMargin, unless the
+coordinator accepts the member's reason with --accept-size. Example: on a 24 GiB,
+10-core machine with a 6 GiB and 2-core reserve, BUILD ~10 GiB/4 cores and E2E
+~8 GiB/2 cores admit one of each. A 0 figure uses none of that budget.
 Swap, load and disk are a separate gate (`host-check`) that acquire runs itself.
 Disk: below diskAlarmGiB free the check raises the disk alarm (a warning); below
 diskFloorGiB free it blocks, and no class is granted.
@@ -58,20 +66,23 @@ Usage: python3 -I coordinator.py <command> ...
 Leases
   leases on|off --by C            machine-wide; only on the user's word
   status [--brief] | capacity
-  wait CLASS --coordinator C --holder NAME --id ID [--minutes N] [--gib N] [--commands TEXT] [--worktree P]
+  wait CLASS --coordinator C --holder NAME --id ID [--minutes N] [--gib N] [--cpus N] [--commands TEXT] [--worktree P]
        [--priority N] [--front]
        for an existing ID every flag is optional and only the given fields change.
-       exit 2 when --minutes is over the class limit: split the run.
+       exit 2 when --minutes is over the class limit or --gib/--cpus over the whole budget: split the run.
        --priority: default the task's priority, else 0; a change moves the entry to its
        place among the others. --front: the head, at the highest priority in the queue.
        Members queue their own requests with puppet.py request; each puts a REQUEST
        message in the coordinator's inbox. Only acquire grants.
-  acquire CLASS --coordinator C --holder NAME --id ID --worktree P --minutes N [--gib N]
-          [--commands TEXT] [--measure]
+  acquire CLASS --coordinator C --holder NAME --id ID --worktree P --minutes N [--gib N] [--cpus N]
+          [--commands TEXT] [--measure] [--accept-size]
        runs the host check itself (about 2 × swapIntervalS), then checks again under the lock.
+       GiB and cores: --gib/--cpus, else the queue entry's, else the project's class peak.
        exit 0 granted, 2 --minutes over the class limit (split the run), 3 queued behind
        another entry, at a slot cap or in a settle window (another class's grant settles
-       this one), 4 over the memory budget, 5 host BUSY or disk below the floor.
+       this one), 4 over the memory or core budget, 5 host BUSY or disk below the floor,
+       6 undersized: a GiB or core figure below the observed peak by more than sizeMargin.
+       --accept-size grants an undersized request: only when the member's reason fits.
        --commands records the granted scope; --measure starts measure-peak itself.
        The holder releases with puppet.py release.
   admission hold CLASS --by C --reason TEXT | admission clear CLASS --by C [--reason TEXT]
@@ -89,7 +100,8 @@ Leases
   host-check                      admission gate; exit 0 CALM, 1 BUSY (pressure or disk below
                                   the floor); prints disk=ok|alarm|blocked
   calm-wait [--settle S] [--retry S]           one CALM line when the host is calm
-  measure-peak --id ID --worktree P [--interval S]   run in the background after acquire
+  measure-peak --id ID --worktree P [--interval S]   run in the background after acquire;
+                                  records peak GiB (summed RSS) and peak cores (summed %CPU)
   drain-check --worktree P [--port N ...] [--process PATTERN ...]   exit 0 when nothing is left; never kills
        agent session processes (claude, codex, their direct non-shell children, the
        caller's own ancestors and process group) and bare shells do not count. puppet.py release runs the
@@ -98,12 +110,15 @@ Leases
 Config (every set and remove takes --by C [--reason TEXT]; the event and ledger line
 show who, why and each changed key with its old and new value)
   config show [--project-root P] | set-machine ... | set-project --root P ... | project-key P
-       machine: --reserve-gib --disk-floor-gib --disk-alarm-gib --max-swapouts --swap-interval-s
-                --load-per-core --dashboard-port --max-slots CLASS=N (N=0 removes the cap)
-  config set-class NAME [--description T] [--default-gib N] [--max-minutes N] [--settle OTHER=S ...]
+       machine: --reserve-gib --reserve-cpus --size-margin --disk-floor-gib --disk-alarm-gib
+                --max-swapouts --swap-interval-s --load-per-core --dashboard-port
+                --max-slots CLASS=N (N=0 removes the cap)
+  config set-class NAME [--description T] [--default-gib N] [--default-cpus N] [--max-minutes N]
+                [--settle OTHER=S ...]
   config remove-class NAME        refused while the class has holders or queue entries
        project: --name --base-branch --merge-method merge|squash|rebase|auto --leases-default
-                [--class CLASS --max-minutes N --minutes learn|fixed --peak learn|fixed --default-gib N]
+                [--class CLASS --max-minutes N --minutes learn|fixed --peak learn|fixed --default-gib N
+                 --default-cpus N]
        --max-minutes is the hard lease limit. release records run minutes; with --minutes learn
        config show prints suggestedMinutes, p90 of the last 10 runs + 25% (at least 5, at most
        --max-minutes), a reference that never limits a lease or sets its length.
@@ -181,6 +196,9 @@ Shared records (read-only; puppet.py has them too)
        grants, queue entries, lease IDs and actions. Use these, not tail, grep or jq.
   who --pr N | --worktree P | --repo owner/repo | --text TEXT
        the coordinators, members, streams, watch lists and leases that match; exit 3: no owner
+  sizes --worktree P [--class CLASS]
+       the project's recorded run minutes, GiB and core samples per class, the peaks
+       acquire charges and the observed peaks it checks requests against
   prs --path GLOB [--path ...] [--repo owner/repo]
        open PRs of members and prs-<C>.txt watch lists whose changed files match (a glob
        or a directory prefix), with their owners; --repo also covers coordinator PRs
@@ -249,7 +267,7 @@ from moplib import (
     DIR, CONFIG, TOOLS, MEMBER_TOOLS, SLUG, FILES, OBSOLETE, SOURCE, version_warning, PEAKS,
     INBOX, CLASS_NAME, read_json, write_json, load_machine, registry,
     class_names, project_key, load_project, save_project, class_peak, typical_minutes,
-    suggested_minutes, over_limit, extend_lease, now, lock, unlock, log, note,
+    suggested_minutes, over_limit, undersized, extend_lease, now, lock, unlock, log, note,
     load_roster, save_roster, live, load, save, budget, order, queue_entry,
     say, deliver, notify, READS, memory_path, add_read_commands,
     read_cmd, run, worktree_pids, drain,
@@ -302,7 +320,8 @@ def config_cmd(args):
     if args.ccmd == "set-machine":
         raw = read_json(CONFIG) or {}
         before = json.loads(json.dumps(raw))
-        for flag, field in (("reserve_gib", "reserveGiB"), ("disk_floor_gib", "diskFloorGiB"), ("disk_alarm_gib", "diskAlarmGiB"),
+        for flag, field in (("reserve_gib", "reserveGiB"), ("reserve_cpus", "reserveCpus"), ("size_margin", "sizeMargin"),
+                            ("disk_floor_gib", "diskFloorGiB"), ("disk_alarm_gib", "diskAlarmGiB"),
                             ("max_swapouts", "maxSwapouts"), ("swap_interval_s", "swapIntervalS"),
                             ("load_per_core", "loadPerCore"), ("dashboard_port", "dashboardPort")):
             if getattr(args, flag) is not None:
@@ -310,6 +329,9 @@ def config_cmd(args):
         merged = {**machine, **raw}
         if merged["diskAlarmGiB"] < merged["diskFloorGiB"]:
             print(f"--disk-alarm-gib ({merged['diskAlarmGiB']:g}) must be at least --disk-floor-gib ({merged['diskFloorGiB']:g})")
+            return 2
+        if not 0 <= merged["sizeMargin"] < 1:
+            print(f"--size-margin is a fraction from 0 to below 1, got {merged['sizeMargin']:g}")
             return 2
         for item in args.max_slots or []:
             cls, _, n = item.partition("=")
@@ -344,8 +366,9 @@ def config_cmd(args):
                 other.get("settle", {}).pop(args.name, None)
             raw.get("maxSlots", {}).pop(args.name, None)
         else:
-            c = reg.setdefault(args.name, {"description": "", "defaultGiB": 0, "maxMinutes": 20, "settle": {}})
-            for flag, field in (("description", "description"), ("default_gib", "defaultGiB"), ("max_minutes", "maxMinutes")):
+            c = reg.setdefault(args.name, {"description": "", "defaultGiB": 0, "defaultCpus": 0, "maxMinutes": 20, "settle": {}})
+            for flag, field in (("description", "description"), ("default_gib", "defaultGiB"), ("default_cpus", "defaultCpus"),
+                                ("max_minutes", "maxMinutes")):
                 if getattr(args, flag) is not None:
                     c[field] = getattr(args, flag)
             for item in args.settle or []:
@@ -372,7 +395,8 @@ def config_cmd(args):
                 proj[field] = getattr(args, flag)
         if args.pcls:
             c = proj["classes"][args.pcls]
-            for flag, field in (("max_minutes", "maxMinutes"), ("minutes", "minutesMode"), ("peak", "peakMode"), ("default_gib", "defaultGiB")):
+            for flag, field in (("max_minutes", "maxMinutes"), ("minutes", "minutesMode"), ("peak", "peakMode"),
+                                ("default_gib", "defaultGiB"), ("default_cpus", "defaultCpus")):
                 if getattr(args, flag) is not None:
                     c[field] = getattr(args, flag)
         proj["configured"] = True
@@ -388,6 +412,7 @@ def config_cmd(args):
         proj = load_project(key, base)
         for c in class_names():
             proj["classes"][c]["peakGiB"] = class_peak(proj, c)
+            proj["classes"][c]["peakCpus"] = class_peak(proj, c, "cpus")
             proj["classes"][c]["suggestedMinutes"] = suggested_minutes(proj, c)
             proj["classes"][c]["typicalMinutes"] = typical_minutes(proj, c)
         out["project"] = proj
@@ -1207,7 +1232,7 @@ def brief(state):
         for h in state[c]:
             left = int((dt.datetime.fromisoformat(h["expiresAt"]) - t).total_seconds() // 60)
             status = f"EXPIRED {-left} min ago" if left < 0 else f"{left} min left"
-            lines.append(f"{c} held  {h['id']} ({h['coordinator']}, {h['gib']} GiB) {status} — {h['holder'][:60]}")
+            lines.append(f"{c} held  {h['id']} ({h['coordinator']}, {h['gib']} GiB, {h['cpus']} cores) {status} — {h['holder'][:60]}")
             if h.get("commands"):
                 lines.append(f"           covers: {h['commands'][:120]}")
         q = state["queue"][c]
@@ -1218,7 +1243,8 @@ def brief(state):
     for c, hold in state.get("admission", {}).items():
         lines.append(f"{c} ADMISSION HOLD by {hold['by']} since {hold['at'][11:16]}Z — {hold['reason']}")
     b = state["budget"]
-    lines.append(f"budget {b['freeGiB']} of {b['limitGiB']} GiB free · capacity {b['capacity']} · peaks {b['peakGiB']}")
+    lines.append(f"budget {b['freeGiB']} of {b['limitGiB']} GiB free · {b['freeCpus']} of {b['limitCpus']} cores free"
+                 f" · capacity {b['capacity']} · peaks {b['peakGiB']} GiB {b['peakCpus']} cores")
     return "\n".join(lines)
 
 
@@ -1345,13 +1371,23 @@ def acquire_cmd(args):
         queue, holders = state["queue"][args.cls], state[args.cls]
         entry = next((q for q in queue if q["id"] == args.id), {})
         key = entry.get("project") or project_key(args.worktree)[0]
-        gib = args.gib or entry.get("gib") or class_peak(load_project(key), args.cls)
-        b = budget(state, machine)
-        if gib > b["freeGiB"]:
-            why = f"needs {gib} GiB, {b['freeGiB']} GiB free of {b['limitGiB']} GiB budget"
-            print(json.dumps({"memory": why, "held": [h["id"] for c in class_names(machine) for h in state[c]]}))
+        asked_gib, asked_cpus = args.gib or entry.get("gib"), args.cpus or entry.get("cpus")
+        why = None if args.accept_size else undersized(args.cls, key, asked_gib, asked_cpus, machine["sizeMargin"])
+        if why:
+            print(json.dumps({"undersized": why}))
             log(f"refuse {args.cls} {args.coordinator} {args.id} {why}")
-            return 4
+            return 6
+        proj = load_project(key)
+        gib = asked_gib or class_peak(proj, args.cls)
+        cpus = asked_cpus or class_peak(proj, args.cls, "cpus")
+        b = budget(state, machine)
+        for kind, need, free, limit, unit in (("memory", gib, b["freeGiB"], b["limitGiB"], "GiB"),
+                                              ("cpu", cpus, b["freeCpus"], b["limitCpus"], "cores")):
+            if need > free:
+                why = f"needs {need:g} {unit}, {free:g} {unit} free of {limit:g} {unit} budget"
+                print(json.dumps({kind: why, "held": [h["id"] for c in class_names(machine) for h in state[c]]}))
+                log(f"refuse {args.cls} {args.coordinator} {args.id} {why}")
+                return 4
         state["queue"][args.cls] = [q for q in queue if q["id"] != args.id]
         t = now()
         holders.append({
@@ -1361,6 +1397,7 @@ def acquire_cmd(args):
             "worktree": args.worktree,
             "project": key,
             "gib": gib,
+            "cpus": cpus,
             "commands": args.commands or entry.get("commands"),
             "grantedAt": t.isoformat(),
             "expiresAt": (t + dt.timedelta(minutes=args.minutes)).isoformat(),
@@ -1374,7 +1411,9 @@ def acquire_cmd(args):
             )
             holders[-1]["measurePid"] = proc.pid
         save(state, machine)
-        log(f"acquire {args.cls} {args.coordinator} {args.id} {args.holder} until {holders[-1]['expiresAt']} ({gib} GiB, {round(b['freeGiB'] - gib, 1)} GiB left)")
+        log(f"acquire {args.cls} {args.coordinator} {args.id} {args.holder} until {holders[-1]['expiresAt']} "
+            f"({gib:g} GiB, {round(b['freeGiB'] - gib, 1)} GiB left; {cpus:g} cores, {round(b['freeCpus'] - cpus, 1)} cores left"
+            + (", size accepted" if args.accept_size else "") + ")")
         return 0
     finally:
         unlock()
@@ -1436,23 +1475,28 @@ def calm_wait_cmd(args):
 
 
 def measure_peak_cmd(args):
-    """While ID holds a lease, sum RSS of processes working in the worktree; keep the max
-    in peaks/<id>.gib for release. RSS counts shared pages twice, so it errs high."""
+    """While ID holds a lease, sum RSS and %CPU of processes working in the worktree; keep
+    the max of each in peaks/<id>.gib and peaks/<id>.cpus for release. RSS counts shared
+    pages twice, and %CPU is a short decaying average, so both err high."""
     os.makedirs(PEAKS, exist_ok=True)
-    out = os.path.join(PEAKS, f"{args.id}.gib")
-    peak = 0.0
+    peak = {"gib": 0.0, "cpus": 0.0}
     time.sleep(2)
     while any(h["id"] == args.id for c in class_names() for h in load()[c]):
         pids = worktree_pids(args.worktree)
         if pids:
-            kib = sum(int(x) for x in run(["ps", "-o", "rss=", "-p", ",".join(pids)]).split() if x.isdigit())
-            gib = round(kib / 2**20, 1)
-            if gib > peak:
-                peak = gib
-                with open(out, "w") as f:
-                    f.write(str(peak))
+            rss, cpu = 0, 0.0
+            for line in run(["ps", "-o", "rss=,%cpu=", "-p", ",".join(pids)]).splitlines():
+                f = line.split()
+                if len(f) == 2 and f[0].isdigit():
+                    rss += int(f[0])
+                    cpu += float(f[1].replace(",", "."))
+            for kind, value in (("gib", round(rss / 2**20, 1)), ("cpus", round(cpu / 100, 1))):
+                if value > peak[kind]:
+                    peak[kind] = value
+                    with open(os.path.join(PEAKS, f"{args.id}.{kind}"), "w") as out:
+                        out.write(str(value))
         time.sleep(args.interval)
-    print(f"peak {args.id} {peak} GiB")
+    print(f"peak {args.id} {peak['gib']} GiB {peak['cpus']} cores")
     return 0
 
 
@@ -1800,6 +1844,8 @@ def main():
     a.add_argument("--worktree", required=True)
     a.add_argument("--minutes", type=int, required=True)
     a.add_argument("--gib", type=float, help="expected peak GiB; default: queue entry estimate, then class peak")
+    a.add_argument("--cpus", type=float, help="expected peak cores; default: queue entry estimate, then class peak")
+    a.add_argument("--accept-size", action="store_true", help="grant a request below the observed peak: the member's reason fits")
     a.add_argument("--commands", help="the exact granted commands; default: the queue entry's")
     a.add_argument("--measure", action="store_true", help="start measure-peak in the background for this lease")
     w = sub.add_parser("wait")
@@ -1809,6 +1855,7 @@ def main():
     w.add_argument("--id", required=True)
     w.add_argument("--minutes", type=int)
     w.add_argument("--gib", type=float)
+    w.add_argument("--cpus", type=float)
     w.add_argument("--commands", help="the exact commands the lease would cover")
     w.add_argument("--worktree", help="sets the project whose class peak applies")
     w.add_argument("--priority", type=int, help="higher goes first; default: the task's priority, else 0")
@@ -1856,6 +1903,8 @@ def main():
     cm.add_argument("--by", required=True)
     cm.add_argument("--reason", help="why, for example the user's words")
     cm.add_argument("--reserve-gib", type=float)
+    cm.add_argument("--reserve-cpus", type=float, help="cores kept free of leases")
+    cm.add_argument("--size-margin", type=float, help="fraction a request may be below the observed peak (0.25 = 25%%)")
     cm.add_argument("--disk-floor-gib", type=float, help="below this many GiB free, no lease is granted")
     cm.add_argument("--disk-alarm-gib", type=float, help="below this many GiB free, the host check raises the disk alarm")
     cm.add_argument("--max-swapouts", type=int)
@@ -1877,12 +1926,14 @@ def main():
     cpj.add_argument("--minutes", choices=("learn", "fixed"), help="learn: suggest a request length from recorded run times; the limit stays --max-minutes")
     cpj.add_argument("--peak", choices=("learn", "fixed"))
     cpj.add_argument("--default-gib", type=float)
+    cpj.add_argument("--default-cpus", type=float)
     sc = csub.add_parser("set-class")
     sc.add_argument("--by", required=True)
     sc.add_argument("--reason", help="why, for example the user's words")
     sc.add_argument("name", metavar="CLASS")
     sc.add_argument("--description")
     sc.add_argument("--default-gib", type=float, help="expected peak; 0 = not memory-bound")
+    sc.add_argument("--default-cpus", type=float, help="expected peak cores; 0 = not CPU-bound")
     sc.add_argument("--max-minutes", type=int)
     sc.add_argument("--settle", action="append", help="OTHER=SECONDS: after a grant of this class, OTHER waits (0 removes)")
     rc = csub.add_parser("remove-class")
@@ -2094,7 +2145,8 @@ def main():
         queue = state["queue"][args.cls]
         if args.cmd == "wait":
             code, text = queue_entry(state, roster, args.cls, args.id, args.coordinator, args.holder, args.minutes,
-                                     args.gib, args.commands, args.worktree, args.priority, args.front, changed_by=args.coordinator)
+                                     args.gib, args.cpus, args.commands, args.worktree, args.priority, args.front,
+                                     changed_by=args.coordinator)
             if code == 0:
                 save(state, machine)
             print(text)

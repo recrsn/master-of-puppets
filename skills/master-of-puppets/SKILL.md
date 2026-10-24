@@ -1,6 +1,6 @@
 ---
 name: master-of-puppets
-description: Coordinate local Claude and Codex sessions and take their PR stacks to MERGED. Coordinators own a stack, watch PRs and messages, check members on scheduled heartbeats, move stacks bottom-up, and share a roster, ledger and live host/status dashboard. Optional machine-wide leases for builds, E2E or other shared actions use adaptive memory-based capacity. Use when asked to be the coordinator, drive or land PR stacks, track blockers across sessions, or manage shared-machine leases, queues or colliding builds. Coordinator role only; sessions joining an existing coordinator use the separate puppet skill.
+description: Coordinate local Claude and Codex sessions and take their PR stacks to MERGED. Coordinators own a stack, watch PRs and messages, check members on scheduled heartbeats, move stacks bottom-up, and share a roster, ledger and live host/status dashboard. Optional machine-wide leases for builds, E2E or other shared actions use adaptive memory- and core-based capacity: members size their runs, and coordinators grant from rules and their own observations. Use when asked to be the coordinator, drive or land PR stacks, track blockers across sessions, or manage shared-machine leases, queues or colliding builds. Coordinator role only; sessions joining an existing coordinator use the separate puppet skill.
 ---
 
 # Master of puppets
@@ -32,7 +32,7 @@ not write product code.
 | File | What it does |
 | --- | --- |
 | `scripts/coordinator.py` | Coordinator commands: roster and members, streams, leases, messaging, shared-record reads, watchers, config, update votes and install. Run with `python3 -I`; the docstring lists every command. |
-| `scripts/puppet.py` | Member commands: roster, whoami, memory list, the shared-record reads (`inbox`, `ledger`, `events`, `who`), and for the member's own lease `request`, `await-grant`, `extend` (asks for more time) and `release`. It cannot grant or extend. Members run only this file. |
+| `scripts/puppet.py` | Member commands: roster, whoami, memory list, the shared-record reads (`inbox`, `ledger`, `events`, `who`, `sizes`), and for the member's own lease `request`, `await-grant`, `extend` (asks for more time) and `release`. It cannot grant or extend. Members run only this file. |
 | `scripts/moplib.py` | State code that both CLIs import. |
 | `scripts/server.py` | The one dashboard, on `http://localhost:4720/`, with the page shell `scripts/dashboard.html`: host values, "Needs you" first, the work list, lease lanes, and coordinators with the ledger in a drawer; a Wall mode for a shared screen. Live by SSE. Exits with "already serving" when one runs. |
 
