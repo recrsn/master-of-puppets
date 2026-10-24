@@ -78,7 +78,8 @@ counts for every coordinator, and every live coordinator gets the message.
 approval or rejection that `install --replace` reads.
 
 Each queued lease entry has Move up and Cancel buttons (Cancel asks first).
-They run `coordinator.py up|unwait --notify`, which tells each affected coordinator
+A ready entry can also be dragged onto another ready entry of its class to
+take that position. They run `coordinator.py up|unwait|move --notify`, which tells each affected coordinator
 (`references/leases.md`); a toast shows the result and the delivery. The
 server accepts these posts only from its own page.
 

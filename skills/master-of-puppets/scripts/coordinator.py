@@ -91,9 +91,11 @@ Leases
        no grant of CLASS while a hold is set (acquire exits 3 with its reason), for example
        while a failed run's cleanup is uncertain; status --brief and the dashboard show it
   unwait | hold | ready CLASS --id ID
-  up CLASS --id ID                move a ready entry ahead of the ready entry in front of it;
-                                  it takes that entry's priority when that is higher
-       unwait and up take --notify (the dashboard's queue buttons): each affected
+  up CLASS --id ID                move a ready entry ahead of the ready entry in front of it
+  move CLASS --id ID --to N       move a ready entry to position N among ready entries
+       up and move set the entry's priority between its new neighbours' when it is
+       outside that range, so the queue stays sorted by priority
+       unwait, up and move take --notify (the dashboard's queue buttons and drag): each affected
        coordinator gets an inbox message from "dashboard", delivered directly as say does
   extend CLASS --id ID --minutes N   expires N minutes from now; exit 2 when the lease would
                                   run longer than the class limit. Extension is the coordinator's
@@ -1364,7 +1366,7 @@ def brief(state):
 
 
 def queue_edit_cmd(args):
-    """unwait and up. With --notify, tell each affected coordinator after the lock is released."""
+    """unwait, up and move. With --notify, tell each affected coordinator after the lock is released."""
     lock()
     try:
         state, machine = load(), load_machine()
@@ -1385,22 +1387,33 @@ def queue_edit_cmd(args):
             if entry.get("hold"):
                 print(f"{args.id} is on hold; mark it ready first")
                 return 3
-            ahead = next((n for n in range(i - 1, -1, -1) if not queue[n].get("hold")), None)
-            if ahead is None:
-                print(f"{args.id} is already first among ready {args.cls} entries")
+            ready = [n for n, q in enumerate(queue) if not q.get("hold")]
+            pos = ready.index(i) + 1
+            target = max(1, min(pos - 1 if args.cmd == "up" else args.to, len(ready)))
+            if target == pos:
+                print(f"{args.id} is already at {args.cls} position {pos} among ready entries")
                 return 0
-            other = queue[ahead]
-            raised = other.get("priority", 0) > entry.get("priority", 0)
-            if raised:
-                entry["priority"] = other["priority"]
-            queue.insert(ahead, queue.pop(i))
-            pos = sum(1 for q in queue[: ahead + 1] if not q.get("hold"))
-            prio = f" at priority {entry['priority']}" if raised else ""
-            done = f"moved {args.id} to {args.cls} position {pos}{prio}, ahead of {other['id']}"
-            message = (f"The user moved {args.cls} queue entry {args.id} ({entry['holder']}) up to position {pos}{prio}, "
-                       f"ahead of {other['id']} ({other['holder']}), on the dashboard. Tell the affected members their new turn.")
+            other = queue[ready[target - 1]]
+            queue.pop(i)
+            j = queue.index(other) + (target > pos)
+            queue.insert(j, entry)
+            # Keep the queue sorted by priority, so a later sort keeps the new place:
+            # the entry takes a priority between its neighbours'.
+            old = entry.get("priority", 0)
+            new = old
+            if j + 1 < len(queue):
+                new = max(new, queue[j + 1].get("priority", 0))
+            if j:
+                new = min(new, queue[j - 1].get("priority", 0))
+            if new != old:
+                entry["priority"] = new
+            prio = f" at priority {new}" if new != old else ""
+            side = "ahead of" if target < pos else "behind"
+            done = f"moved {args.id} to {args.cls} position {target}{prio}, {side} {other['id']}"
+            message = (f"The user moved {args.cls} queue entry {args.id} ({entry['holder']}) from position {pos} to {target}{prio}, "
+                       f"{side} {other['id']} ({other['holder']}), on the dashboard. Tell the affected members their new turn.")
             to = list(dict.fromkeys([entry["coordinator"], other["coordinator"]]))
-            log(f"up {args.cls} {args.id} ahead of {other['id']}" + (" by=dashboard" if args.notify else ""))
+            log(f"{args.cmd} {args.cls} {args.id} to {target} {side} {other['id']}" + (" by=dashboard" if args.notify else ""))
         save(state, machine)
     finally:
         unlock()
@@ -1975,10 +1988,12 @@ def main():
     w.add_argument("--worktree", help="sets the project whose class peak applies")
     w.add_argument("--priority", type=int, help="higher goes first; default: the task's priority, else 0")
     w.add_argument("--front", action="store_true", help="re-queue at the head (only for a run aborted by the coordinator)")
-    for name in ("unwait", "up"):
+    for name in ("unwait", "up", "move"):
         u = sub.add_parser(name)
         u.add_argument("cls", metavar="CLASS")
         u.add_argument("--id", required=True)
+        if name == "move":
+            u.add_argument("--to", type=int, required=True, help="position among ready entries, from 1")
         u.add_argument("--notify", action="store_true", help="tell each affected coordinator (sender: dashboard)")
     pk = sub.add_parser("park")
     pk.add_argument("--coordinator", required=True)
@@ -2245,7 +2260,7 @@ def main():
         return decision_cmd(args)
     if args.cmd == "update":
         return update_cmd(args)
-    if args.cmd in ("unwait", "up"):
+    if args.cmd in ("unwait", "up", "move"):
         return queue_edit_cmd(args)
     if args.cmd in ("park", "unpark"):
         return park_cmd(args)
