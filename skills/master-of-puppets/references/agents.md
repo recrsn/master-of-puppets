@@ -47,6 +47,9 @@ check background logs and process liveness when using detached processes.
 Command output alone does not wake the agent. On resume, check watcher and
 server liveness before starting replacements, and recover unread messages
 from the durable inbox/ledger: an inbox watcher starts at the end of the file.
+Keep the shared inbox for catch-up even when direct delivery succeeds. Apply
+[Duplicate receipt and catch-up](protocol.md#duplicate-receipt-and-catch-up)
+when the same message also appears in direct delivery or watcher output.
 
 ## New Codex sessions and permissions
 

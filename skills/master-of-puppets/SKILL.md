@@ -257,7 +257,9 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
 1. `coordinator.py heartbeat --name <slug>` (add `--focus`/`--pr` when they change);
    read `roster`, `coordinator.py status --brief` and new ledger entries.
 2. Re-arm any watcher that ended; on Codex, consume new watcher output and
-   recover unread inbox/ledger entries (`references/agents.md`).
+   recover unread inbox/ledger entries (`references/agents.md`). Disregard
+   already-handled messages using `references/protocol.md`, "Duplicate receipt
+   and catch-up"; keep the shared inbox for recovery.
 3. Compare each stack with the latest `watch prs` lines; act on steps 3 and 4
    above. Confirm with one `gh pr view` before each stack move, not on a timer.
 4. Leases on: expiry check and grants (`references/leases.md`). Run
@@ -374,11 +376,23 @@ BUILD lease", "this repo merges through a merge queue".
 Lead with what changed or what needs them. Keep the table short: task, PR,
 state, next step.
 
-Report fully only on a merge, a blocker, an idle or stalled lease slot, a host
-alarm, or a decision for the user. Routine events need no report: a lease
-wait, acquire or release, a watcher re-arm, a first PR reading, a peer's
-acknowledgement. Answer them in a few words or not at all, and batch them
-into the next real report. Auto-merge on, queued and MERGED are different states;
+Report a merge, a new or materially changed blocker, an idle or stalled lease
+slot that needs intervention, a new or materially changed host alarm, or a
+decision for the user. Do not repeat an unchanged blocker, alarm or pending
+decision.
+
+Recurring member updates, STATUS requests and replies, heartbeat checks and
+required protocol replies continue normally. Handle routine events through
+the protocol and shared records without user-facing commentary or a final
+acknowledgement: lease waits, grants or releases, watcher re-arms, first PR
+readings, member status updates and peer acknowledgements. Do not narrate
+routine checks with "I'll verify..." or conclude them with "Noted", "Recorded"
+or an unchanged status. Include relevant routine facts in the next material
+report. Answer a direct human question normally; a protocol message delivered
+as a user turn is still coordination traffic. For a scheduled heartbeat with
+no material change, use the host's quiet completion mechanism.
+
+Auto-merge on, queued and MERGED are different states;
 report the exact one. Quote raw failures. Never ask a member to weaken a test
 or rerun a flake to green. When you make a mistake, say so and how you fixed
 it. When you stop, stop your watchers and heartbeat schedule, run
