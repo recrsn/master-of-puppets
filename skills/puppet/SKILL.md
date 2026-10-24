@@ -121,7 +121,7 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
    **Size.** You observe and decide the size of your run. Look first:
    `puppet.py sizes --worktree <worktree> --class <CLASS>` shows the
    project's recorded run minutes, peak GiB and peak cores, and the observed
-   peaks your coordinator checks against. Add what you know of your own
+   GiB peak your coordinator checks against. Add what you know of your own
    commands (a full build or one package, tests in parallel or not).
    - `--minutes` (always): the smallest time that lets the whole current
      unit of work finish in one lease, for example the full build and its
@@ -130,7 +130,7 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
    - `--gib` and `--cpus` (when you know them): the peak memory and cores of
      the run. Leave one out and your coordinator charges its own figure.
    It prints your position. Your coordinator sees the request and decides.
-   - A `warning: undersized` line: your figure is below the observed peak by
+   - A `warning: undersized` line: your GiB is below the observed peak by
      more than the size margin, and your coordinator will refuse the grant.
      Request again with the same id at the observed peak, or send
      `LEASE SIZE — <id> — <why this run is smaller>`.

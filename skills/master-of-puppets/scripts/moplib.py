@@ -134,12 +134,13 @@ RESOURCES = {"gib": ("samples", "defaultGiB"), "cpus": ("cpuSamples", "defaultCp
 
 
 def class_peak(proj, cls, kind="gib"):
-    """Expected peak GiB (kind gib) or cores (kind cpus) of a class run. learn: max of the
-    last 5 samples, the default a floor until 3 exist. fixed: the default."""
+    """Expected peak GiB (kind gib) or cores (kind cpus) of a class run. GiB, learn: max of
+    the last 5 samples, the default a floor until 3 exist; fixed: the default. Cores: always
+    the set default (0 = no core charge); core samples only inform the coordinators' vote."""
     c = proj["classes"][cls] if proj else project_class_defaults(cls)
     samples_key, default_key = RESOURCES[kind]
     samples = c.get(samples_key, [])
-    if c.get("peakMode") == "fixed":
+    if kind == "cpus" or c.get("peakMode") == "fixed":
         return c[default_key]
     if len(samples) >= SAMPLES_TRUSTED:
         return max(samples)
@@ -156,20 +157,17 @@ def observed_peak(proj, cls, kind="gib"):
     return max(samples)
 
 
-def undersized(cls, key, gib, cpus, margin):
-    """Refusal text when a requested GiB or core count is below the observed peak of the
-    class in project key by more than margin (a fraction), else None. A figure the
-    request leaves out is not checked: the coordinator charges its own figure for it."""
+def undersized(cls, key, gib, margin):
+    """Refusal text when a requested GiB is below the observed peak of the class in project
+    key by more than margin (a fraction), else None. A request without GiB is not checked:
+    the coordinator charges its own figure. Cores are not checked: observed cores only
+    inform the coordinators' vote on defaultCpus."""
     proj = load_project(key) if key else None
-    short = []
-    for kind, asked, unit in (("gib", gib, "GiB"), ("cpus", cpus, "cores")):
-        seen = observed_peak(proj, cls, kind)
-        if asked and seen and asked < seen * (1 - margin):
-            short.append(f"{asked:g} {unit} asked, {seen:g} {unit} observed")
-    if not short:
+    seen = observed_peak(proj, cls)
+    if not (gib and seen and gib < seen * (1 - margin)):
         return None
-    return (f"undersized {cls}: {'; '.join(short)} (margin {margin:.0%}); ask for at least the observed peak, "
-            "or tell your coordinator why this run is smaller")
+    return (f"undersized {cls}: {gib:g} GiB asked, {seen:g} GiB observed (margin {margin:.0%}); ask for at least "
+            "the observed peak, or tell your coordinator why this run is smaller")
 
 
 def typical_minutes(proj, cls):

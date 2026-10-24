@@ -36,14 +36,16 @@ Capacity is adaptive. There is no fixed slot count. A grant is admitted when the
 expected peaks of all holders plus the request fit both budgets:
   sum(held GiB) + request GiB <= total RAM - reserveGiB
   sum(held cores) + request cores <= CPU cores - reserveCpus
-The member sizes its run: minutes always, GiB and cores when it knows them. A size
-it leaves out takes its project's class peak. In learn mode that is the max of the
+The member sizes its run: minutes always, GiB and cores when it knows them. A GiB
+figure it leaves out takes its project's class peak: in learn mode the max of the
 last 5 measured peaks (`measure-peak` writes peaks/<id>.gib and .cpus; release
-records them), with the default as a floor until 3 samples exist; in fixed mode it
-is the default. The coordinator decides on the request as asked: it charges the
-member's figures, and acquire refuses (exit 6) a GiB or core figure below the
-observed peak (3+ samples, learn mode) by more than sizeMargin, unless the
-coordinator accepts the member's reason with --accept-size. Example: on a 24 GiB,
+records them), with the default as a floor until 3 samples exist; in fixed mode the
+default. A core figure it leaves out takes the class defaultCpus that coordinators
+set (0 = no core charge); measured cores only inform their vote. The coordinator
+decides on the request as asked: it charges the member's figures, and acquire
+refuses (exit 6) a GiB figure below the observed peak (3+ samples, learn mode) by
+more than sizeMargin, unless the coordinator accepts the member's reason with
+--accept-size. Example: on a 24 GiB,
 10-core machine with a 6 GiB and 2-core reserve, BUILD ~10 GiB/4 cores and E2E
 ~8 GiB/2 cores admit one of each. A 0 figure uses none of that budget.
 Swap, load and disk are a separate gate (`host-check`) that acquire runs itself.
@@ -81,7 +83,7 @@ Leases
        exit 0 granted, 2 --minutes over the class limit (split the run), 3 queued behind
        another entry, at a slot cap or in a settle window (another class's grant settles
        this one), 4 over the memory or core budget, 5 host BUSY or disk below the floor,
-       6 undersized: a GiB or core figure below the observed peak by more than sizeMargin.
+       6 undersized: a GiB figure below the observed peak by more than sizeMargin.
        --accept-size grants an undersized request: only when the member's reason fits.
        --commands records the granted scope; --measure starts measure-peak itself.
        The holder releases with puppet.py release.
@@ -1464,7 +1466,7 @@ def acquire_cmd(args):
         entry = next((q for q in queue if q["id"] == args.id), {})
         key = entry.get("project") or project_key(args.worktree)[0]
         asked_gib, asked_cpus = args.gib or entry.get("gib"), args.cpus or entry.get("cpus")
-        why = None if args.accept_size else undersized(args.cls, key, asked_gib, asked_cpus, machine["sizeMargin"])
+        why = None if args.accept_size else undersized(args.cls, key, asked_gib, machine["sizeMargin"])
         if why:
             print(json.dumps({"undersized": why}))
             log(f"refuse {args.cls} {args.coordinator} {args.id} {why}")

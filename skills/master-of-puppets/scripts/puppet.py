@@ -95,7 +95,7 @@ def request(args):
         if code == 0:
             save(state, machine)
         print(text)
-        why = code == 0 and undersized(args.cls, project_key(args.worktree)[0], args.gib, args.cpus, machine["sizeMargin"])
+        why = code == 0 and undersized(args.cls, project_key(args.worktree)[0], args.gib, machine["sizeMargin"])
         if why:
             print(f"warning: {why}")
         return code
