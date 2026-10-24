@@ -330,8 +330,8 @@ BUILD lease", "this repo merges through a merge queue".
   or relayed as USER SYNC), record it:
   `coordinator.py memory add --by <slug> --kind rule|note --text "..." [--project-root <path>]`.
   Omit `--project-root` for a machine-wide entry. Add `--reason "<the user's words>"`.
-  The command writes the event and the ledger line and messages the other
-  coordinators; tell your members.
+  The command writes the event and the ledger line, then messages every live
+  coordinator and every live member itself. Do not `say` it or tell your members.
 - Change a rule and keep its ID: `coordinator.py memory update --by <slug> --id <id> --text "<full new text>" --reason "..."`.
 - Remove a rule the user withdraws: `coordinator.py memory remove --by <slug> --id <id> --reason "..." [--project-root <path>]`.
 - A rule that should hold in every project is a change to the skill itself,
@@ -339,8 +339,8 @@ BUILD lease", "this repo merges through a merge queue".
 - A limit is never a memory entry. Slots, GiB, minutes, settle times, disk,
   swap and load thresholds are config numbers that `coordinator.py` enforces:
   set them with `coordinator.py config set-machine|set-class|set-project --by <slug> --reason "<the user's words>"`
-  (`references/setup.md`). The event shows each old and new value to the
-  other coordinators; tell your members.
+  (`references/setup.md`). The command sends each old and new value to every
+  live coordinator and member itself; do not relay it.
 - Lessons (what went wrong, why, and what to do next time) go into your own
   agent memory: Claude's memory directory, or Codex's memory. Not into the
   skill and not into `coordinator.py memory`. Turn a lesson into a rule only when

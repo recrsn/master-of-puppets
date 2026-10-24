@@ -19,7 +19,8 @@ that `coordinator.py` enforces (`references/setup.md`).
   `ledger`, `who` and `prs --path`. Never send, or ask for, a release, drain
   or cleanup receipt; the release event is the record (`references/leases.md`).
 - A change that every coordinator must see is a command, not a message:
-  admission holds, rule and config changes (`--reason`), helper updates
+  admission holds, rule and config changes (`--reason`; the command also
+  messages every live member, so do not tell them), helper updates
   (`update`), member handoffs (`member transfer`, `member accept`), and
   questions for the user that concern every coordinator
   (`decision add --scope machine`). `references/protocol.md` has the table.
