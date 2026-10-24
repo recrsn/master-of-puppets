@@ -118,7 +118,10 @@ Each heartbeat round ("Heartbeat round" in SKILL.md, step 4):
    only from runs that finished, never below the longest recent run.
 
 Use 0 to remove a limit. When the user names a value without being asked, set
-it directly with `set-class` or `set-project`.
+it directly with `set-class` or `set-project`. A value the user saves on the
+dashboard's Config page (`CONFIG ... by user`) needs no vote: it applies at
+once, and coordinators never propose over it or object to it unless the user
+asks (SKILL.md, "Memory").
 
 ## Adaptive capacity
 
