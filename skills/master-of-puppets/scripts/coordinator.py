@@ -83,7 +83,9 @@ Leases
        unwait and up take --notify (the dashboard's queue buttons): each affected
        coordinator gets an inbox message from "dashboard", delivered directly as say does
   extend CLASS --id ID --minutes N   expires N minutes from now; exit 2 when the lease would
-                                  run longer than the class limit
+                                  run longer than the class limit. Members extend their own
+                                  lease with puppet.py extend while no entry waits; watch inbox
+                                  shows it as an "extension" event
   host-check                      admission gate; exit 0 CALM, 1 BUSY (pressure or disk below
                                   the floor); prints disk=ok|alarm|blocked
   calm-wait [--settle S] [--retry S]           one CALM line when the host is calm
@@ -238,7 +240,7 @@ from moplib import (
     DIR, CONFIG, TOOLS, MEMBER_TOOLS, SLUG, FILES, OBSOLETE, SOURCE, version_warning, PEAKS, LOG,
     INBOX, CLASS_NAME, read_json, write_json, load_machine, registry,
     class_names, project_key, load_project, save_project, class_peak, typical_minutes,
-    max_minutes, length_limit, over_limit, now, lock, unlock, log, note,
+    max_minutes, over_limit, extend_lease, now, lock, unlock, log, note,
     load_roster, save_roster, live, load, save, budget, order, queue_entry,
     say, deliver, notify, READS, memory_path, add_read_commands,
     read_cmd, run, worktree_pids, drain, id_owner,
@@ -1542,7 +1544,7 @@ def watch_inbox(me):
 
 
 def watch_expiry():
-    """Each lease past its expiry, once, with left=N: the processes its run still has in
+    """Each lease past its expiry, once per expiry, with left=N: the processes its run still has in
     its worktree (as drain-check counts them). An expired lease still holds its slot."""
     seen = set()
     while True:
@@ -1550,7 +1552,7 @@ def watch_expiry():
         state = load()
         for c in class_names():
             for h in state[c]:
-                key = (c, h["id"])
+                key = (c, h["id"], h["expiresAt"])  # an extended lease can expire again
                 if key not in seen and dt.datetime.fromisoformat(h["expiresAt"]) < t:
                     seen.add(key)
                     left = len(drain(h["worktree"])) if h.get("worktree") else "?"
@@ -2063,15 +2065,12 @@ def main():
         if args.cmd == "extend":
             for h in state[args.cls]:
                 if h["id"] == args.id:
-                    expires = now() + dt.timedelta(minutes=args.minutes)
-                    total = (expires - dt.datetime.fromisoformat(h["grantedAt"])).total_seconds() / 60
-                    limit = length_limit(args.cls, h.get("project"))
-                    if total > limit:
-                        print(f"the lease would run {total:.0f} min, over the {limit}-min {args.cls} limit; release it and queue the rest")
-                        return 2
-                    h["expiresAt"] = expires.isoformat()
+                    code, text = extend_lease(h, args.cls, args.minutes)
+                    if code:
+                        print(text)
+                        return code
                     save(state, machine)
-                    log(f"extend {args.cls} {args.id} until {h['expiresAt']}")
+                    log(f"extend {args.cls} {args.id} until {text}")
                     return 0
             print(f"{args.cls} not held by {args.id}")
             return 3

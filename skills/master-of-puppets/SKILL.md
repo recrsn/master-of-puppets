@@ -32,7 +32,7 @@ not write product code.
 | File | What it does |
 | --- | --- |
 | `scripts/coordinator.py` | Coordinator commands: roster and members, streams, leases, messaging, shared-record reads, watchers, config, update votes and install. Run with `python3 -I`; the docstring lists every command. |
-| `scripts/puppet.py` | Member commands: roster, whoami, memory list, the shared-record reads (`inbox`, `ledger`, `events`, `who`), and for the member's own lease `request`, `await-grant` and `release`. It cannot grant. Members run only this file. |
+| `scripts/puppet.py` | Member commands: roster, whoami, memory list, the shared-record reads (`inbox`, `ledger`, `events`, `who`), and for the member's own lease `request`, `await-grant`, `extend` and `release`. It cannot grant. Members run only this file. |
 | `scripts/moplib.py` | State code that both CLIs import. |
 | `scripts/server.py` | The one dashboard, on `http://localhost:4720/`, with the page shell `scripts/dashboard.html`: host meters, "Needs you" first, the work board, lease timelines and coordinators; a Wall mode for a shared screen. Live by SSE. Exits with "already serving" when one runs. |
 

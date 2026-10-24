@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Member ("puppet") commands for master-of-puppets. A member reads the roster and
-the skill's memory, queues its own lease request, waits for the grant and releases
-its own lease. Only a coordinator grants (coordinator.py acquire). A member never
+the skill's memory, queues its own lease request, waits for the grant, extends and
+releases its own lease. Only a coordinator grants (coordinator.py acquire). A member never
 writes the roster, ledger, dashboard or shared inbox; it messages its coordinator,
 which records everything with coordinator.py. Shared code is in moplib.py.
 
@@ -25,6 +25,13 @@ Usage: python3 -I puppet.py <command> ...
        prints GRANTED or NOT-GRANTED <reason>. Exit 0 granted (the only grant);
        3 left the queue without a grant; 5 timeout while still queued; 6 never queued
        within --appear-timeout (default 600 s)
+  extend CLASS --coordinator C --name NAME --id ID --minutes N --reason TEXT
+       extend your own granted lease: it expires N minutes from now. Writes one event line,
+         extension CLASS ID until T by=NAME coordinator=C reason="TEXT"
+       which your coordinator's watch inbox shows; no message is needed.
+       exit 0 extended, 2 the lease would run longer than the class limit (release it and
+       request the rest), 3 refused: not your lease, not held, or another entry waits in the
+       CLASS queue (ask your coordinator)
   release CLASS --id ID --result pass|fail|partial [--note TEXT] [--peak-gib N] [--port N ...] [--process PATTERN ...]
        release your own lease, never another's; records its run minutes and peak, then
        counts what the run left in the lease's worktree (agent session processes and bare
@@ -45,7 +52,7 @@ sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import (
     PEAKS, SAMPLES_KEPT, MINUTES_KEPT, load_machine, registry, class_names,
     load_project, save_project, now, lock, unlock, log,
-    load, save, load_roster, queue_entry, READS, add_read_commands, read_cmd, version_warning, drain,
+    load, save, load_roster, queue_entry, extend_lease, READS, add_read_commands, read_cmd, version_warning, drain,
 )
 
 
@@ -110,6 +117,39 @@ def await_grant(args):
             print(f"NOT-GRANTED {args.cls} {args.id}: timeout after {args.timeout_min:g} min; position {pos}; still queued, wait again")
             return 5
         time.sleep(args.interval)
+
+
+def extend(args):
+    """Extend the member's own granted lease. While another entry waits in the class
+    queue, the extra time is the coordinator's decision, so the member must ask."""
+    lock()
+    try:
+        roster, state, machine = load_roster(), load(), load_machine()
+        if not any(m["name"] == args.name for m in roster["members"].get(args.coordinator, [])):
+            print(f"{args.name} is not a member of {args.coordinator}; send JOIN first")
+            return 3
+        held = next((h for h in state[args.cls] if h["id"] == args.id), None)
+        if held is None:
+            print(f"{args.cls} not held by {args.id}; request a new lease")
+            return 3
+        # A transferred member keeps its old ID prefix, so match the name part and the holder's coordinator.
+        if f"-q-{args.name}-" not in args.id or held["coordinator"] != args.coordinator:
+            print(f"{args.id} is not yours; extend only a lease granted to you")
+            return 3
+        waiting = [q["id"] for q in state["queue"][args.cls] if not q.get("hold")]
+        if waiting:
+            print(f"{len(waiting)} {args.cls} entries wait ({', '.join(waiting[:3])}); ask {args.coordinator} for the time, or release")
+            return 3
+        code, text = extend_lease(held, args.cls, args.minutes)
+        if code:
+            print(text)
+            return code
+        save(state, machine)
+    finally:
+        unlock()
+    log(f"extension {args.cls} {args.id} until {text} by={args.name} coordinator={args.coordinator} reason={json.dumps(args.reason)}")
+    print(f"extended {args.cls} {args.id} until {text}")
+    return 0
 
 
 def release(args):
@@ -179,6 +219,13 @@ def main():
     ag.add_argument("--timeout-min", type=float, default=30)
     ag.add_argument("--appear-timeout", type=float, default=600, help="seconds the ID may take to be queued")
     ag.add_argument("--interval", type=float, default=10)
+    x = sub.add_parser("extend")
+    x.add_argument("cls", metavar="CLASS")
+    x.add_argument("--coordinator", required=True)
+    x.add_argument("--name", required=True, help="your member name")
+    x.add_argument("--id", required=True)
+    x.add_argument("--minutes", type=int, required=True, help="the lease expires this many minutes from now")
+    x.add_argument("--reason", required=True, help="one short line: what is still running")
     r = sub.add_parser("release")
     r.add_argument("cls", metavar="CLASS")
     r.add_argument("--id", required=True)
@@ -199,6 +246,8 @@ def main():
         return request(args)
     if args.cmd == "await-grant":
         return await_grant(args)
+    if args.cmd == "extend":
+        return extend(args)
     return release(args)
 
 

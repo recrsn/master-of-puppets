@@ -166,6 +166,19 @@ def over_limit(cls, key, minutes):
     return None
 
 
+def extend_lease(held, cls, minutes):
+    """Set held's expiry to minutes from now. The caller holds the lock, saves and logs.
+    Returns (exit, text): 0 with the new expiry, 2 when the lease would then run
+    longer than the class limit."""
+    expires = now() + dt.timedelta(minutes=minutes)
+    total = (expires - dt.datetime.fromisoformat(held["grantedAt"])).total_seconds() / 60
+    limit = length_limit(cls, held.get("project"))
+    if total > limit:
+        return 2, f"the lease would run {total:.0f} min, over the {limit}-min {cls} limit; release it and queue the rest"
+    held["expiresAt"] = expires.isoformat()
+    return 0, held["expiresAt"]
+
+
 # ---------------------------------------------------------------- state, ledger and roster
 
 
