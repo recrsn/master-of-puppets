@@ -137,7 +137,11 @@ details.more>summary::after{content:"Show " attr(data-more) " more"} details.mor
 .row.q .row-h{gap:10px;height:32px;padding:0 8px}
 .row.q .row-b{padding:0 8px 8px 30px;gap:4px;font-size:12px;line-height:16px}
 .row.q .acts{margin:4px 0 0 -8px;gap:4px}
-.q-pos{flex:none;width:12px;font-family:var(--font-cui-mono);font-size:12px;color:var(--text-color-cui-tertiary)}
+.q-pos{flex:none;display:inline-flex;align-items:center;justify-content:center;width:12px;font-family:var(--font-cui-mono);font-size:12px;color:var(--text-color-cui-tertiary)}
+.spin{display:inline-block;width:10px;height:10px;border:1.5px solid var(--border-color-cui-neutral-strong);border-top-color:var(--color-cui-secondary-9);border-radius:9999px;animation:spin .8s linear infinite}
+.wq .spin{width:14px;height:14px;border-width:2px}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation-duration:3s}}
 
 /* Wall */
 main.wall{flex-direction:column;gap:56px;padding:40px 48px}

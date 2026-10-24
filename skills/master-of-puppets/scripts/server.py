@@ -45,9 +45,10 @@ import urllib.request
 
 DIR = os.path.expanduser(os.environ.get("MACHINE_LEASE_DIR") or "~/.local/state/machine-leases")
 DEFAULT_REGISTRY = {
-    "BUILD": {"description": "builds, typecheck, lint/format, tests, codegen", "defaultGiB": 10, "defaultCpus": 4, "maxMinutes": 20, "settle": {}},
-    "E2E": {"description": "local servers/stacks and interacting with them", "defaultGiB": 8, "defaultCpus": 2, "maxMinutes": 45, "settle": {"BUILD": 60}},
+    "BUILD": {"description": "builds, typecheck, lint/format, tests, codegen", "defaultGiB": 0, "defaultCpus": 0, "maxMinutes": 0, "settle": {}},
+    "E2E": {"description": "local servers/stacks and interacting with them", "defaultGiB": 0, "defaultCpus": 0, "maxMinutes": 0, "settle": {"BUILD": 60}},
 }
+SPIN = '<span class="spin" role="img" aria-label="Running"></span>'  # queue-position slot of a running lease
 LIVE_MINUTES = 40
 FORCE_EVERY = 30
 HOST_EVERY = 5
@@ -268,7 +269,7 @@ def render_page(host):
         if q.get("minutes"):
             return q["minutes"]
         runs = sorted(((projects.get(q.get("project") or "") or {}).get("classes", {}).get(cls) or {}).get("runMinutes", []))
-        return runs[len(runs) // 2] if len(runs) >= 3 else registry[cls].get("maxMinutes", 20)
+        return runs[len(runs) // 2] if len(runs) >= 3 else (registry[cls].get("maxMinutes") or 20)  # 0: no limit; 20 min only for the ETA
 
     eta = {}
     for cls in classes:
@@ -632,14 +633,15 @@ def render_page(host):
                 end = parse(h["expiresAt"])
                 left = int((end - now).total_seconds() // 60)
                 dur, color = (("expired", "danger") if left < 0 else (f"{left}m left", "t2"))
-                out.append(("▸", h, dur, color, f'{fmt(h.get("gib"))} GiB · {fmt(h.get("cpus"))} cores · {eta_text(cls, h["id"])}', h.get("commands", ""), ""))
+                out.append((SPIN, h, dur, color, f'{fmt(h.get("gib"))} GiB · {fmt(h.get("cpus"))} cores · {eta_text(cls, h["id"])}', h.get("commands", ""), ""))
             pos = 0
             for q in queue.get(cls, []):
                 pos += 0 if q.get("hold") else 1
                 buttons = (qbutton("up", cls, q["id"], "Move up") if pos > 1 and not q.get("hold") else "") + qbutton("unwait", cls, q["id"], "Cancel")
                 prio = f"priority {q['priority']} · " if q.get("priority") else ""
-                out.append(("–" if q.get("hold") else str(pos), q, "hold" if q.get("hold") else f"{est_minutes(cls, q):g}m", "t3",
-                            f"{prio}{eta_text(cls, q['id'])}", "", buttons))
+                start = eta[cls][q["id"]][1]
+                dur = "hold" if q.get("hold") else f"~{local(start)} · {est_minutes(cls, q):g}m"
+                out.append(("–" if q.get("hold") else str(pos), q, dur, "t3", f"{prio}{eta_text(cls, q['id'])}", "", buttons))
             return out
 
         desk_lanes = wall_lanes = ""
@@ -652,7 +654,7 @@ def render_page(host):
             entries = lane_entries(cls)
             rows = "".join(
                 f'<details class="row q" id="{dom_id("q", cls, h["id"])}"><summary class="row-h"><span class="q-pos">{pos}</span>'
-                f'<span class="row-t {"t1" if pos == "▸" else "t2"}">{e(h.get("holder", ""))}</span>'
+                f'<span class="row-t {"t1" if pos == SPIN else "t2"}">{e(h.get("holder", ""))}</span>'
                 f'<span class="row-ago {dcolor}">{e(dur)}</span></summary><div class="row-b">'
                 + meta_line(h.get("coordinator", ""), detail)
                 + (f'<span class="mono sm t2 wrap">{e(commands)}</span>' if commands else "")

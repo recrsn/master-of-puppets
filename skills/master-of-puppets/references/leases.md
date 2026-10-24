@@ -13,9 +13,15 @@ Classes are a machine-wide registry; any shared action can be one. The
 default registry has two:
 
 - **BUILD**: builds (including setup scripts that build), typecheck, lint,
-  format runs, tests and codegen. 10 GiB, 4 cores, 20 min.
-- **E2E**: starting local servers or stacks, and interacting with them. 8 GiB,
-  2 cores, 45 min; settles BUILD for 60 s.
+  format runs, tests and codegen.
+- **E2E**: starting local servers or stacks, and interacting with them;
+  settles BUILD for 60 s.
+
+Default GiB, cores and max minutes start at 0, which means no limit: a 0 GiB
+or 0 core figure uses none of that budget, and `maxMinutes` 0 sets no maximum
+length. A value that the setup, a `set-class` or a vote has stored is
+enforced. Coordinators set values from their observations by vote ("Class
+defaults by vote", below).
 
 Add or change one with
 `coordinator.py config set-class <NAME> --by <slug> --description "..." --default-gib <n> --default-cpus <n> --max-minutes <n> [--settle OTHER=<s>]`,
@@ -37,7 +43,8 @@ and include them in WELCOME.
 browser-only work against remote sites, unless a class or a project rule
 covers it.
 
-Maximum length: `maxMinutes` per class from `coordinator.py config show`. Learned
+Maximum length: `maxMinutes` per class from `coordinator.py config show` (0: no
+limit). Learned
 run times never lower it: a run cannot outlast the limit, so a limit learned
 from runs could only shrink. Every release records the run minutes; queue ETAs
 use the median run, and in learn mode `suggestedMinutes` (p90 of the last 10
@@ -73,6 +80,28 @@ whether to grant it, from rules and its own observations.
 - Minutes are not checked against observations: a short lease only costs its
   own holder an extension or a new request.
 
+## Class defaults by vote
+
+Coordinators observe and vote on each class's default GiB, cores and max
+minutes. Observe with `coordinator.py sizes --worktree <path>`, `capacity` and
+the release lines in `events`. When the observations support a value
+(for example BUILD runs peak at 4 cores, or never run past 15 min):
+
+```bash
+coordinator.py config propose BUILD --by <slug> [--project-root <path>] [--default-gib <n>] [--default-cpus <n>] [--max-minutes <n>] --reason "<your observations>"
+```
+
+Without `--project-root` it sets the machine class; with it, that project's
+class, which wins over the machine class. Every live peer gets `CLASS
+DEFAULTS PROPOSED <id> ...` in `watch inbox`. Check your own observations of
+that class, then `config agree --by <slug> --id <id>`, or `config object --by
+<slug> --id <id> --text "<what you observed>"`. The proposal applies when every
+live coordinator agrees; one objection closes it, and the proposer may propose
+again with new observations. The applying command records the change and
+sends CONFIG to every live coordinator and member. `config proposals` lists
+open proposals and who has not agreed. Use 0 to remove a limit. The user's
+word still goes through `set-class` and `set-project` directly.
+
 ## Adaptive capacity
 
 There is no fixed slot count. `coordinator.py acquire` admits a grant when the expected peaks
@@ -85,9 +114,8 @@ sum(held cores) + request cores <= CPU cores - reserveCpus
 
 - A request's GiB and cores are the member's figures (`request|wait|acquire
   ... --gib <n> --cpus <n>`). A figure it leaves out takes the project's class
-  peak. Learn mode: the starting value (defaults BUILD 10 GiB and 4 cores, E2E
-  8 GiB and 2 cores) until three measurements exist, then the maximum of the
-  last five. Fixed mode: the starting value. Pass `--worktree` to `wait` so
+  peak. Learn mode: the starting value (default 0) is a floor until three
+  measurements exist, then the maximum of the last five. Fixed mode: the starting value. Pass `--worktree` to `wait` so
   the right project's peak applies.
 - A request over a whole budget can never fit: `request` and `wait` refuse it
   with exit 2. Split it.
@@ -110,7 +138,8 @@ sum(held cores) + request cores <= CPU cores - reserveCpus
 
 Example: on a 24 GiB, 10-core machine with a 6 GiB and 2-core reserve, a
 10 GiB, 4-core build and an 8 GiB, 2-core stack fill the 18 GiB budget, so
-the result is one of each. A 64 GiB machine admits more without a change.
+the result is one of each. A 64 GiB machine admits more without a change. With
+the 0 defaults and no samples, only the figures members ask for are charged.
 
 The budgets predict; the host check observes. Both must pass, and
 `acquire` checks both itself.
