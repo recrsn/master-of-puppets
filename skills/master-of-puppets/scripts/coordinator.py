@@ -127,7 +127,7 @@ show who, why and each changed key with its old and new value)
        coordinators decide these without the user. A proposal applies when every live
        coordinator agrees, or 30 min after it was made with no objection (a live coordinator
        that has not voted agrees); the event and ledger record it, and every live coordinator
-       and member gets CONFIG. One objection closes it. proposals lists open proposals and
+       gets CONFIG. One objection closes it. proposals lists open proposals and
        applies those that are due; run it each heartbeat round
        project: --name --base-branch --merge-method merge|squash|rebase|auto --leases-default
                 [--class CLASS --max-minutes N --minutes learn|fixed --peak learn|fixed --default-gib N
@@ -317,13 +317,15 @@ def announce(by, message, members=False):
 
 
 def record_config(by, reason, what, old, new):
-    """One event and one ledger line per config change: who, why and the changed keys."""
+    """One event and one ledger line per config change: who, why and the changed keys. The
+    CONFIG message goes to live coordinators only: machine-wide config is theirs, and they
+    give members task-specific direction."""
     diff = changes(old, new)
     log(f"config {what} by={by}{reason_field(reason)} changes={json.dumps(diff, separators=(',', ':'))}")
     note(by, f"config {what}: " + ("; ".join(f"{k} {json.dumps(a)} -> {json.dumps(b)}" for k, (a, b) in diff.items()) or "no change")
          + (f" (reason: {reason})" if reason else ""))
     announce(by, f"CONFIG {what} by {by}: " + ("; ".join(f"{k} {json.dumps(a)} -> {json.dumps(b)}" for k, (a, b) in diff.items()) or "no change")
-             + (f" (reason: {reason})" if reason else ""), members=True)
+             + (f" (reason: {reason})" if reason else ""))
 
 
 PROPOSALS = os.path.join(DIR, "class-proposals.json")
@@ -363,7 +365,7 @@ def settle_proposal(p, roster, by):
     what = f"class {p['class']}" + (f" project {p['project']}" if p["project"] else "")
     how = f"vote {p['id']}" + (f", silent after {VOTE_WINDOW_MINUTES} min: {', '.join(waiting)}" if waiting else "")
     record_config(by, f"{how}: {p['reason']}", what, before, after)
-    announce(by, f"CONFIG {what} defaults {json.dumps(p['values'])} applied by {how}", members=True)
+    announce(by, f"CONFIG {what} defaults {json.dumps(p['values'])} applied by {how}")
     return []
 
 

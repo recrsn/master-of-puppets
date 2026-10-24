@@ -344,12 +344,14 @@ BUILD lease", "this repo merges through a merge queue".
   swap and load thresholds are config numbers that `coordinator.py` enforces:
   set them with `coordinator.py config set-machine|set-class|set-project --by <slug> --reason "<the user's words>"`
   (`references/setup.md`). The command sends each old and new value to every
-  live coordinator and member itself; do not relay it.
+  live coordinator itself, not to members. Machine-wide config is for
+  coordinators: do not relay it; tell a member only what changes for its
+  task.
 - The user can also edit config and rules on the dashboard's Config and Rules
   pages (`references/dashboard.md`). Each save runs the same command as
-  `--by user`. Every live coordinator and member gets
-  `CONFIG <what> by user: ...`, or a `MEMORY <scope> <id> ...` message that
-  names `by user`.
+  `--by user`. Every live coordinator gets `CONFIG <what> by user: ...`;
+  every live coordinator and member gets a `MEMORY <scope> <id> ...` message
+  that names `by user`.
 - A change `by user` is the user's own decision, and it is already approved.
   Approve it automatically:
   - Apply it from your next step. Do not ask the user to confirm it, do not
