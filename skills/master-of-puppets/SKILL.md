@@ -301,17 +301,20 @@ active.
    Send it only this once; never repeat it. Wait until your next heartbeat
    round. A HANDOFF reply: take the work (`references/handoff.md`, step 3) and stay active. No handoff:
    go idle. A scoped coordinator sends no work request.
-2. **Go idle**: `coordinator.py heartbeat --name <slug> --status idle` (refused while
+2. **Go idle (sleep)**: `coordinator.py heartbeat --name <slug> --status idle` (refused while
    a member is active or pending; it lists parked PRs and members). Then stop
    your heartbeat schedule and watchers, and tell the user once: "<slug> is
    idle" and what is parked, waiting for the user. The dashboard shows you as
-   idle. Nobody flags an idle coordinator as
-   stale or without updates, and peers do not chase it.
-3. **New work later** comes only from the user (new work, or resuming parked
-   work), or from a HANDOFF in reply to your one request.
-   `coordinator.py heartbeat --name <slug> --status active` (an `enroll`, a
-   `member add` or `member update --status active` also does it), then re-arm
-   the watchers and the heartbeat schedule ("Coordinator start", steps 4 and 5).
+   idle. A sleeping coordinator stays live however old its heartbeat is: it
+   keeps its name and PRs, and nobody flags it as stale or chases it. Peer
+   broadcasts, WORK REQUESTs and update votes skip it; a message sent to it
+   by name still arrives and wakes the session.
+3. **Wake**: new work comes only from the user (new work, or resuming parked
+   work), or from a HANDOFF in reply to your one request. These wake you
+   without a status flag: `enroll`, `child`, `member add`, `member update --status active`
+   and `unpark` (also from the dashboard) set you active and refresh your
+   heartbeat. Otherwise run `coordinator.py heartbeat --name <slug> --status active`.
+   Then re-arm the watchers and the heartbeat schedule ("Coordinator start", steps 4 and 5).
 
 **A WORK REQUEST from a peer**: reply only when you have work to hand off: a
 stream without enough members, a task not yet started, or a PR without an

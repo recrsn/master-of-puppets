@@ -290,9 +290,17 @@ def save_roster(roster):
     os.replace(tmp, ROSTER)
 
 
+def asleep(coord):
+    return bool(coord) and coord.get("status") == "idle"
+
+
 def live(coord):
+    """A sleeping (idle) coordinator stays live: it has no heartbeat schedule, but its
+    session still takes messages and wakes on new work, so it keeps its PRs and name."""
     if not coord:
         return False
+    if asleep(coord):
+        return True
     age = now() - dt.datetime.fromisoformat(coord["heartbeat"])
     return age < dt.timedelta(minutes=LIVE_MINUTES)
 
