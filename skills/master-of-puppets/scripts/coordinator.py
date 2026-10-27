@@ -90,7 +90,11 @@ Leases
   admission hold CLASS --by C --reason TEXT | admission clear CLASS --by C [--reason TEXT]
        no grant of CLASS while a hold is set (acquire exits 3 with its reason), for example
        while a failed run's cleanup is uncertain; status --brief and the dashboard show it
-  unwait | hold | ready CLASS --id ID
+  unwait | ready CLASS --id ID    ready clears hold and review
+  hold CLASS --id ID [--reason T] [--review]
+       hold: the entry leaves the ready queue; the member sees HELD <reason>.
+       --review: it keeps its place, but `watch auto` never grants it; only your acquire does.
+  deny CLASS --id ID --by C --reason T   remove the entry; the member sees DENIED <reason>
   up CLASS --id ID                move a ready entry ahead of the ready entry in front of it
   move CLASS --id ID --to N       move a ready entry to position N among ready entries
        up and move set the entry's priority between its new neighbours' when it is
@@ -118,7 +122,11 @@ show who, why and each changed key with its old and new value)
                 --max-swapouts --swap-interval-s --load-per-core --dashboard-port
                 --max-slots CLASS=N (N=0 removes the cap)
   config set-class NAME [--description T] [--default-gib N] [--default-cpus N] [--max-minutes N]
-                [--settle OTHER=S ...]
+                [--settle OTHER=S ...] [--auto-acquire on|off]
+       stream update ... --auto-acquire on|off   same for one stream's members
+  watch auto --me C     run in the background: acquire C's head entry of each auto class or
+       stream when it has minutes and a worktree. Prints AUTO-GRANTED or AUTO-REFUSED. Exit 2
+       and 6 refusals are left to C (split the run, or acquire --accept-size).
   config remove-class NAME        refused while the class has holders or queue entries
   config propose CLASS --by C --reason TEXT [--project-root P] [--default-gib N] [--default-cpus N]
                 [--max-minutes N]
@@ -266,8 +274,10 @@ heartbeat exit 3 when a PR is owned by another live coordinator; enroll and memb
 exit 3 when the coordinator is not live.
 """
 import argparse
+import contextlib
 import datetime as dt
 import hashlib
+import io
 import json
 import re
 import shutil
@@ -488,6 +498,8 @@ def config_cmd(args):
                                 ("max_minutes", "maxMinutes")):
                 if getattr(args, flag) is not None:
                     c[field] = getattr(args, flag)
+            if args.auto_acquire is not None:
+                c["autoAcquire"] = args.auto_acquire == "on"
             for item in args.settle or []:
                 other, _, secs = item.partition("=")
                 if not secs.isdigit():
@@ -996,6 +1008,8 @@ def stream_cmd(args, roster):
                 cur[flag] = getattr(args, flag)
         if args.pr is not None:
             cur["prs"] = args.pr
+        if args.auto_acquire is not None:
+            cur["autoAcquire"] = args.auto_acquire == "on"
         if args.owner and args.owner != args.coordinator:
             cur["coordinator"] = args.owner
             note(args.coordinator, f"stream {args.name} handed to {args.owner}")
@@ -1723,6 +1737,55 @@ def own_heads(me):
     return heads
 
 
+def auto_entry(entry, machine, roster, cls):
+    """True when entry's class or its member's stream has autoAcquire on."""
+    if registry(machine)[cls].get("autoAcquire"):
+        return True
+    name = entry["holder"].partition(" ")[0]
+    m = next((x for x in roster["members"].get(entry["coordinator"], []) if x["name"] == name), None)
+    return bool(m and (roster["streams"].get(m.get("stream")) or {}).get("autoAcquire"))
+
+
+def watch_auto(me):
+    """Grant my head entries by running acquire, for classes or streams with autoAcquire on.
+    Prints AUTO-GRANTED or AUTO-REFUSED when an entry's outcome changes. Exit 2 (over the
+    limit) and 6 (undersized) wait for the coordinator: this loop never splits a run or
+    accepts a size. Other refusals retry on the next pass."""
+    seen = {}
+    while True:
+        machine, roster = load_machine(), load_roster()
+        heads = own_heads(me)
+        for c, q in heads.items():
+            if not auto_entry(q, machine, roster, c):
+                continue
+            key = (q["id"], q.get("minutes"), q.get("gib"), q.get("cpus"))
+            if q.get("review"):
+                if seen.get(c) != (key, "review"):
+                    print(f"AUTO-SKIPPED {c} {q['id']}: marked for review; grant it with acquire", flush=True)
+                    seen[c] = (key, "review")
+                continue
+            if seen.get(c, (None,))[0] == key and seen[c][1] in (2, 6):
+                continue
+            if not q.get("minutes") or not q.get("worktree"):
+                if seen.get(c) != (key, "incomplete"):
+                    print(f"AUTO-REFUSED {c} {q['id']}: entry needs minutes and worktree; set them with wait, then acquire", flush=True)
+                    seen[c] = (key, "incomplete")
+                continue
+            ns = argparse.Namespace(cls=c, coordinator=me, holder=q["holder"], id=q["id"], worktree=q["worktree"],
+                                    minutes=q["minutes"], gib=q.get("gib"), cpus=q.get("cpus"), accept_size=False,
+                                    commands=q.get("commands"), measure=True)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = acquire_cmd(ns)
+            if code == 0:
+                print(f"AUTO-GRANTED {c} {q['id']}", flush=True)
+                seen.pop(c, None)
+            elif seen.get(c) != (key, code):
+                print(f"AUTO-REFUSED {c} {q['id']} exit {code}: {buf.getvalue().strip()[:300]}", flush=True)
+                seen[c] = (key, code)
+        time.sleep(2)
+
+
 def watch_inbox(me):
     """Messages to me or to all (inbox.jsonl only; it never reads events.log), and:
     HEAD when an entry of mine becomes the first ready entry of its class (acquire it),
@@ -1854,6 +1917,8 @@ def watch_cmd(args):
             watch_expiry()
         elif args.what == "cloud":
             watch_cloud(args.me, args.interval)
+        elif args.what == "auto":
+            watch_auto(args.me)
         else:
             watch_prs(args.me, args.interval)
     except KeyboardInterrupt:
@@ -2012,6 +2077,15 @@ def main():
         h = sub.add_parser(name)
         h.add_argument("cls", metavar="CLASS")
         h.add_argument("--id", required=True)
+        if name == "hold":
+            h.add_argument("--reason", help="shown to the member as HELD <reason>")
+            h.add_argument("--review", action="store_true",
+                           help="keep the queue place but never auto-acquire this entry; only you grant it")
+    dn = sub.add_parser("deny")
+    dn.add_argument("cls", metavar="CLASS")
+    dn.add_argument("--id", required=True)
+    dn.add_argument("--by", required=True)
+    dn.add_argument("--reason", required=True, help="shown to the member as DENIED <reason>")
     adm = sub.add_parser("admission")
     asub = adm.add_subparsers(dest="acmd", required=True)
     ah = asub.add_parser("hold")
@@ -2066,6 +2140,7 @@ def main():
     sc.add_argument("--default-cpus", type=float, help="expected peak cores; 0 = not CPU-bound")
     sc.add_argument("--max-minutes", type=int)
     sc.add_argument("--settle", action="append", help="OTHER=SECONDS: after a grant of this class, OTHER waits (0 removes)")
+    sc.add_argument("--auto-acquire", choices=("on", "off"), help="on: `watch auto` grants this class's head entry when every gate passes")
     rc = csub.add_parser("remove-class")
     rc.add_argument("--by", required=True)
     rc.add_argument("--reason", help="why, for example the user's words")
@@ -2198,6 +2273,7 @@ def main():
             sx.add_argument("--pr", type=int, nargs="+", action="extend", help="PR numbers, several allowed (--pr 1 2 or --pr 1 --pr 2); replaces the PR list")
         if name == "update":
             sx.add_argument("--owner", help="hand the stream to this live coordinator")
+            sx.add_argument("--auto-acquire", choices=("on", "off"), help="on: `watch auto` grants lease requests of this stream's members")
     sl = ssub.add_parser("list")
     sl.add_argument("--coordinator")
     sub.add_parser("host-check")
@@ -2213,7 +2289,7 @@ def main():
     dr.add_argument("--port", type=int, action="append", help="also check for listeners on this port")
     dr.add_argument("--process", action="append", help="also count processes matching this pattern (pgrep -f)")
     wa = sub.add_parser("watch")
-    wa.add_argument("what", choices=("inbox", "expiry", "prs", "cloud"))
+    wa.add_argument("what", choices=("inbox", "expiry", "prs", "cloud", "auto"))
     wa.add_argument("--me", help="coordinator name (inbox, prs, cloud)")
     wa.add_argument("--interval", type=int, default=180, help="seconds between PR or cloud task polls")
     ins = sub.add_parser("install")
@@ -2254,7 +2330,7 @@ def main():
                 "drain-check": drain_check_cmd, "watch": watch_cmd, "install": install_cmd, "prs": prs_cmd}
     if args.cmd in unlocked:
         if args.cmd == "watch" and args.what != "expiry" and not args.me:
-            p.error("watch inbox|prs|cloud needs --me <coordinator>")
+            p.error("watch inbox|prs|cloud|auto needs --me <coordinator>")
         return unlocked[args.cmd](args)
     if args.cmd == "decision":
         return decision_cmd(args)
@@ -2310,11 +2386,33 @@ def main():
         if args.cmd == "admission":
             return admission_cmd(args, state, machine)
         if args.cmd in ("hold", "ready"):
-            for q in queue:
-                if q["id"] == args.id:
-                    q["hold"] = args.cmd == "hold"
+            entry = next((q for q in queue if q["id"] == args.id), None)
+            if not entry:
+                print(f"{args.id} is not queued for {args.cls}")
+                return 3
+            for key in ("hold", "review", "reason"):
+                entry.pop(key, None)
+            if args.cmd == "hold":
+                entry["review" if args.review else "hold"] = True
+                if args.reason:
+                    entry["reason"] = args.reason
             save(state, machine)
-            log(f"{args.cmd} {args.cls} {args.id}")
+            log(f"{args.cmd}{' review' if args.cmd == 'hold' and args.review else ''} {args.cls} {args.id}"
+                + (f" reason={json.dumps(args.reason)}" if args.cmd == 'hold' and args.reason else ""))
+            return 0
+        if args.cmd == "deny":
+            entry = next((q for q in queue if q["id"] == args.id), None)
+            if not entry:
+                print(f"{args.id} is not queued for {args.cls}")
+                return 3
+            queue.remove(entry)
+            denied = state.setdefault("denied", {})
+            denied[args.id] = {"class": args.cls, "reason": args.reason, "by": args.by, "at": now().isoformat()}
+            for old in sorted(denied, key=lambda k: denied[k]["at"])[:-50]:
+                del denied[old]
+            save(state, machine)
+            log(f"deny {args.cls} {args.id} by={args.by} reason={json.dumps(args.reason)}")
+            print(f"denied {args.id}")
             return 0
     finally:
         unlock()

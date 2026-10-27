@@ -363,6 +363,7 @@ def queue_entry(state, roster, cls, id, coordinator=None, holder=None, minutes=N
             existing["commands"] = commands
         if worktree:
             existing["project"] = project_key(worktree)[0]
+            existing["worktree"] = worktree
         if priority is not None and priority != existing.get("priority", 0):
             existing["priority"] = priority
             log(f"priority {cls} {id} {priority}" + (f" by={changed_by}" if changed_by else ""))
@@ -389,6 +390,7 @@ def queue_entry(state, roster, cls, id, coordinator=None, holder=None, minutes=N
             entry["commands"] = commands
         if worktree:
             entry["project"] = project_key(worktree)[0]
+            entry["worktree"] = worktree
         if front:
             entry["priority"] = max([priority] + [q.get("priority", 0) for q in queue])
             queue.insert(0, entry)
