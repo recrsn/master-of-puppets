@@ -82,6 +82,45 @@ whether to grant it, from rules and its own observations.
 - Minutes are not checked against observations: a short lease only costs its
   own holder an extension or a new request.
 
+## Auto acquire
+
+A coordinator may let code grant requests that need no judgment. It is off by
+default. Turn it on for a class or for one stream's members:
+
+```bash
+coordinator.py config set-class BUILD --by <slug> --auto-acquire on
+coordinator.py stream update --coordinator <slug> --name <stream> --auto-acquire on
+```
+
+Then run `coordinator.py watch auto --me <slug>` in the background. When your
+entry is the head of its queue, it runs `acquire` with the entry's own
+figures. Every normal gate applies: queue order, slot cap, settle, host check
+and both budgets. A gate that passes later (exit 3, 4, 5) is retried every
+2 s. `AUTO-GRANTED` or `AUTO-REFUSED` lines report the outcome.
+
+A deviation always waits for you. The loop never splits a run and never
+accepts a size:
+
+- exit 2, the run is over a limit: ask the member to split it;
+- exit 6, the GiB figure is below the observed peak: decide on the member's
+  LEASE SIZE reason, then `acquire --accept-size` yourself;
+- an entry without minutes or worktree.
+
+A member's request ends in one of three outcomes: `GRANTED`, `HELD <reason>`
+(wait for the coordinator) or `DENIED <reason>`.
+
+- `coordinator.py hold CLASS --id ID --reason T`: leaves the ready queue.
+- `coordinator.py hold CLASS --id ID --review [--reason T]`: keeps its place,
+  but `watch auto` never grants it; only your `acquire` does. This holds even
+  when the class or stream is on auto. It applies to the first grant only.
+- `coordinator.py ready CLASS --id ID`: clears a hold or review.
+- `coordinator.py deny CLASS --id ID --by <slug> --reason T`: removes the entry
+  and the member sees `DENIED <reason>` (exit 4).
+
+Auto acquire grants only your own entries, and only the first grant. An
+extension is never auto-approved: the member asks, and only the coordinator
+runs `extend`. Takeovers stay manual too.
+
 ## Class defaults by vote
 
 Class defaults are the coordinators' job, never the user's: do not ask the

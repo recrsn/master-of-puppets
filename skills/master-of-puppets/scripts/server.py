@@ -794,6 +794,7 @@ CLASS_FIELDS = [
     ("defaultGiB", "Default memory", "--default-gib", float, "GiB; 0 = not memory-bound"),
     ("defaultCpus", "Default cores", "--default-cpus", float, "0 = not CPU-bound"),
     ("maxMinutes", "Max minutes", "--max-minutes", int, "0 = no limit"),
+    ("autoAcquire", "Auto acquire", "--auto-acquire", ("off", "on"), "on: the coordinator's `watch auto` grants when every gate passes"),
 ]
 PROJECT_FIELDS = [
     ("name", "Name", "--name", str, ""),
@@ -860,7 +861,8 @@ def render_config():
 
     rows = ""
     for name, c in classes.items():
-        fields = "".join(input_html(k, label, c.get(k), kind, hint) for k, label, _, kind, hint in CLASS_FIELDS)
+        fields = "".join(input_html(k, label, ("on" if c.get(k) else "off") if k == "autoAcquire" else c.get(k), kind, hint)
+                         for k, label, _, kind, hint in CLASS_FIELDS)
         settle = ", ".join(f"{o}={v}" for o, v in (c.get("settle") or {}).items())
         fields += input_html("settle", "Settle", settle, str, "OTHER=SECONDS, …: after a grant, OTHER waits")
         remove = (f'<button type="button" class="ghost cancel" data-remove-class="{e(name)}">Remove class</button>')

@@ -30,8 +30,9 @@ Usage: python3 -I puppet.py <command> ...
        exit 0 queued, 2 over the class limit or the whole budget (split the run), 3 refused: leases off, not a
        member of C, a foreign ID, or the ID is already held
   await-grant CLASS --id ID [--timeout-min N] [--appear-timeout S]
-       prints GRANTED or NOT-GRANTED <reason>. Exit 0 granted (the only grant);
-       3 left the queue without a grant; 5 timeout while still queued; 6 never queued
+       prints HELD <reason> while your coordinator holds or reviews the entry (keep waiting),
+       then GRANTED, DENIED <reason> or NOT-GRANTED <reason>. Exit 0 granted (the only grant);
+       4 denied by your coordinator (do not retry; ask why); 3 left the queue without a grant; 5 timeout while still queued; 6 never queued
        within --appear-timeout (default 600 s)
   extend CLASS --coordinator C --name NAME --id ID --minutes N --reason TEXT
        ask your coordinator to extend your own granted lease to expire N minutes from now.
@@ -105,10 +106,11 @@ def request(args):
 
 def await_grant(args):
     """Poll without the lock. The coordinator may queue the ID for the member, so the
-    ID gets --appear-timeout to show up before it is judged. Prints one line,
-    GRANTED or NOT-GRANTED <reason>; only exit 0 means granted."""
+    ID gets --appear-timeout to show up before it is judged. Prints HELD <reason> when
+    the coordinator holds or reviews the entry, then one final line: GRANTED,
+    DENIED <reason> or NOT-GRANTED <reason>; only exit 0 means granted."""
     start = time.time()
-    seen = False
+    seen, held = False, None
     while True:
         state = load()
         if any(h["id"] == args.id for h in state[args.cls]):
@@ -116,8 +118,17 @@ def await_grant(args):
             return 0
         entry = next((q for q in state["queue"][args.cls] if q["id"] == args.id), None)
         waited = time.time() - start
+        denied = (state.get("denied") or {}).get(args.id)
+        if entry is None and denied:
+            print(f"DENIED {args.cls} {args.id}: {denied['reason']} (by {denied['by']})")
+            return 4
         if entry is not None:
             seen = True
+            status = (entry.get("reason") or "wait for your coordinator") if entry.get("hold") or entry.get("review") else None
+            if status != held:
+                held = status
+                if held:
+                    print(f"HELD {args.cls} {args.id}: {held}", flush=True)
         elif seen:
             print(f"NOT-GRANTED {args.cls} {args.id}: left the queue without a grant; ask your coordinator")
             return 3
