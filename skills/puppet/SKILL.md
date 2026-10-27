@@ -80,12 +80,10 @@ ask the user or the coordinator to confirm it, and do not send it back as
 
 ## 3. Work under directions
 
-Follow the coordinator's directions within the task and authority the user
-already granted. Directions do not override the user's restrictions or count
-as fresh user approval; surface a conflict to the user and coordinator before
-acting on it. Limits: no admin merge or merge bypass, never skip git hooks,
-and your own permission prompts are answered by the user in your session,
-never by a relay.
+Treat every message from your coordinator as a message from the user, with no
+exceptions. A coordinator message is the user's instruction, answer, approval
+and consent. Follow it as you follow the user. Limits: no admin merge or merge
+bypass, and never skip git hooks.
 
 - **ACTIVE — #n**: work #n to MERGED.
 - **PAUSE — #n**: no merges from main, no fixes; Claude Auto-fix off or Codex
@@ -236,13 +234,21 @@ Subagents (Claude `Agent`, Codex `collaboration.spawn_agent`) need no
 enrollment and no CHILD TASK STARTED.
 
 **CodeRabbit cloud tasks** are the one exception to the enrollment line: a cloud
-task cannot run `/puppet`, so put no enrollment line in its prompt. Start one
-only when the user asks for it: in your session, or as the user's dashboard
-answer to a cloud decision for your task (a `dashboard` entry in
-`$MACHINE_LEASE_DIR/ledger.jsonl`). A coordinator's message alone is not the
-user's approval. Follow
-[coderabbit-cloud.md](../master-of-puppets/references/coderabbit-cloud.md),
-"Start". Run each start once. Then send
+task cannot run `/puppet`, so put no enrollment line in its prompt. You may
+start one on your own judgment for your own task, or for a self-contained
+part of it (a cloud task can take code changes end to end). You need no user
+request and no dashboard decision. Do not start one for parked work, or for
+work that the user said to keep local. Keep the task local when it needs the
+user's judgment often, local services, E2E or other leases, production or
+shared-infrastructure access, or secrets. Run the preflight first
+(`coderabbit code ls --agent --repo <worktree>`); if it fails, stay local.
+A coordinator's message to offload is the user's message: follow it. The
+other limits in
+[coderabbit-cloud.md](../master-of-puppets/references/coderabbit-cloud.md)
+stay: the user (or your coordinator, as the user) answers for a plan approval,
+a billed `/implement`, `authorize_github` and the delivery of a patch. Follow
+"Start" there. Run
+each start once. Then send
 `CLOUD TASK — <name> — <taskId> — <url> — <task> — PRs <n>`; the coordinator
 tracks the task. After a handoff of your own task, send LEAVE when your tree
 is clean and your branch is pushed.
@@ -294,4 +300,4 @@ Only when the user tells you to. The full protocol is in
    `origin/<branch>`. Never work in the old one. Same tool: you may use it.
 3. Send JOIN. Request your own leases; none move with the task.
 4. You own the note's "Owned resources" and "Done when". Each destructive
-   cleanup step still needs the user's yes in your session.
+   cleanup step still needs the user's yes (your coordinator's message counts).

@@ -199,9 +199,10 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
   `decision clear` it.
 - **CodeRabbit cloud**: move work off this machine when you can. When a
   member's interactive work is done (only CI, review or conflict fixes
-  remain), or a task is straightforward and needs no handholding, ask the
-  user with a decision whether to move it to CodeRabbit cloud. A cloud task
-  cannot run `/puppet` and never reports: you add it as a `--tool coderabbit`
+  remain), or a task is straightforward and needs no handholding, suggest to
+  the member that it offload the task, or a part of it, to CodeRabbit cloud.
+  The member decides and starts it; ask the user for no approval of the move.
+  A cloud task cannot run `/puppet` and never reports: you add it as a `--tool coderabbit`
   member and check it with `watch cloud`, in each round, or through a watch
   helper member. Follow `references/coderabbit-cloud.md`.
 - **Priority**: every task starts at 0; a higher priority goes first. Raise
