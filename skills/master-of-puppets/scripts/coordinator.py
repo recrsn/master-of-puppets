@@ -1512,6 +1512,12 @@ def acquire_cmd(args):
             return refused[0]
         queue, holders = state["queue"][args.cls], state[args.cls]
         entry = next((q for q in queue if q["id"] == args.id), {})
+        expect = getattr(args, "auto_expect", None)
+        if expect and (entry_tuple(entry) != expect or entry.get("hold") or entry.get("review")
+                       or not auto_entry(entry, machine, load_roster(), args.cls)):
+            print(json.dumps({"auto_stale": args.id}))
+            log(f"refuse {args.cls} {args.coordinator} {args.id} auto grant: entry changed, held, reviewed or auto is off")
+            return 7
         key = entry.get("project") or project_key(args.worktree)[0]
         asked_gib, asked_cpus = args.gib or entry.get("gib"), args.cpus or entry.get("cpus")
         why = None if args.accept_size else undersized(args.cls, key, asked_gib, machine["sizeMargin"])
@@ -1737,6 +1743,11 @@ def own_heads(me):
     return heads
 
 
+def entry_tuple(entry):
+    """The fields an automatic grant is made from; it is granted only if they are unchanged."""
+    return tuple(entry.get(k) for k in ("id", "coordinator", "holder", "minutes", "gib", "cpus", "commands", "worktree"))
+
+
 def auto_entry(entry, machine, roster, cls):
     """True when entry's class or its member's stream has autoAcquire on."""
     if registry(machine)[cls].get("autoAcquire"):
@@ -1750,7 +1761,9 @@ def watch_auto(me):
     """Grant my head entries by running acquire, for classes or streams with autoAcquire on.
     Prints AUTO-GRANTED or AUTO-REFUSED when an entry's outcome changes. Exit 2 (over the
     limit) and 6 (undersized) wait for the coordinator: this loop never splits a run or
-    accepts a size. Other refusals retry on the next pass."""
+    accepts a size. Exit 7 means the entry changed during the host check; the final check
+    under the lock revalidates the entry, its hold and review state and the auto opt-in.
+    Other refusals retry on the next pass."""
     seen = {}
     while True:
         machine, roster = load_machine(), load_roster()
@@ -1773,7 +1786,7 @@ def watch_auto(me):
                 continue
             ns = argparse.Namespace(cls=c, coordinator=me, holder=q["holder"], id=q["id"], worktree=q["worktree"],
                                     minutes=q["minutes"], gib=q.get("gib"), cpus=q.get("cpus"), accept_size=False,
-                                    commands=q.get("commands"), measure=True)
+                                    commands=q.get("commands"), measure=True, auto_expect=entry_tuple(q))
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 code = acquire_cmd(ns)
@@ -2401,6 +2414,9 @@ def main():
                 + (f" reason={json.dumps(args.reason)}" if args.cmd == 'hold' and args.reason else ""))
             return 0
         if args.cmd == "deny":
+            if args.by not in roster["coordinators"]:
+                print(f"--by must be a registered coordinator, got {args.by}")
+                return 2
             entry = next((q for q in queue if q["id"] == args.id), None)
             if not entry:
                 print(f"{args.id} is not queued for {args.cls}")

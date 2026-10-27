@@ -98,6 +98,13 @@ figures. Every normal gate applies: queue order, slot cap, settle, host check
 and both budgets. A gate that passes later (exit 3, 4, 5) is retried every
 2 s. `AUTO-GRANTED` or `AUTO-REFUSED` lines report the outcome.
 
+The loop grants from a snapshot, so `acquire` revalidates under its final lock
+(after the host check): the entry must exist with the same id, holder,
+minutes, GiB, cores, commands and worktree, must not be held or reviewed, and
+its class or stream must still be on auto. If not, it refuses with exit 7 and
+grants nothing. Your own `acquire` has no such check and may grant a reviewed
+entry.
+
 A deviation always waits for you. The loop never splits a run and never
 accepts a size:
 
