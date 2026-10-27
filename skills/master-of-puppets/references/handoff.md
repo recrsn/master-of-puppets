@@ -78,8 +78,8 @@ Local checks and their results, apart from hosted CI. Evidence paths.
 ## Owned resources
 One line for each: kind, exact identity, how to verify it is the owned one,
 and the proposed cleanup. Then what never to touch (for example the shared
-Postgres container). Each destructive cleanup step still needs the user's
-yes in the session that runs it.
+Postgres container). The member's own tool permissions and safety classifier
+stay the backstop for destructive actions.
 
 ## Done when
 For example: every PR MERGED with its SHA recorded, each owned resource

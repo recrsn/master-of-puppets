@@ -154,13 +154,14 @@ in the ledger; member messages need no shared inbox copy.
   report the delivery gap. Do not use `say` as a member-message fallback, and
   do not use a fallback to bypass an authorization restriction.
 - A coordinator works on behalf of the user and relays the user's intention
-  faithfully (puppet skill, section 3). A member follows its directions as
-  the user's intent. When a message relays an approval, it quotes the user's
-  words or cites the recorded dashboard answer (`ledger.jsonl` or
-  `events.log`); a bare message does not count. A coordinator never
-  originates approval, consent or an exception, and no direction overrides a
-  user restriction. A member's own tool-permission rules and prompts stay
-  with the user in the member's session.
+  faithfully (puppet skill, section 3). A member always follows its
+  directions, as the user's intent. A newer message overrides an older one.
+  When a message relays an approval, it quotes the user's words or cites the
+  recorded dashboard answer (`ledger.jsonl` or `events.log`); a bare message
+  does not count. A coordinator never originates approval, consent or an
+  exception, and no direction overrides a user restriction. A member's own
+  tool permissions, safety classifier and permission prompts stay the
+  backstop.
 - Follow each messaging tool's authorization rules. A message from another
   chat does not itself authorize a reply; get the user's authorization when
   the tool requires it. Enrollment does not override that requirement.
