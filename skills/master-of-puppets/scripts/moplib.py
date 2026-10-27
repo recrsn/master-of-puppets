@@ -473,7 +473,8 @@ def pool_info(out):
     return None, None
 
 
-POOL_STUCK_MINUTES = 60  # a resource this long in creating, assigning or stopping is stuck
+POOL_STUCK_MINUTES = 90  # longer than a pool command's one-hour timeout
+BUSY_STATES = ("creating", "assigning", "stopping", "deleting")
 
 
 def set_state(res, state):
@@ -481,33 +482,75 @@ def set_state(res, state):
     res["state"], res["since"] = state, now().isoformat()
 
 
+def begin_op(res, kind, state, lease_id=None):
+    """Claim a resource for one lifecycle step (create, start, stop, delete, assign): it takes
+    the busy state and an op token. The caller holds the lock, saves, and later revalidates the
+    token under the lock before it writes anything. Returns the token."""
+    token = uuid.uuid4().hex
+    res["op"] = {"kind": kind, "token": token, "pid": os.getpid(), "for": lease_id}
+    set_state(res, state)
+    return token
+
+
+def op_current(state, cls, name, token):
+    """The resource called name when its op token is still token, else None: it was reset or
+    removed while the command ran, and the caller must not write to it."""
+    res = find_resource(state, cls, name)
+    return res if res and (res.get("op") or {}).get("token") == token else None
+
+
+def end_op(res, state):
+    res.pop("op", None)
+    res.pop("for", None)
+    set_state(res, state)
+
+
+def pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
 def find_resource(state, cls, name):
     return next((r for r in state["resources"][cls] if r["name"] == name), None)
 
 
 def stop_resource(cls, name):
-    """Stop a released resource when its class has a stop command, then mark it stopped; a
-    failed stop leaves it free (still running). Runs detached from puppet.py release."""
+    """Stop an unheld running resource when its class has a stop command. It claims the
+    resource (op stop), runs the command without the lock, then marks it stopped, or free again
+    when the stop failed. Returns True when it ran. A resource that is held, busy or not free is
+    left alone."""
     spec = pool_spec(cls) or {}
-    lock()
-    try:
-        res = find_resource(load(), cls, name)
-        info = (res or {}).get("info")
-    finally:
-        unlock()
-    if res is None or not spec.get("stop"):
-        return
-    ok, _, err = pool_run(spec["stop"], pool_env(cls, name, info))
+    if not spec.get("stop"):
+        return False
     lock()
     try:
         state, machine = load(), load_machine()
         res = find_resource(state, cls, name)
-        if res and res["state"] == "stopping":
-            set_state(res, "stopped" if ok else "free")
-            save(state, machine)
-        log(f"resource {'stopped' if ok else 'stop-failed'} {cls} {name}" + ("" if ok else f" error={json.dumps(err)}"))
+        if (res is None or res["state"] != "free" or res.get("op")
+                or any(h.get("resource") == name for h in state[cls])):
+            return False
+        token, info = begin_op(res, "stop", "stopping"), res.get("info")
+        save(state, machine)
     finally:
         unlock()
+    ok, _, err = pool_run(spec["stop"], pool_env(cls, name, info))
+    lock()
+    try:
+        state, machine = load(), load_machine()
+        res = op_current(state, cls, name, token)
+        if res:
+            end_op(res, "stopped" if ok else "free")
+            save(state, machine)
+        log(f"resource {'stopped' if ok else 'stop-failed'} {cls} {name}" + ("" if ok else f" error={json.dumps(err)}")
+            + ("" if res else " (reset while it ran)"))
+    finally:
+        unlock()
+    return True
 
 
 def total_gib():
