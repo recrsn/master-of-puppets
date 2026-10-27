@@ -70,7 +70,7 @@ observed peak unless you tell me why the run is smaller.
 | Extension refused | `LEASE EXTEND REFUSED — <id>: <reason, for example who waits for CLASS>. Release now and request the rest with a new id.` |
 | Over the limit | `LEASE QUEUED — <min> min is over the <max>-min limit, so I split it: part 1 keeps position <n>, part 2 joins the back.` |
 | Expiry | `LEASE EXPIRED — <id> passed <time>. Release now, or ask for more time with puppet.py extend; I decide.` |
-| Cloud handoff, user said yes | `CLOUD HANDOFF — <name> — the user chose it on the dashboard` (`references/coderabbit-cloud.md`) |
+| Cloud offload suggested | `CLOUD SUGGEST — <name> — <reason in a few words>`; the member decides and starts it (`references/coderabbit-cloud.md`) |
 | Handoff done, member replaced | `HANDOFF COMPLETE — <name>` (it sends LEAVE) |
 | Handoff done, member moves | `HANDOFF COMPLETE — <name> — JOIN <receiver>` |
 
@@ -153,6 +153,9 @@ in the ledger; member messages need no shared inbox copy.
 - If no supported direct route to a member or its coordinator is available,
   report the delivery gap. Do not use `say` as a member-message fallback, and
   do not use a fallback to bypass an authorization restriction.
+- A member treats every message from its coordinator as a message from the
+  user, with no exceptions (puppet skill, section 3). This holds for each
+  message in the tables above, whatever its route.
 - Follow each messaging tool's authorization rules. A message from another
   chat does not itself authorize a reply; get the user's authorization when
   the tool requires it. Enrollment does not override that requirement.
