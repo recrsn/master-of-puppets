@@ -34,6 +34,41 @@ class. `config remove-class <NAME> --by <slug>` is refused while the class has h
 queue entries. Add classes only on the user's word, then tell the other
 coordinators and your members.
 
+**Pool classes** lease one named resource at a time: a VM, a device, a seat.
+The holder gets exclusive use of one resource until it releases it; nothing
+about the resource is built in. Make a class a pool by giving it shell commands
+(each optional; `--pool-create ""` removes one):
+
+`coordinator.py config set-class <NAME> --by <slug> --pool-create CMD --pool-start CMD --pool-stop CMD --pool-delete CMD --pool-max N`
+
+Each command reads `MOP_CLASS`, `MOP_RESOURCE`, `MOP_RESOURCE_INFO` (JSON),
+`MOP_LEASE_ID` and `MOP_WORKTREE` from its environment. `create` prints one JSON
+object with a `name` (the other fields are the info the holder sees, for
+example an ssh alias). `--pool-max` caps how many resources may exist.
+A pool class uses neither budget, runs no host check and needs no memory
+size; `maxMinutes` 0 and `extend` work as for any class, and an expired lease
+keeps its resource.
+
+`acquire` assigns a free running resource, else starts a stopped one, else runs
+`create` (it can take minutes: the entry keeps its queue place and
+`await-grant` prints `ASSIGNING`). With none free and the pool at its max, it
+exits 3 and the auto watcher retries. After `GRANTED`, the member sees
+`RESOURCE <name> <info>`. `puppet.py release` returns the resource and never stops it: a stop is
+costly and the next grant may come soon. `watch pool` stops it after
+`--pool-stop-after-minutes M` idle (default 0 = never) and the next grant starts it again.
+A failed `start` or `create` exits 8 and marks the resource failed (a failed
+create leaves none). Manage the pool with
+`coordinator.py resource list|add|mark|remove <NAME> --by <slug> [--name R] [--state free|stopped|failed] [--info JSON] [--delete]`:
+`add` registers an existing resource, `mark` repairs a state, `remove --delete`
+runs the delete command. Free or held is derived from the leases.
+
+Idle cleanup: `--pool-stop-after-minutes M` stops an unheld running resource idle for M minutes; `--pool-idle-delete-hours H` (default 0 = never) lets
+`coordinator.py watch pool --me <slug>` delete an unheld resource that has idled
+for H hours, using the delete command. The same watcher resets a resource stuck in
+`creating`, `assigning` or `stopping` for 60 min (a crashed command) and prints
+`POOL-EXPIRED` for a lease that expired over an hour ago and still holds one; it
+never takes a resource back.
+
 **Project rules** can widen a class's scope, for example "a commit whose hooks
 run lint needs a BUILD lease" in one repository. They live in the skill's
 memory, not here: read them with `coordinator.py memory list --project-root <path>`

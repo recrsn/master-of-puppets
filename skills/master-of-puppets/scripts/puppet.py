@@ -31,6 +31,9 @@ Usage: python3 -I puppet.py <command> ...
        member of C, a foreign ID, or the ID is already held
   await-grant CLASS --id ID [--timeout-min N] [--appear-timeout S]
        prints HELD <reason> while your coordinator holds or reviews the entry (keep waiting),
+       ASSIGNING <what> while a pool class creates or starts your resource (can take minutes),
+       and after GRANTED of a pool class, RESOURCE <name> <info JSON>: the resource you hold
+       until you release it (release never stops it: your coordinator's `watch pool` does, when idle),
        then GRANTED, DENIED <reason> or NOT-GRANTED <reason>. Exit 0 granted (the only grant);
        4 denied by your coordinator (do not retry; ask why); 3 left the queue without a grant; 5 timeout while still queued; 6 never queued
        within --appear-timeout (default 600 s)
@@ -64,6 +67,7 @@ from moplib import (
     PEAKS, SAMPLES_KEPT, MINUTES_KEPT, load_machine, registry, class_names,
     load_project, save_project, project_key, undersized, now, lock, unlock, log, say,
     load, save, load_roster, queue_entry, extension_refusal, READS, add_read_commands, read_cmd, version_warning, drain,
+    find_resource, set_state,
 )
 
 
@@ -110,11 +114,14 @@ def await_grant(args):
     the coordinator holds or reviews the entry, then one final line: GRANTED,
     DENIED <reason> or NOT-GRANTED <reason>; only exit 0 means granted."""
     start = time.time()
-    seen, held = False, None
+    seen, held, assigning = False, None, None
     while True:
         state = load()
-        if any(h["id"] == args.id for h in state[args.cls]):
+        held_lease = next((h for h in state[args.cls] if h["id"] == args.id), None)
+        if held_lease:
             print(f"GRANTED {args.cls} {args.id}")
+            if held_lease.get("resource"):
+                print(f"RESOURCE {held_lease['resource']} {json.dumps(held_lease.get('resourceInfo') or {})}")
             return 0
         entry = next((q for q in state["queue"][args.cls] if q["id"] == args.id), None)
         waited = time.time() - start
@@ -129,6 +136,10 @@ def await_grant(args):
                 held = status
                 if held:
                     print(f"HELD {args.cls} {args.id}: {held}", flush=True)
+            if entry.get("assigning") != assigning:
+                assigning = entry.get("assigning")
+                if assigning:
+                    print(f"ASSIGNING {args.cls} {args.id}: {assigning}; keep waiting", flush=True)
         elif seen:
             print(f"NOT-GRANTED {args.cls} {args.id}: left the queue without a grant; ask your coordinator")
             return 3
@@ -213,6 +224,9 @@ def release(args):
             if os.path.exists(path):
                 os.remove(path)
         state[args.cls] = [h for h in holders if h["id"] != args.id]
+        res = find_resource(state, args.cls, held.get("resource")) if held.get("resource") else None
+        if res and res["state"] == "free":
+            set_state(res, "free")  # stamps the idle clock; `watch pool` stops it later, if the class asks
         save(state, machine)
     finally:
         unlock()

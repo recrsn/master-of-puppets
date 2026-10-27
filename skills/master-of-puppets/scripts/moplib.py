@@ -325,9 +325,11 @@ def find_session(roster, session_id):
 def load():
     state = json.load(open(STATE)) if os.path.exists(STATE) else {}
     queue = state.setdefault("queue", {})
+    resources = state.setdefault("resources", {})
     for c in class_names():
         state.setdefault(c, [])
         queue.setdefault(c, [])
+        resources.setdefault(c, [])
     return state
 
 
@@ -424,6 +426,88 @@ def save(state, machine):
     with open(tmp, "w") as f:
         json.dump(state, f, indent=1)
     os.replace(tmp, STATE)
+
+
+# ---------------------------------------------------------------- pooled resources
+
+
+RESOURCE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
+
+
+def pool_spec(cls, machine=None):
+    """The pool of a class that leases named resources (a VM, a device, a seat), else None.
+    Fields: create, start, stop, delete (shell commands, each optional) and max (resources
+    that may exist, 0 = no cap). A command reads MOP_CLASS, MOP_RESOURCE, MOP_RESOURCE_INFO
+    (JSON), MOP_LEASE_ID and MOP_WORKTREE from its environment."""
+    return registry(machine).get(cls, {}).get("pool")
+
+
+def pool_env(cls, name="", info=None, lease_id=None, worktree=None):
+    env = {**os.environ, "MOP_CLASS": cls, "MOP_RESOURCE": name, "MOP_RESOURCE_INFO": json.dumps(info or {})}
+    for key, value in (("MOP_LEASE_ID", lease_id), ("MOP_WORKTREE", worktree)):
+        if value:
+            env[key] = value
+    return env
+
+
+def pool_run(cmd, env, timeout=3600):
+    """Run a pool command in a shell. Returns (ok, stdout, error text)."""
+    try:
+        p = subprocess.run(cmd, shell=True, env=env, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, "", str(e)
+    return p.returncode == 0, p.stdout, (p.stderr or p.stdout).strip()[-300:]
+
+
+def pool_info(out):
+    """The JSON object a create command printed (the whole output, else its last JSON line),
+    as (name, info without the name); (None, None) without a valid name."""
+    candidates = [out] + list(reversed(out.strip().splitlines()))
+    for text in candidates:
+        try:
+            data = json.loads(text)
+        except ValueError:
+            continue
+        if isinstance(data, dict) and isinstance(data.get("name"), str) and RESOURCE_NAME.match(data["name"]):
+            return data["name"], {k: v for k, v in data.items() if k != "name"}
+    return None, None
+
+
+POOL_STUCK_MINUTES = 60  # a resource this long in creating, assigning or stopping is stuck
+
+
+def set_state(res, state):
+    """Change a resource's state and stamp when, for the idle and stuck checks."""
+    res["state"], res["since"] = state, now().isoformat()
+
+
+def find_resource(state, cls, name):
+    return next((r for r in state["resources"][cls] if r["name"] == name), None)
+
+
+def stop_resource(cls, name):
+    """Stop a released resource when its class has a stop command, then mark it stopped; a
+    failed stop leaves it free (still running). Runs detached from puppet.py release."""
+    spec = pool_spec(cls) or {}
+    lock()
+    try:
+        res = find_resource(load(), cls, name)
+        info = (res or {}).get("info")
+    finally:
+        unlock()
+    if res is None or not spec.get("stop"):
+        return
+    ok, _, err = pool_run(spec["stop"], pool_env(cls, name, info))
+    lock()
+    try:
+        state, machine = load(), load_machine()
+        res = find_resource(state, cls, name)
+        if res and res["state"] == "stopping":
+            set_state(res, "stopped" if ok else "free")
+            save(state, machine)
+        log(f"resource {'stopped' if ok else 'stop-failed'} {cls} {name}" + ("" if ok else f" error={json.dumps(err)}"))
+    finally:
+        unlock()
 
 
 def total_gib():
