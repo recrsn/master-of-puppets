@@ -226,6 +226,13 @@ def ago_short(t, now):
     return "now" if mins < 1 else f"{mins}m" if mins < 60 else f"{mins // 60}h {mins % 60}m"
 
 
+def sleep_badge(c, parked, now):
+    """A sleeping coordinator: no heartbeat or watchers; it wakes on new work, unpark or a message."""
+    since = f" {ago_short(parse(c['sleptAt']), now)}" if c.get("sleptAt") else ""
+    return (f'<span class="zzz" title="No heartbeat or watchers. Wakes on new work, unpark or a message.">'
+            f'Sleeping{since}{f" · {parked} parked" if parked else ""}</span>')
+
+
 def link(item):
     return f'<a href="{e(item["href"])}">{e(item["label"])}</a>'
 
@@ -721,7 +728,7 @@ def render_page(host):
         href = (src.get("coordinator") or {}).get("href", "")
         label = (f'<a class="c-n" href="{e(href)}" title="Open coordinator session">{e(name)}</a>' if href
                  else f'<span class="c-n">{e(name)}</span>')
-        state = (f'<span class="t3">idle{f" · {paused} parked" if paused else ""}</span>' if c.get("status") == "idle"
+        state = (sleep_badge(c, paused, now) if c.get("status") == "idle"
                  else f'<span class="{"ok" if live else "danger"}">{"live" if live else "stale"}</span>')
         owned = [slug for slug, st in streams.items() if st.get("coordinator") == name and st.get("status") != "closed"]
         links, notes = [link(l) for l in src.get("links", [])], src.get("notes", [])
@@ -758,12 +765,17 @@ def render_page(host):
 
     ledger_html = "".join(entry(x) for x in ledger) or '<div class="entry t3">Empty</div>'
 
+    sleepers = "".join(
+        f'<div class="sleeper"><b>{e(n)}</b>{sleep_badge(c, sum(1 for m in members.get(n, []) if m.get("status") == "paused"), now)}'
+        f'<span class="t3">{e(c.get("focus", ""))}</span></div>'
+        for n, c in sorted(coords.items()) if c.get("status") == "idle")
+    sleepers_html = f'<section class="sec"><div class="sec-h"><h2>Sleeping</h2></div><div class="sleepers">{sleepers}</div></section>' if sleepers else ""
     desk = (
         '<main class="desk"><div class="col-main">'
         f'<section class="sec needs"><div class="sec-h"><h2>Needs you</h2><span class="n {worst}">{need_count}</span></div>'
         + ("".join(need_group(g) for g in groups) or '<p class="none">None</p>')
         + f'</section><section class="sec"><div class="sec-h"><h2>Work</h2><span class="n">{work_count}</span></div>{board}</section>'
-        f'{parked_html}</div><aside class="col-side">{lease_panel}</aside></main>'
+        f'{parked_html}{sleepers_html}</div><aside class="col-side">{lease_panel}</aside></main>'
     )
     events = (
         '<main class="page"><section class="sec"><div class="sec-h"><h2>Coordinators</h2></div>'
