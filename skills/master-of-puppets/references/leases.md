@@ -64,8 +64,10 @@ runs the delete command. Free or held is derived from the leases.
 
 Idle cleanup: `--pool-stop-after-minutes M` stops an unheld running resource idle for M minutes; `--pool-idle-delete-hours H` (default 0 = never) lets
 `coordinator.py watch pool --me <slug>` delete an unheld resource that has idled
-for H hours, using the delete command. The same watcher resets a resource stuck in
-`creating`, `assigning` or `stopping` for 60 min (a crashed command) and prints
+for H hours, using the delete command. Every lifecycle step (create, start, stop, delete) claims the
+resource with an op token and a busy state; `resource mark` and `remove` refuse a busy
+resource. The same watcher resets a resource stuck in a busy state for 90 min whose
+operation's process is gone (a crashed command); a live operation is never reset and prints
 `POOL-EXPIRED` for a lease that expired over an hour ago and still holds one; it
 never takes a resource back.
 

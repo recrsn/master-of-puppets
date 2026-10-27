@@ -129,8 +129,7 @@ show who, why and each changed key with its old and new value)
        the resources of a pool class
        stream update ... --auto-acquire on|off   same for one stream's members
   watch pool --me C     run in the background: stop unheld running pool resources idle past
-       --pool-stop-after-minutes (release never stops); reset pool resources stuck in creating, assigning or
-       stopping for 60 min; delete unheld ones idle past the class's --pool-idle-delete-hours; print
+       --pool-stop-after-minutes (release never stops); reset pool resources stuck in a busy state for 90 min with no live operation; delete unheld ones idle past the class's --pool-idle-delete-hours; print
        POOL-EXPIRED for a lease that expired over an hour ago and still holds a resource
   watch auto --me C     run in the background: acquire C's head entry of each auto class or
        stream when it has minutes and a worktree. Prints AUTO-GRANTED or AUTO-REFUSED. Exit 2
@@ -307,7 +306,7 @@ from moplib import (
     load_roster, save_roster, live, asleep, load, save, budget, order, queue_entry,
     say, deliver, notify, READS, memory_path, add_read_commands,
     read_cmd, run, worktree_pids, drain, pool_spec, pool_env, pool_run, pool_info, find_resource, RESOURCE_NAME,
-    set_state, stop_resource, POOL_STUCK_MINUTES,
+    set_state, stop_resource, begin_op, end_op, op_current, pid_alive, BUSY_STATES, POOL_STUCK_MINUTES,
 )
 
 
@@ -1612,16 +1611,16 @@ def acquire_cmd(args):
 
 
 def pool_pick(state, cls, spec):
-    """The resource to assign: a free running one, else a stopped one. Returns (resource,
-    None), or (None, why): settling (one is being stopped or assigned; retry), exhausted
-    (the pool is at max), none_free (no create command), or create (make a new one)."""
+    """The resource to assign: a free running one, else a stopped one; never one that is held or
+    busy with an operation. Returns (resource, None), or (None, why): settling (one is busy;
+    retry), exhausted (the pool is at max), none_free (no create command), or create."""
     pool = state["resources"][cls]
     held = {h.get("resource") for h in state[cls]}
     for want in ("free", "stopped"):
         for r in pool:
-            if r["state"] == want and r["name"] not in held:
+            if r["state"] == want and not r.get("op") and r["name"] not in held:
                 return r, None
-    if any(r["state"] in ("stopping", "assigning", "creating") for r in pool):
+    if any(r.get("op") or r["state"] in BUSY_STATES for r in pool):
         return None, "settling"
     if spec.get("max") and len(pool) >= spec["max"]:
         return None, "exhausted"
@@ -1631,8 +1630,10 @@ def pool_pick(state, cls, spec):
 def pool_acquire_cmd(args):
     """Grant a pool class: assign a free resource, start a stopped one, or create one when
     none exists. The start or create command runs without the lock (it can take minutes);
-    the entry keeps its queue place and the resource is marked assigned meanwhile. The
-    holder record names the resource; the member's await-grant prints it."""
+    the entry keeps its queue place and the resource holds an op token meanwhile, so no other
+    command touches it. After the command the token is checked again under the lock: a resource
+    that was reset or removed meanwhile is not written. The holder record names the resource;
+    the member's await-grant prints it."""
     cls, spec, machine = args.cls, pool_spec(args.cls), load_machine()
     lock()
     try:
@@ -1654,70 +1655,72 @@ def pool_acquire_cmd(args):
             return 3
         if res is None:
             res = {"name": f"pending-{args.id}", "info": {}}
-            set_state(res, "creating")
             state["resources"][cls].append(res)
-            action, before = "create", None
+            action, token = "create", begin_op(res, "create", "creating", args.id)
         else:
-            action, before = ("start" if res["state"] == "stopped" else None), res["state"]
-            res["prior"] = before
-            set_state(res, "assigning")
-        res["for"] = args.id
-        entry["assigning"] = {"create": "creating a resource", "start": f"starting {res['name']}", None: f"assigning {res['name']}"}[action]
-        placeholder = res["name"]
+            res["prior"] = res["state"]
+            action = "start" if res["state"] == "stopped" else "assign"
+            token = begin_op(res, action, "assigning", args.id)
+        entry["assigning"] = {"create": "creating a resource", "start": f"starting {res['name']}", "assign": f"assigning {res['name']}"}[action]
+        placeholder, info = res["name"], res.get("info")
         save(state, machine)
-        log(f"resource {action or 'assign'} {cls} {placeholder} for={args.id}")
+        log(f"resource {action} {cls} {placeholder} for={args.id}")
     finally:
         unlock()
     ok, out, err = True, "", ""
     if action == "create":
         ok, out, err = pool_run(spec["create"], pool_env(cls, "", None, args.id, args.worktree))
     elif action == "start" and spec.get("start"):
-        ok, out, err = pool_run(spec["start"], pool_env(cls, placeholder, res.get("info"), args.id, args.worktree))
-    name, info = pool_info(out) if action == "create" and ok else (placeholder, res.get("info"))
+        ok, out, err = pool_run(spec["start"], pool_env(cls, placeholder, info, args.id, args.worktree))
+    name, new_info = pool_info(out) if action == "create" and ok else (placeholder, info)
     if action == "create" and ok and name is None:
         ok, err = False, "create printed no JSON object with a valid name"
     lock()
     try:
         state, machine = load(), load_machine()
         pool = state["resources"][cls]
-        res = find_resource(state, cls, placeholder)
+        res = op_current(state, cls, placeholder, token)
         entry = next((q for q in state["queue"][cls] if q["id"] == args.id), None)
+        if entry:
+            entry.pop("assigning", None)
         problem = None if ok else f"{action} failed: {err}"
-        if ok and action == "create" and any(r["name"] == name for r in pool):
+        if res is None:
+            problem = f"{placeholder} was reset or removed while {action} ran"
+            if action == "create" and ok and not find_resource(state, cls, name):
+                pool.append({"name": name, "info": new_info})  # the VM exists: keep it, free
+                set_state(pool[-1], "free")
+        elif ok and action == "create" and any(r["name"] == name and r is not res for r in pool):
             problem = f"create returned {name}, which the pool already has"
         if not problem and queued and entry is None:
             problem = f"{args.id} left the queue during the assignment"
         if not problem:
             refused = acquire_checks(args, state, machine)
             problem = refused and refused[1]
-        if entry:
-            entry.pop("assigning", None)
         if problem:
-            if res is not None and action == "create" and not ok:
-                pool.remove(res)
-            elif res is not None and not ok:
-                res.pop("for", None)
-                set_state(res, "failed")
-            elif res is not None:
-                res.pop("for", None)
-                set_state(res, "free")
-                if action == "create":
-                    res.update(name=name, info=info)
+            if res is not None:
+                if action == "create" and not ok:
+                    pool.remove(res)
+                elif not ok:
+                    end_op(res, "failed")
+                else:
+                    if action == "create":
+                        res.update(name=name, info=new_info)
+                    res.pop("prior", None)
+                    end_op(res, "free")
             save(state, machine)
             log(f"refuse {cls} {args.coordinator} {args.id} resource {problem}")
             print(json.dumps({"resource_error": problem}))
             return 8
-        res.pop("for", None)
         res.pop("prior", None)
-        res.update(name=name, info=info)
-        set_state(res, "free")
+        res.update(name=name, info=new_info)
+        end_op(res, "free")
         key = (entry or queued or {}).get("project") or project_key(args.worktree)[0]
         t = now()
         state["queue"][cls] = [q for q in state["queue"][cls] if q["id"] != args.id]
         state[cls].append({
             "coordinator": args.coordinator, "holder": args.holder, "id": args.id, "worktree": args.worktree,
             "project": key, "gib": 0, "cpus": 0, "commands": args.commands or (queued or {}).get("commands"),
-            "resource": name, "resourceInfo": info,
+            "resource": name, "resourceInfo": new_info,
             "grantedAt": t.isoformat(), "expiresAt": (t + dt.timedelta(minutes=args.minutes)).isoformat(),
         })
         save(state, machine)
@@ -1729,8 +1732,9 @@ def pool_acquire_cmd(args):
 
 def resource_cmd(args):
     """list, add, mark and remove: the pool of a class. The caller does not hold the lock.
-    add registers an existing resource; remove drops one that nobody holds and, with
-    --delete, runs the class's delete command first."""
+    add registers an existing resource; mark and remove change one that nobody holds and that
+    has no operation running; remove --delete claims it (op delete, state deleting), runs the
+    class's delete command without the lock, then removes it, or marks it failed when delete failed."""
     spec = pool_spec(args.cls)
     if not spec:
         print(f"{args.cls} has no pool; set one with config set-class {args.cls} --pool-create ...")
@@ -1761,25 +1765,33 @@ def resource_cmd(args):
         elif args.name in held:
             print(f"{args.name} is held by {held[args.name]}; wait for its release")
             return 3
+        elif res.get("op") or res["state"] in BUSY_STATES:
+            print(f"{args.name} is {res['state']} ({(res.get('op') or {}).get('kind', 'unknown')} running); wait for it to finish")
+            return 3
         elif args.rcmd == "mark":
             set_state(res, args.state)
-        else:
-            if args.delete and spec.get("delete"):
-                set_state(res, "failed")  # out of use while the delete runs
+        elif args.delete and spec.get("delete"):
+            token, info = begin_op(res, "delete", "deleting"), res.get("info")
+            save(state, machine)
+            unlock()
+            try:
+                ok, _, err = pool_run(spec["delete"], pool_env(args.cls, args.name, info))
+            finally:
+                lock()
+            state, machine = load(), load_machine()
+            res = op_current(state, args.cls, args.name, token)
+            if res is None:
+                print(f"{args.name} was reset while delete ran; check the VM, then add or remove it")
+                return 8
+            if not ok:
+                end_op(res, "failed")
                 save(state, machine)
-                info = res.get("info")
-                unlock()
-                try:
-                    ok, _, err = pool_run(spec["delete"], pool_env(args.cls, args.name, info))
-                finally:
-                    lock()
-                if not ok:
-                    print(f"delete failed: {err}")
-                    log(f"resource delete-failed {args.cls} {args.name} by={args.by}")
-                    return 8
-                state, machine = load(), load_machine()
-                pool = state["resources"][args.cls]
-            pool[:] = [r for r in pool if r["name"] != args.name]
+                print(f"delete failed: {err}")
+                log(f"resource delete-failed {args.cls} {args.name} by={args.by}")
+                return 8
+            state["resources"][args.cls].remove(res)
+        else:
+            pool.remove(res)
         save(state, machine)
         log(f"resource {args.rcmd} {args.cls} {args.name} by={args.by}")
         return 0
@@ -2020,10 +2032,13 @@ def watch_auto(me):
 
 
 def watch_pool(me, once=False):
-    """Once a minute, for each pool class: reset a resource stuck in creating, assigning or
-    stopping for POOL_STUCK_MINUTES (a crashed create, start or stop); delete an unheld
-    resource idle for the class's idleDeleteHours (needs a delete command); print POOL-EXPIRED
-    once per lease that expired over an hour ago while still holding a resource (never taken back)."""
+    """Once a minute, for each pool class: stop an unheld running resource idle for stopAfterMinutes
+    (release never stops: a stop is costly, and the next grant may come soon); reset a resource
+    stuck in a busy state past POOL_STUCK_MINUTES whose operation's process is gone (a crashed
+    create, start, stop or delete; a live operation is never reset); delete an unheld resource idle
+    for the class's idleDeleteHours (needs a delete command); print POOL-EXPIRED once per lease that
+    expired over an hour ago while still holding a resource (never taken back). Each step claims the
+    resource with an op token first, so two watchers or a manual command never run the same step."""
     warned = set()
     while True:
         t, machine = now(), load_machine()
@@ -2038,22 +2053,23 @@ def watch_pool(me, once=False):
                 held = {h.get("resource") for h in state[cls]}
                 for r in list(state["resources"][cls]):
                     age = (t - dt.datetime.fromisoformat(r.get("since") or t.isoformat())).total_seconds() / 60
-                    if r["state"] in ("creating", "assigning", "stopping") and age > POOL_STUCK_MINUTES:
+                    op = r.get("op") or {}
+                    if (op or r["state"] in BUSY_STATES) and age > POOL_STUCK_MINUTES and not (op.get("pid") and pid_alive(op["pid"])):
                         if r["state"] == "creating":
                             state["resources"][cls].remove(r)
                         else:
-                            set_state(r, r.pop("prior", "free") if r["state"] == "assigning" else "free")
-                        r.pop("for", None)
+                            end_op(r, {"assigning": r.get("prior") or "free", "deleting": "failed"}.get(r["state"], "free"))
+                            r.pop("prior", None)
                         save(state, machine)
                         log(f"resource reset {cls} {r['name']} stuck {age:.0f} min by={me}")
                         print(f"POOL-RESET {cls} {r['name']}: stuck {age:.0f} min", flush=True)
-                    elif (r["state"] in ("free", "stopped") and r["name"] not in held and pool.get("idleDeleteHours")
-                          and pool.get("delete") and age > pool["idleDeleteHours"] * 60):
+                    elif op or r["state"] in BUSY_STATES or r["name"] in held:
+                        continue
+                    elif r["state"] in ("free", "stopped") and pool.get("idleDeleteHours") and pool.get("delete") \
+                            and age > pool["idleDeleteHours"] * 60:
                         idle.append(r["name"])
-                    elif (r["state"] == "free" and r["name"] not in held and pool.get("stop")
-                          and pool.get("stopAfterMinutes") and age > pool["stopAfterMinutes"]):
-                        set_state(r, "stopping")
-                        save(state, machine)
+                    elif r["state"] == "free" and pool.get("stop") and pool.get("stopAfterMinutes") \
+                            and age > pool["stopAfterMinutes"]:
                         to_stop.append(r["name"])
                 for h in state[cls]:
                     over = (t - dt.datetime.fromisoformat(h["expiresAt"])).total_seconds() / 60
@@ -2064,8 +2080,8 @@ def watch_pool(me, once=False):
             finally:
                 unlock()
             for name in to_stop:
-                stop_resource(cls, name)
-                print(f"POOL-STOPPED {cls} {name}", flush=True)
+                if stop_resource(cls, name):
+                    print(f"POOL-STOPPED {cls} {name}", flush=True)
             for name in idle:
                 ns = argparse.Namespace(rcmd="remove", cls=cls, name=name, by=me, delete=True, state="free", info=None)
                 code = resource_cmd(ns)
