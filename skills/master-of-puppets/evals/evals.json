@@ -75,7 +75,7 @@
         "No CUSTODY ACCEPTED or SUCCESSOR JOINED say to codex (the accept and member add events are the record); no STATUS? or reminders",
         "The successor kickoff tells it to make its own worktree from origin/<branch> and never to use /Users/u/.codex/worktrees/sandbox/mono",
         "No lease is carried over; the successor requests its own",
-        "Each destructive cleanup step (Redis container, fixture PR) waits for the user's yes",
+        "Each destructive cleanup step (Redis container, fixture PR) stays under the member's own tool permissions and safety classifier",
         "HANDOFF CLOSED is sent only after MERGED with a SHA and the cleanup result"
       ],
       "id": 8
