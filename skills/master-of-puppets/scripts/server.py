@@ -677,7 +677,7 @@ def render_page(host):
                 left = int((end - now).total_seconds() // 60)
                 dur, color = (("expired", "danger") if left < 0 else (f"{left}m left", "t2"))
                 mins = h.get("minutes") or (end - parse(h["grantedAt"])).total_seconds() / 60
-                out.append((RUNNING, h, dur, color, requested(round(mins), h), eta_text(cls, h["id"]), h.get("commands", ""), ""))
+                out.append((RUNNING, h, dur, color, requested(round(mins), h), eta_text(cls, h["id"]), (f"{h['resource']} · " if h.get("resource") else "") + (h.get("commands") or ""), ""))
             pos = 0
             for q in queue.get(cls, []):
                 pos += 0 if q.get("hold") else 1
