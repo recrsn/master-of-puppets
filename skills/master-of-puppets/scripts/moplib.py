@@ -346,7 +346,8 @@ def task_priority(roster, coord, holder):
 
 
 def queue_entry(state, roster, cls, id, coordinator=None, holder=None, minutes=None, gib=None, cpus=None,
-                commands=None, worktree=None, priority=None, front=False, by=None, changed_by=None):
+                commands=None, worktree=None, priority=None, front=False, by=None, changed_by=None,
+                prefer=None, resource=None):
     """Add queue entry id to class cls, or change the given fields of an existing one, and
     re-order the queue. The caller holds the lock and saves. changed_by names the
     coordinator in a priority change's event. Returns (exit, text):
@@ -377,6 +378,10 @@ def queue_entry(state, roster, cls, id, coordinator=None, holder=None, minutes=N
         if worktree:
             existing["project"] = project_key(worktree)[0]
             existing["worktree"] = worktree
+        if prefer:
+            existing["prefer"] = prefer
+        if resource:
+            existing["wantResource"] = resource
         if priority is not None and priority != existing.get("priority", 0):
             existing["priority"] = priority
             log(f"priority {cls} {id} {priority}" + (f" by={changed_by}" if changed_by else ""))
@@ -404,6 +409,10 @@ def queue_entry(state, roster, cls, id, coordinator=None, holder=None, minutes=N
         if worktree:
             entry["project"] = project_key(worktree)[0]
             entry["worktree"] = worktree
+        if prefer:
+            entry["prefer"] = prefer
+        if resource:
+            entry["wantResource"] = resource
         if front:
             entry["priority"] = max([priority] + [q.get("priority", 0) for q in queue])
             queue.insert(0, entry)
@@ -438,12 +447,32 @@ def pool_spec(cls, machine=None):
     """The pool of a class that leases named resources (a VM, a device, a seat), else None.
     Fields: create, start, stop, delete (shell commands, each optional) and max (resources
     that may exist, 0 = no cap). A command reads MOP_CLASS, MOP_RESOURCE, MOP_RESOURCE_INFO
-    (JSON), MOP_LEASE_ID and MOP_WORKTREE from its environment."""
+    (JSON), MOP_LEASE_ID and MOP_WORKTREE from its environment. When the request named
+    preferences, it also reads MOP_PREFER (JSON) and MOP_PREFER_<KEY> for each."""
     return registry(machine).get(cls, {}).get("pool")
 
 
-def pool_env(cls, name="", info=None, lease_id=None, worktree=None):
+def parse_prefer(items):
+    """KEY=VALUE strings to a dict; raises ValueError on a malformed item."""
+    prefer = {}
+    for item in items or []:
+        key, sep, value = item.partition("=")
+        if not sep or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", key) or not value:
+            raise ValueError(f"{item!r} is not KEY=VALUE (key: letters, digits, _; value not empty)")
+        prefer[key] = value
+    return prefer
+
+
+def prefer_matches(info, prefer):
+    return all(str((info or {}).get(k)) == v for k, v in prefer.items())
+
+
+def pool_env(cls, name="", info=None, lease_id=None, worktree=None, prefer=None):
     env = {**os.environ, "MOP_CLASS": cls, "MOP_RESOURCE": name, "MOP_RESOURCE_INFO": json.dumps(info or {})}
+    if prefer:
+        env["MOP_PREFER"] = json.dumps(prefer)
+        for key, value in prefer.items():
+            env["MOP_PREFER_" + key.upper()] = value
     for key, value in (("MOP_LEASE_ID", lease_id), ("MOP_WORKTREE", worktree)):
         if value:
             env[key] = value

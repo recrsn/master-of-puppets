@@ -42,7 +42,9 @@ about the resource is built in. Make a class a pool by giving it shell commands
 `coordinator.py config set-class <NAME> --by <slug> --pool-create CMD --pool-start CMD --pool-stop CMD --pool-delete CMD --pool-max N`
 
 Each command reads `MOP_CLASS`, `MOP_RESOURCE`, `MOP_RESOURCE_INFO` (JSON),
-`MOP_LEASE_ID` and `MOP_WORKTREE` from its environment. `create` prints one JSON
+`MOP_LEASE_ID` and `MOP_WORKTREE` from its environment. When the request set
+`--prefer`, it also reads `MOP_PREFER` (JSON) and `MOP_PREFER_<KEY>` (upper
+case) for each. `create` prints one JSON
 object with a `name` (the other fields are the info the holder sees, for
 example an ssh alias). `--pool-max` caps how many resources may exist.
 A pool class uses neither budget, runs no host check and needs no memory
@@ -61,6 +63,17 @@ create leaves none). Manage the pool with
 `coordinator.py resource list|add|mark|remove <NAME> --by <slug> [--name R] [--state free|stopped|failed] [--info JSON] [--delete]`:
 `add` registers an existing resource, `mark` repairs a state, `remove --delete`
 runs the delete command. Free or held is derived from the leases.
+
+Picking: a request may carry `puppet.py request ... --prefer KEY=VALUE`
+(repeatable; for example `--prefer slotType=native`) or `--resource <name>`.
+`--prefer` is matched against the resource info, as strings. `acquire` takes a
+matching free resource, then a matching stopped one, then waits when another is
+busy, then runs `create` (with the preference in its environment) when the pool
+has room, and only then takes a non-matching one. `--resource` grants exactly
+that resource, starting it when stopped. When it is unknown, held, busy or
+failed, `acquire` exits 3 with `resource_unavailable`; it never takes another
+resource and never runs `create`. `coordinator.py wait` takes the same two
+options.
 
 Idle cleanup: `--pool-stop-after-minutes M` stops an unheld running resource idle for M minutes; `--pool-idle-delete-hours H` (default 0 = never) lets
 `coordinator.py watch pool --me <slug>` delete an unheld resource that has idled

@@ -19,6 +19,7 @@ Usage: python3 -I puppet.py <command> ...
        the project's recorded run minutes, peak GiB and peak cores per class, the figures
        your coordinator charges and checks against, and the size margin: size from these
   request CLASS --coordinator C --name NAME --id ID --minutes N --commands TEXT --worktree P
+          [--prefer KEY=VALUE ...] [--resource NAME]   (pool classes)
           [--gib N] [--cpus N] [--what TEXT]
        queue your own lease request; prints its position. You size the run: --minutes always,
        --gib and --cpus (peak memory and cores) when you know them; your coordinator charges
@@ -67,7 +68,7 @@ from moplib import (
     PEAKS, SAMPLES_KEPT, MINUTES_KEPT, load_machine, registry, class_names,
     load_project, save_project, project_key, undersized, now, lock, unlock, log, say,
     load, save, load_roster, queue_entry, extension_refusal, READS, add_read_commands, read_cmd, version_warning, drain,
-    find_resource, set_state,
+    find_resource, set_state, parse_prefer, RESOURCE_NAME, pool_spec,
 )
 
 
@@ -93,10 +94,22 @@ def request(args):
         if any(h["id"] == args.id for h in state[args.cls]):
             print(f"{args.id} is already held; release it or use a new ID")
             return 3
+        try:
+            prefer = parse_prefer(args.prefer)
+        except ValueError as e:
+            print(e)
+            return 2
+        if args.resource and not RESOURCE_NAME.match(args.resource):
+            print(f"{args.resource} is not a valid resource name")
+            return 2
+        if (prefer or args.resource) and not pool_spec(args.cls):
+            print(f"{args.cls} has no pool; --prefer and --resource apply to pool classes")
+            return 2
         queued = any(q["id"] == args.id for q in state["queue"][args.cls])
         holder = f"{args.name} {args.what or args.commands}" if args.what or not queued else None
         code, text = queue_entry(state, roster, args.cls, args.id, args.coordinator, holder, args.minutes,
-                                 args.gib, args.cpus, args.commands, args.worktree, by=args.name)
+                                 args.gib, args.cpus, args.commands, args.worktree, by=args.name,
+                                 prefer=prefer, resource=args.resource)
         if code == 0:
             save(state, machine)
         print(text)
@@ -255,6 +268,9 @@ def main():
     rq.add_argument("--worktree", required=True, help="sets the project whose class peak applies")
     rq.add_argument("--gib", type=float, help="expected peak GiB; omit to let your coordinator charge its own figure")
     rq.add_argument("--cpus", type=float, help="expected peak cores; omit to let your coordinator charge its own figure")
+    rq.add_argument("--prefer", action="append", metavar="KEY=VALUE",
+                    help="pool class: take a resource whose info matches first (for example slotType=native); the create command gets MOP_PREFER_<KEY>")
+    rq.add_argument("--resource", help="pool class: exactly this resource; exit 3 at acquire if it is held, busy or failed; never another one, never a new one")
     rq.add_argument("--what", help="short label for the dashboard; default: the commands")
     ag = sub.add_parser("await-grant")
     ag.add_argument("cls", metavar="CLASS")

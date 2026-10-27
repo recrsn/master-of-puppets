@@ -69,6 +69,7 @@ Leases
   leases on|off --by C            machine-wide; only on the user's word
   status [--brief] | capacity
   wait CLASS --coordinator C --holder NAME --id ID [--minutes N] [--gib N] [--cpus N] [--commands TEXT] [--worktree P]
+       [--prefer KEY=VALUE ...] [--resource NAME]   (pool classes)
        [--priority N] [--front]
        for an existing ID every flag is optional and only the given fields change.
        exit 2 when --minutes is over the class limit or --gib/--cpus over the whole budget: split the run.
@@ -305,7 +306,7 @@ from moplib import (
     suggested_minutes, over_limit, undersized, extend_lease, now, lock, unlock, log, note,
     load_roster, save_roster, live, asleep, load, save, budget, order, queue_entry,
     say, deliver, notify, READS, memory_path, add_read_commands,
-    read_cmd, run, worktree_pids, drain, pool_spec, pool_env, pool_run, pool_info, find_resource, RESOURCE_NAME,
+    read_cmd, run, worktree_pids, drain, pool_spec, pool_env, pool_run, pool_info, find_resource, RESOURCE_NAME, parse_prefer, prefer_matches,
     set_state, stop_resource, begin_op, end_op, op_current, pid_alive, BUSY_STATES, POOL_STUCK_MINUTES,
 )
 
@@ -1610,16 +1611,46 @@ def acquire_cmd(args):
         unlock()
 
 
-def pool_pick(state, cls, spec):
+def pool_pick(state, cls, spec, entry=None):
     """The resource to assign: a free running one, else a stopped one; never one that is held or
     busy with an operation. Returns (resource, None), or (None, why): settling (one is busy;
-    retry), exhausted (the pool is at max), none_free (no create command), or create."""
+    retry), exhausted (the pool is at max), none_free (no create command), create, or
+    unavailable (the entry names one exact resource that cannot be assigned now).
+    An entry that names a resource (wantResource) gets exactly that one, or unavailable: no other
+    resource, no create. An entry with prefer takes a matching resource first (free, then
+    stopped), then waits for a busy one, then creates one (it gets the preference), and only
+    then takes a non-matching one."""
+    entry = entry or {}
     pool = state["resources"][cls]
     held = {h.get("resource") for h in state[cls]}
-    for want in ("free", "stopped"):
-        for r in pool:
-            if r["state"] == want and not r.get("op") and r["name"] not in held:
-                return r, None
+
+    def free(r):
+        return not r.get("op") and r["name"] not in held
+
+    def first(states, match=None):
+        for want in states:
+            for r in pool:
+                if r["state"] == want and free(r) and (match is None or match(r)):
+                    return r
+        return None
+
+    if entry.get("wantResource"):
+        r = find_resource(state, cls, entry["wantResource"])
+        if r and r["state"] in ("free", "stopped") and free(r):
+            return r, None
+        return None, "unavailable"
+    prefer = entry.get("prefer") or {}
+    if prefer:
+        r = first(("free", "stopped"), lambda r: prefer_matches(r.get("info"), prefer))
+        if r:
+            return r, None
+        if any(r.get("op") or r["state"] in BUSY_STATES for r in pool):
+            return None, "settling"
+        if spec.get("create") and not (spec.get("max") and len(pool) >= spec["max"]):
+            return None, "create"
+    r = first(("free", "stopped"))
+    if r:
+        return r, None
     if any(r.get("op") or r["state"] in BUSY_STATES for r in pool):
         return None, "settling"
     if spec.get("max") and len(pool) >= spec["max"]:
@@ -1649,9 +1680,13 @@ def pool_acquire_cmd(args):
                        or not auto_entry(entry, machine, load_roster(), cls)):
             print(json.dumps({"auto_stale": args.id}))
             return 7
-        res, why = pool_pick(state, cls, spec)
-        if why in ("settling", "exhausted", "none_free"):
-            print(json.dumps({"resources_" + why: [{"name": r["name"], "state": r["state"]} for r in state["resources"][cls]]}))
+        res, why = pool_pick(state, cls, spec, queued)
+        if why in ("settling", "exhausted", "none_free", "unavailable"):
+            listing = [{"name": r["name"], "state": r["state"]} for r in state["resources"][cls]]
+            if why == "unavailable":
+                print(json.dumps({"resource_unavailable": entry["wantResource"], "resources": listing}))
+            else:
+                print(json.dumps({"resources_" + why: listing}))
             return 3
         if res is None:
             res = {"name": f"pending-{args.id}", "info": {}}
@@ -1663,15 +1698,16 @@ def pool_acquire_cmd(args):
             token = begin_op(res, action, "assigning", args.id)
         entry["assigning"] = {"create": "creating a resource", "start": f"starting {res['name']}", "assign": f"assigning {res['name']}"}[action]
         placeholder, info = res["name"], res.get("info")
+        prefer = entry.get("prefer") or {}
         save(state, machine)
         log(f"resource {action} {cls} {placeholder} for={args.id}")
     finally:
         unlock()
     ok, out, err = True, "", ""
     if action == "create":
-        ok, out, err = pool_run(spec["create"], pool_env(cls, "", None, args.id, args.worktree))
+        ok, out, err = pool_run(spec["create"], pool_env(cls, "", None, args.id, args.worktree, prefer))
     elif action == "start" and spec.get("start"):
-        ok, out, err = pool_run(spec["start"], pool_env(cls, placeholder, info, args.id, args.worktree))
+        ok, out, err = pool_run(spec["start"], pool_env(cls, placeholder, info, args.id, args.worktree, prefer))
     name, new_info = pool_info(out) if action == "create" and ok else (placeholder, info)
     if action == "create" and ok and name is None:
         ok, err = False, "create printed no JSON object with a valid name"
@@ -2368,6 +2404,8 @@ def main():
     w.add_argument("--worktree", help="sets the project whose class peak applies")
     w.add_argument("--priority", type=int, help="higher goes first; default: the task's priority, else 0")
     w.add_argument("--front", action="store_true", help="re-queue at the head (only for a run aborted by the coordinator)")
+    w.add_argument("--prefer", action="append", metavar="KEY=VALUE", help="pool class: take a resource whose info matches first; the create command gets MOP_PREFER_<KEY>")
+    w.add_argument("--resource", help="pool class: grant exactly this resource, or exit 3; never another one, never a new one")
     for name in ("unwait", "up", "move"):
         u = sub.add_parser(name)
         u.add_argument("cls", metavar="CLASS")
@@ -2691,9 +2729,17 @@ def main():
             return 0
         queue = state["queue"][args.cls]
         if args.cmd == "wait":
+            try:
+                prefer = parse_prefer(args.prefer)
+            except ValueError as e:
+                print(e)
+                return 2
+            if args.resource and not RESOURCE_NAME.match(args.resource):
+                print(f"{args.resource} is not a valid resource name")
+                return 2
             code, text = queue_entry(state, roster, args.cls, args.id, args.coordinator, args.holder, args.minutes,
                                      args.gib, args.cpus, args.commands, args.worktree, args.priority, args.front,
-                                     changed_by=args.coordinator)
+                                     changed_by=args.coordinator, prefer=prefer, resource=args.resource)
             if code == 0:
                 save(state, machine)
             print(text)
