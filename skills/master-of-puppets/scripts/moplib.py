@@ -240,9 +240,12 @@ def lock():
             os.mkdir(LOCK)
             return
         except FileExistsError:
-            if time.time() - os.path.getmtime(LOCK) > 60:
-                os.rmdir(LOCK)
-                continue
+            try:
+                if time.time() - os.path.getmtime(LOCK) > 60:
+                    os.rmdir(LOCK)
+                    continue
+            except FileNotFoundError:
+                continue  # the holder released the lock; try mkdir again
             if time.time() > deadline:
                 sys.exit("state lock busy for 30 s")
             time.sleep(0.2)
