@@ -624,6 +624,7 @@ def park_cmd(args):
             coord = roster["coordinators"].get(args.coordinator)
             if asleep(coord):
                 coord["status"] = "active"
+                coord.pop("sleptAt", None)
                 coord["heartbeat"] = now().isoformat()
                 log(f"active {args.coordinator}")
                 note(args.coordinator, f"{args.coordinator} is active")
@@ -733,6 +734,10 @@ def roster_cmd(args):
                     print(json.dumps({"parked": {"prs": cur.get("prs", []), "members": parked}}))
             if args.status and args.status != cur.get("status", "active"):
                 cur["status"] = args.status
+                if args.status == "idle":
+                    cur["sleptAt"] = now().isoformat()
+                else:
+                    cur.pop("sleptAt", None)
                 log(f"{args.status} {args.name}")
                 note(args.name, f"{args.name} is {args.status}")
                 if args.status == "idle":
@@ -764,6 +769,7 @@ def roster_cmd(args):
     wakes = args.cmd in ("enroll", "child") or (args.cmd == "member" and (args.mcmd == "add" or (args.mcmd == "update" and args.status in ("active", "pending"))))
     if wakes and cur.get("status") == "idle":
         cur["status"] = "active"
+        cur.pop("sleptAt", None)
         cur["heartbeat"] = now().isoformat()
         log(f"active {args.coordinator}")
         note(args.coordinator, f"{args.coordinator} is active")

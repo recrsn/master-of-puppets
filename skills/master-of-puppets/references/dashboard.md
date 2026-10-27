@@ -38,7 +38,7 @@ shows the leases (only when leases are on or in use): one lane per class with
 its status, then the running, queued and held entries. Needs you groups, streams
 and Parked collapse; the browser keeps each collapsed group collapsed.
 
-Events: the coordinators (live, stale, idle or general; focus, streams, links
+Events: the coordinators (live, stale, sleeping or general; focus, streams, links
 and notes), then the newest 200 shared-ledger entries, newest first.
 
 Config: the machine limits (`config set-machine`), each lease class
