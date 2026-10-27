@@ -152,8 +152,9 @@ Roster and members (coordinators write; members send messages, and request and r
        --general: a general-purpose coordinator with no fixed scope
   heartbeat --name C [--focus TEXT] [--pr N ...] [--status active|idle] | resign --name C
        --status idle: no work can move. Refused (exit 3) while a member is active or
-       pending. Paused members and their PRs stay C's as parked work. An idle
-       coordinator is not reported stale; resuming a member wakes it.
+       pending, or while C holds a lease or queue entry. Paused members and their PRs stay C's as parked work. An idle
+       coordinator stays live and is never reported stale; peer broadcasts and update
+       votes skip it. enroll, child, member add|update --status active and unpark wake it.
   stream add|update --coordinator C --name SLUG [--label TEXT] [--goal TEXT] [--pr N ...]
        update --owner C2 hands the stream to live coordinator C2
   stream close|reopen --coordinator C --name SLUG | stream list [--coordinator C]
@@ -295,7 +296,7 @@ from moplib import (
     INBOX, CLASS_NAME, read_json, write_json, load_machine, registry,
     class_names, project_key, load_project, save_project, class_peak, typical_minutes,
     suggested_minutes, over_limit, undersized, extend_lease, now, lock, unlock, log, note,
-    load_roster, save_roster, live, load, save, budget, order, queue_entry,
+    load_roster, save_roster, live, asleep, load, save, budget, order, queue_entry,
     say, deliver, notify, READS, memory_path, add_read_commands,
     read_cmd, run, worktree_pids, drain,
 )
@@ -367,7 +368,7 @@ def settle_proposal(p, roster, by):
     """Apply open proposal p when every live coordinator agrees, or when VOTE_WINDOW_MINUTES
     have passed with no objection (silence agrees). Returns the live coordinators still
     waited for."""
-    waiting = [n for n, c in roster["coordinators"].items() if live(c) and p["votes"].get(n, {}).get("vote") != "agree"]
+    waiting = [n for n, c in roster["coordinators"].items() if live(c) and not asleep(c) and p["votes"].get(n, {}).get("vote") != "agree"]
     due = now() - dt.datetime.fromisoformat(p["at"]) >= dt.timedelta(minutes=VOTE_WINDOW_MINUTES)
     if p["status"] != "open" or (waiting and not due):
         return waiting
@@ -575,7 +576,7 @@ def say_cmd(args):
         if not targets:
             print(f"direct: no roster entry with a session id for {args.to} (inbox only)")
     else:
-        targets = [(n, c.get("tool"), c.get("sessionId")) for n, c in roster["coordinators"].items() if n != args.sender and live(c)]
+        targets = [(n, c.get("tool"), c.get("sessionId")) for n, c in roster["coordinators"].items() if n != args.sender and live(c) and not asleep(c)]
     text = f"[{args.sender} via coordinator.py say] {args.message}"
     for name, tool, sid in targets:
         print(deliver(name, tool, sid, text))
@@ -620,6 +621,12 @@ def park_cmd(args):
             for key in ("parkedAt", "parkedUntil"):
                 m.pop(key, None)
             done = f"unparked {args.name}"
+            coord = roster["coordinators"].get(args.coordinator)
+            if asleep(coord):
+                coord["status"] = "active"
+                coord["heartbeat"] = now().isoformat()
+                log(f"active {args.coordinator}")
+                note(args.coordinator, f"{args.coordinator} is active")
             message = f"The user unparked {args.name} ({m.get('task', '')}) on the dashboard. Tell its member to resume."
         m["updatedAt"] = now().isoformat()
         save_roster(roster)
@@ -715,6 +722,12 @@ def roster_cmd(args):
                 if moving:
                     print(json.dumps({"not_idle": {"members": moving}}))
                     return 3
+                lstate = load()
+                leased = [f"{c} {h['id']}" for c in class_names() for h in lstate[c] if h.get("coordinator") == args.name]
+                queued = [f"{c} {q['id']}" for c in class_names() for q in lstate["queue"][c] if q.get("coordinator") == args.name]
+                if leased or queued:
+                    print(json.dumps({"not_idle": {"leases": leased, "queue": queued}}))
+                    return 3
                 parked = [m["name"] for m in mlist if m.get("status") == "paused"]
                 if parked or cur.get("prs"):
                     print(json.dumps({"parked": {"prs": cur.get("prs", []), "members": parked}}))
@@ -722,6 +735,8 @@ def roster_cmd(args):
                 cur["status"] = args.status
                 log(f"{args.status} {args.name}")
                 note(args.name, f"{args.name} is {args.status}")
+                if args.status == "idle":
+                    print(json.dumps({"asleep": "stop your heartbeat schedule and watchers; wake with heartbeat --status active"}))
             cur["heartbeat"] = now().isoformat()
             save_roster(roster)
             return 0
@@ -749,6 +764,7 @@ def roster_cmd(args):
     wakes = args.cmd in ("enroll", "child") or (args.cmd == "member" and (args.mcmd == "add" or (args.mcmd == "update" and args.status in ("active", "pending"))))
     if wakes and cur.get("status") == "idle":
         cur["status"] = "active"
+        cur["heartbeat"] = now().isoformat()
         log(f"active {args.coordinator}")
         note(args.coordinator, f"{args.coordinator} is active")
     if args.cmd == "enroll":
@@ -1192,7 +1208,7 @@ def update_blockers(proposal, roster, state):
         v = votes.get(name, {}).get("vote")
         if v == "object":
             why.append(f"{name} objects: {votes[name].get('text', '')}")
-        elif live(c) and v != "agree":
+        elif live(c) and not asleep(c) and v != "agree":
             why.append(f"no vote from live coordinator {name}")
     held = [h["id"] for c in class_names() for h in state[c]]
     if held:
@@ -1220,12 +1236,12 @@ def broadcast(sender, message, members=False):
     roster = load_roster()
     text = f"[{sender} via coordinator.py] {message}"
     for n, c in roster["coordinators"].items():
-        if n != sender and live(c):
+        if n != sender and live(c) and not asleep(c):
             print(deliver(n, c.get("tool"), c.get("sessionId"), text))
     if not members:
         return
     for coord, mlist in roster["members"].items():
-        if not live(roster["coordinators"].get(coord)):
+        if not live(roster["coordinators"].get(coord)) or asleep(roster["coordinators"].get(coord)):
             continue
         for m in mlist:
             if m.get("status") != "done":
