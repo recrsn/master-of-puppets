@@ -265,10 +265,11 @@ Watchers and install
        watch cloud reads cloud-<C>.txt (a CodeRabbit cloud task id or URL,
        then the member name, per line) and prints each task's state change from
        `coderabbit code show --agent`
-  install [--replace --by C]  copy moplib.py, coordinator.py and puppet.py into the state dir when absent.
+  install [--replace --by C [--ignore-leases]]  copy moplib.py, coordinator.py and puppet.py into the state dir when absent.
        A live copy that differs stops the install (all or nothing). --replace installs only
        the proposed update of exactly these files, once the user approved it and every live
-       coordinator agreed, while no lease is granted; it holds the state lock, so it is the
+       coordinator agreed, while no lease is granted (--ignore-leases, only on the user's word, skips
+       that check; held leases and their runs go on); it holds the state lock, so it is the
        only install, and it writes the file hashes to the ledger (no message needed). A full
        install removes obsolete helpers (lease.py). Each run except a refused --replace
        records this skill copy in source.json; roster, whoami, coordinate, heartbeat and
@@ -279,7 +280,7 @@ Watchers and install
   update agree --by C [--text TEXT] | update object --by C --text TEXT   record the vote
        and message every live peer coordinator
   update approve --by C --quote TEXT    the user's own words in C's session approve it
-  update status                         votes, approval, blockers; exit 0 ready, 3 not
+  update status [--ignore-leases]       votes, approval, blockers; exit 0 ready, 3 not
 
 A coordinator is live while its heartbeat is newer than 40 minutes. coordinate and
 heartbeat exit 3 when a PR is owned by another live coordinator; enroll and member
@@ -1220,8 +1221,9 @@ def digest_of(hashes):
     return hashlib.sha256("".join(hashes[n] for n in FILES).encode()).hexdigest()[:12]
 
 
-def update_blockers(proposal, roster, state):
-    """Why proposal cannot be installed now: an empty list when it can."""
+def update_blockers(proposal, roster, state, ignore_leases=False):
+    """Why proposal cannot be installed now: an empty list when it can. ignore_leases (the user's word)
+    drops the granted-lease blocker."""
     if not proposal:
         return ["no update proposal; run update propose from the skill copy"]
     why = []
@@ -1239,7 +1241,7 @@ def update_blockers(proposal, roster, state):
         elif live(c) and not asleep(c) and v != "agree":
             why.append(f"no vote from live coordinator {name}")
     held = [h["id"] for c in class_names() for h in state[c]]
-    if held:
+    if held and not ignore_leases:
         why.append(f"leases are granted: {', '.join(held)}; install between grants")
     return why
 
@@ -1292,7 +1294,7 @@ def update_locked(args, announce):
         roster, state = load_roster(), load()
         proposal = read_json(UPDATE)
         if args.ucmd == "status":
-            why = update_blockers(proposal, roster, state)
+            why = update_blockers(proposal, roster, state, args.ignore_leases)
             if proposal:
                 print(json.dumps({k: proposal.get(k) for k in ("digest", "git", "source", "by", "at", "text", "votes", "approval", "rejected", "installed")}, indent=1))
             print("ready to install" if not why else "not ready:\n  " + "\n  ".join(why))
@@ -2292,7 +2294,7 @@ def install_cmd(args):
     lock()
     try:
         proposal = read_json(UPDATE)
-        why = update_blockers(proposal, load_roster(), load())
+        why = update_blockers(proposal, load_roster(), load(), args.ignore_leases)
         if proposal and proposal["files"] != file_hashes(here):
             why.append(f"this copy is not the proposed update {proposal['digest']}; propose it with update propose")
         if why:
@@ -2660,6 +2662,7 @@ def main():
     ins.add_argument("--replace", action="store_true",
                      help="replace live copies that differ: only the proposed update, approved by the user and agreed by every live coordinator")
     ins.add_argument("--by", help="the installing coordinator; required with --replace")
+    ins.add_argument("--ignore-leases", action="store_true", help="install although leases are granted; only on the user's word")
     up = sub.add_parser("update")
     usub = up.add_subparsers(dest="ucmd", required=True)
     upr = usub.add_parser("propose")
@@ -2672,7 +2675,8 @@ def main():
     uap = usub.add_parser("approve")
     uap.add_argument("--by", required=True)
     uap.add_argument("--quote", required=True, help="the user's own words in your session")
-    usub.add_parser("status")
+    ust = usub.add_parser("status")
+    ust.add_argument("--ignore-leases", action="store_true", help="do not count granted leases as a blocker")
     args = p.parse_args()
     if args.cmd in ("roster", "whoami", "coordinate", "heartbeat", "status"):
         version_warning()
