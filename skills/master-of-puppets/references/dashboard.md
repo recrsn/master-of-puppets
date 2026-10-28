@@ -13,6 +13,14 @@ place. A Config or Rules form with unsaved edits holds its page until saved. Eve
 it samples the host and pushes a `host` event; the host values update without a
 re-render. When the server stops, the green dot in the header turns red with
 "Offline".
+The server also runs the one PR poller for the machine: every 30 s (`prsPollS`)
+it reads each PR in `prs-*.txt` and the roster once, with a conditional
+`gh api` request per PR (a 304 costs no rate limit; an open PR is also fully
+refreshed every 2 min, since checks and reviews do not change the 304). It writes
+`prs-state.json` (its `at` is the poller's heartbeat) and appends changes to
+`prs-events.log`; `coordinator.py watch prs` tails them. The Dashboard shows a
+"Pull requests" section from `prs-state.json`: blocked, then open, then done, each
+row with state, base, merge, review, checks, owner and check age.
 A file opened in an editor side panel does not update; do not offer that.
 
 `server.py` fills the page shell `scripts/dashboard.html` (styles and the

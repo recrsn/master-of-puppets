@@ -245,7 +245,7 @@ Peer-coordinator messaging
        permission prompts holds a socket message for the user's approval.
 
 Watchers and install
-  watch inbox --me C | watch expiry | watch prs --me C [--interval S] | watch cloud --me C [--interval S]
+  watch inbox --me C | watch expiry | watch prs --me C | watch cloud --me C [--interval S]
        Monitor sources. watch inbox reads inbox.jsonl only, never events.log. It prints
        the INBOX messages to C or to all, among them (each is a message in C's inbox):
          REQUEST CLASS ID ...   C's member queued or changed an entry: check and grant it
@@ -259,6 +259,9 @@ Watchers and install
        and, from the queue state each 2 s:
          HEAD CLASS ID ...      an entry of C became the first ready entry: acquire it
        watch expiry prints each expired lease once, with left=N processes in its worktree.
+       watch prs prints the state of each PR in prs-<C>.txt, then each change, from the shared
+       poller in the dashboard server (one poll per PR for the machine, conditional by ETag), and
+       PR-WATCHER down when that poller stops: start server.py.
        watch cloud reads cloud-<C>.txt (a CodeRabbit cloud task id or URL,
        then the member name, per line) and prints each task's state change from
        `coderabbit code show --agent`
@@ -301,7 +304,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import (
     DIR, CONFIG, TOOLS, MEMBER_TOOLS, SLUG, FILES, OBSOLETE, SOURCE, version_warning, PEAKS,
-    INBOX, CLASS_NAME, read_json, write_json, load_machine, registry,
+    INBOX, PRS_STATE, PRS_EVENTS, PRS_POLL_S, CLASS_NAME, read_json, write_json, load_machine, registry,
     class_names, project_key, load_project, save_project, class_peak, typical_minutes,
     suggested_minutes, over_limit, undersized, extend_lease, now, lock, unlock, log, note,
     load_roster, save_roster, live, asleep, load, save, budget, order, queue_entry,
@@ -2172,30 +2175,30 @@ def watch_expiry():
         time.sleep(60)
 
 
-def watch_prs(me, interval):
-    """State changes of the PRs listed in prs-<me>.txt ("owner/repo#123" per line)."""
+def watch_prs(me):
+    """State changes of the PRs listed in prs-<me>.txt ("owner/repo#123" per line), read from the
+    shared poller's prs-state.json and prs-events.log (the dashboard server polls, with ETags).
+    Prints each PR's current state first, then each change. PR-WATCHER down when the poller stops."""
     path = os.path.join(DIR, f"prs-{me}.txt")
     open(path, "a").close()
-    last = {}
-    fields = "state,baseRefName,isDraft,mergeStateStatus,autoMergeRequest,reviewDecision,mergeCommit"
-    while True:
-        for raw in open(path).read().splitlines():
-            ref = raw.split()[0] if raw.split() else ""
-            if not ref or ref.startswith("#") or "#" not in ref:
-                continue
-            repo, num = ref.rsplit("#", 1)
-            r = subprocess.run(["gh", "pr", "view", num, "--repo", repo, "--json", fields], capture_output=True, text=True, stdin=subprocess.DEVNULL)
-            if r.returncode != 0:
-                line = "error " + " ".join(r.stderr.split())[:200]
-            else:
-                d = json.loads(r.stdout)
-                sha = f" sha={d['mergeCommit']['oid'][:12]}" if d.get("mergeCommit") else ""
-                line = (f"{d['state']} base={d['baseRefName']} draft={str(d['isDraft']).lower()} merge={d['mergeStateStatus']} "
-                        f"automerge={'on' if d.get('autoMergeRequest') else 'off'} review={d.get('reviewDecision') or 'none'}{sha}")
-            if last.get(ref) != line:
-                print(f"PR {ref} {line}", flush=True)
-                last[ref] = line
-        time.sleep(interval)
+
+    def mine():
+        return {(raw.split() or [""])[0] for raw in open(path).read().splitlines()}
+    state = read_json(PRS_STATE) or {}
+    for ref, rec in (state.get("prs") or {}).items():
+        if ref in mine() and rec.get("line"):
+            print(f"PR {ref} {rec['line']}", flush=True)
+    down = False
+    for p, line in follow([PRS_EVENTS]):
+        if p is None:
+            at = (read_json(PRS_STATE) or {}).get("at", 0)
+            stale = time.time() - at > 3 * ((read_json(PRS_STATE) or {}).get("pollS") or PRS_POLL_S) + 60
+            if stale != down:
+                down = stale
+                print("PR-WATCHER down: no PR poll for a while; start `python3 -I <skill>/scripts/server.py`" if down
+                      else "PR-WATCHER up", flush=True)
+        elif line.split(" ", 2)[1:2] and line.split(" ", 2)[1] in mine():
+            print(line, flush=True)
 
 
 def cloud_state(task):
@@ -2263,7 +2266,7 @@ def watch_cmd(args):
         elif args.what == "pool":
             watch_pool(args.me)
         else:
-            watch_prs(args.me, args.interval)
+            watch_prs(args.me)
     except KeyboardInterrupt:
         return 0
     return 0
@@ -2652,7 +2655,7 @@ def main():
     wa = sub.add_parser("watch")
     wa.add_argument("what", choices=("inbox", "expiry", "prs", "cloud", "auto", "pool"))
     wa.add_argument("--me", help="coordinator name (inbox, prs, cloud)")
-    wa.add_argument("--interval", type=int, default=180, help="seconds between PR or cloud task polls")
+    wa.add_argument("--interval", type=int, default=180, help="seconds between cloud task polls")
     ins = sub.add_parser("install")
     ins.add_argument("--replace", action="store_true",
                      help="replace live copies that differ: only the proposed update, approved by the user and agreed by every live coordinator")

@@ -1050,3 +1050,131 @@ def read_cmd(args):
         if not entries:
             print("  (none)")
     return 0
+
+
+# ---------------------------------------------------------------- PR watching
+# One poller per machine (the dashboard server runs it) reads every watch list once per
+# cycle and keeps prs-state.json and prs-events.log. `coordinator.py watch prs` only tails them.
+
+PRS_STATE = os.path.join(DIR, "prs-state.json")
+PRS_EVENTS = os.path.join(DIR, "prs-events.log")
+PRS_POLL_S = 30  # seconds between cycles (config.json: prsPollS)
+PRS_FULL_S = 120  # an open PR is fully refreshed at least this often: a 304 on the PR hides check and review changes
+PR_FIELDS = "state,title,url,baseRefName,isDraft,mergeStateStatus,autoMergeRequest,reviewDecision,mergeCommit,statusCheckRollup"
+
+
+def pr_refs():
+    """{"owner/repo#n": [who, ...]} from the prs-<coordinator>.txt watch lists and the roster's members."""
+    out = {}
+    for name in sorted(os.listdir(DIR)):
+        if name.startswith("prs-") and name.endswith(".txt"):
+            for raw in open(os.path.join(DIR, name)).read().splitlines():
+                ref = (raw.split() or [""])[0]
+                if "#" in ref and not ref.startswith("#") and ref.rpartition("#")[2].isdigit():
+                    out.setdefault(ref, []).append(name[4:-4])
+    for coord, members in ((read_json(ROSTER) or {}).get("members") or {}).items():
+        for m in members:
+            for n in m.get("prs", []) if m.get("repo") else []:
+                who = out.setdefault(f"{m['repo']}#{n}", [])
+                if f"{coord}/{m['name']}" not in who:
+                    who.append(f"{coord}/{m['name']}")
+    return out
+
+
+def pr_line(d):
+    """The one-line state that `watch prs` prints, from a `gh pr view --json` record."""
+    sha = f" sha={d['mergeCommit']['oid'][:12]}" if d.get("mergeCommit") else ""
+    return (f"{d['state']} base={d['baseRefName']} draft={str(d['isDraft']).lower()} merge={d['mergeStateStatus']} "
+            f"automerge={'on' if d.get('autoMergeRequest') else 'off'} review={d.get('reviewDecision') or 'none'}{sha}")
+
+
+def pr_checks(d):
+    """pass, fail, pending or none, from statusCheckRollup (check runs and commit statuses)."""
+    states = [(c.get("conclusion") or c.get("status") or c.get("state") or "").upper() for c in d.get("statusCheckRollup") or []]
+    if any(s in ("FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE") for s in states):
+        return "fail"
+    if any(s in ("", "PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "EXPECTED", "REQUESTED") for s in states):
+        return "pending"
+    return "pass" if states else "none"
+
+
+def pr_probe(ref, etag):
+    """Conditional GET of the PR: (status, etag). 304 means nothing changed and costs no rate limit."""
+    repo, num = ref.rsplit("#", 1)
+    cmd = ["gh", "api", "-i", "--silent", f"repos/{repo}/pulls/{num}"]
+    if etag:
+        cmd[2:2] = ["-H", f"If-None-Match: {etag}"]
+    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+    m = re.match(r"HTTP/\S+ (\d+)", r.stdout)
+    if not m:
+        return 0, " ".join((r.stderr or r.stdout or "no response").split())[:200]
+    head = r.stdout.split("\n\n", 1)[0].split("\r\n\r\n", 1)[0]
+    tag = re.search(r"(?im)^etag:\s*(\S.*?)\s*$", head)
+    return int(m.group(1)), (tag.group(1) if tag else None)
+
+
+def pr_view(ref):
+    repo, num = ref.rsplit("#", 1)
+    r = subprocess.run(["gh", "pr", "view", num, "--repo", repo, "--json", PR_FIELDS], capture_output=True, text=True,
+                       stdin=subprocess.DEVNULL, timeout=60)
+    if r.returncode != 0:
+        return None, " ".join(r.stderr.split())[:200]
+    return json.loads(r.stdout), None
+
+
+def pr_refresh(ref, old, at):
+    """The new record for one PR: a 304 keeps the old one, a change or the full-refresh age refetches it."""
+    old = old or {}
+    status, etag = pr_probe(ref, old.get("etag"))
+    stale = not old.get("line") or old.get("error") or (
+        old.get("state") == "OPEN" and (at - old.get("fullAt", 0)) >= PRS_FULL_S)
+    if status == 304 and not stale:
+        return {**old, "checkedAt": at, "probe": 304}
+    if status not in (200, 304):
+        return {**old, "checkedAt": at, "probe": status, "error": etag or f"HTTP {status}"}
+    d, err = pr_view(ref)
+    if d is None:
+        return {**old, "checkedAt": at, "probe": status, "error": err}
+    line = pr_line(d)
+    return {"etag": etag if status == 200 else old.get("etag"), "line": line, "state": d["state"], "title": d.get("title", ""),
+            "url": d.get("url", ""), "base": d["baseRefName"], "draft": d["isDraft"], "merge": d["mergeStateStatus"],
+            "automerge": bool(d.get("autoMergeRequest")), "review": d.get("reviewDecision") or "none", "checks": pr_checks(d),
+            "checkedAt": at, "fullAt": at, "probe": status,
+            "changedAt": at if line != old.get("line") else old.get("changedAt", at)}
+
+
+def poll_prs(cache):
+    """One cycle over every watched PR (eight at a time); appends a `PR <ref> <line>` event per change
+    and returns the new cache. A PR no list names any more is dropped."""
+    from concurrent.futures import ThreadPoolExecutor
+    refs = pr_refs()
+    at = time.time()
+    with ThreadPoolExecutor(8) as pool:
+        new = dict(zip(refs, pool.map(lambda r: pr_refresh(r, cache.get(r), at), refs)))
+    events = []
+    for ref, rec in new.items():
+        old = cache.get(ref) or {}
+        if rec.get("error") and rec.get("error") != old.get("error"):
+            events.append(f"PR {ref} error {rec['error']}")
+        elif not rec.get("error") and rec.get("line") != old.get("line"):
+            events.append(f"PR {ref} {rec['line']}")
+    if events:
+        with open(PRS_EVENTS, "a") as f:
+            f.write("\n".join(events) + "\n")
+    for ref, rec in new.items():
+        rec["who"] = refs[ref]
+    return new
+
+
+def run_pr_poller():
+    """Forever: poll, then write prs-state.json (its `at` is the poller's heartbeat). Seeds from that file,
+    so a restart sends no event for a PR that did not change."""
+    cache = (read_json(PRS_STATE) or {}).get("prs") or {}
+    while True:
+        try:
+            cache = poll_prs(cache)
+        except Exception as exc:  # keep polling; the state file shows the failure
+            print(f"pr poll failed: {exc!r}", file=sys.stderr, flush=True)
+        every = int((load_machine() or {}).get("prsPollS") or PRS_POLL_S)
+        write_json(PRS_STATE, {"at": time.time(), "pollS": every, "prs": cache})
+        time.sleep(every)

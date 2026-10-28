@@ -52,7 +52,7 @@ import urllib.request
 # python3 -I keeps the script's own directory off sys.path; moplib is its sibling.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
-from moplib import CLASS_NAME, MEMORY, load_machine, load_project, registry  # noqa: E402
+from moplib import CLASS_NAME, MEMORY, PRS_STATE, load_machine, load_project, registry, run_pr_poller  # noqa: E402
 
 DIR = os.path.expanduser(os.environ.get("MACHINE_LEASE_DIR") or "~/.local/state/machine-leases")
 DEFAULT_REGISTRY = {
@@ -770,12 +770,49 @@ def render_page(host):
         f'<span class="t3">{e(c.get("focus", ""))}</span></div>'
         for n, c in sorted(coords.items()) if c.get("status") == "idle")
     sleepers_html = f'<section class="sec"><div class="sec-h"><h2>Sleeping</h2></div><div class="sleepers">{sleepers}</div></section>' if sleepers else ""
+    # ---- pull requests: the shared poller's prs-state.json, open and blocked first
+    pr_state = load(PRS_STATE, {})
+    pr_polled = pr_state.get("at")
+    pr_stale = not pr_polled or time.time() - pr_polled > 3 * (pr_state.get("pollS") or 30) + 60
+
+    def pr_dot(p):
+        if p.get("error") or p.get("checks") == "fail" or p.get("merge") in ("DIRTY", "BLOCKED") and p.get("review") == "CHANGES_REQUESTED":
+            return "blocked"
+        if p.get("state") != "OPEN":
+            return "done"
+        return "ontrack" if p.get("merge") == "CLEAN" and p.get("review") in ("APPROVED", "none") else "progress"
+
+    def pr_rank(item):
+        p = item[1]
+        return ({"blocked": 0, "progress": 1, "ontrack": 2, "done": 3}[pr_dot(p)], -(p.get("changedAt") or 0))
+
+    def pr_row(ref, p):
+        changed = dt.datetime.fromtimestamp(p["changedAt"], dt.timezone.utc) if p.get("changedAt") else None
+        checked = dt.datetime.fromtimestamp(p["checkedAt"], dt.timezone.utc) if p.get("checkedAt") else None
+        state = p.get("state") or "?"
+        flags = ["draft" if p.get("draft") else "", f"base {p['base']}" if p.get("base") else "",
+                 f"merge {p['merge'].lower()}" if p.get("merge") else "", f"review {p['review']}" if p.get("review") else "",
+                 f"checks {p['checks']}" if p.get("checks") else "", "auto-merge on" if p.get("automerge") else ""]
+        body = (meta_line(state, *flags, ", ".join(p.get("who") or []), f"checked {ago_short(checked, now)}" + ("" if ago_short(checked, now) == "now" else " ago") if checked else "")
+                + (f'<p class="danger">{e(p["error"])}</p>' if p.get("error") else "")
+                + (f'<div class="links">{link({"href": p["url"], "label": "Open PR"})}</div>' if p.get("url") else ""))
+        return row(dom_id("pr", ref), pr_dot(p), f"{ref} {p.get('title', '')}".strip(), changed, body, title_cls="t2")
+
+    pr_items = sorted(pr_state.get("prs", {}).items(), key=pr_rank)
+    pr_open = sum(1 for _, p in pr_items if p.get("state") == "OPEN")
+    pr_html = (
+        f'<section class="sec" id="prs"><details class="grp" id="fold-prs" data-fold open><summary class="sec-h"><h2>Pull requests</h2>'
+        f'<span class="n">{pr_open} open · {len(pr_items)} watched</span>'
+        + ('<span class="warn">poller stopped</span>' if pr_stale else "") + "</summary>"
+        + ("".join(pr_row(ref, p) for ref, p in pr_items) or '<p class="none">None watched.</p>') + "</details></section>"
+        if pr_items else ""
+    )
     desk = (
         '<main class="desk"><div class="col-main">'
         f'<section class="sec needs"><div class="sec-h"><h2>Needs you</h2><span class="n {worst}">{need_count}</span></div>'
         + ("".join(need_group(g) for g in groups) or '<p class="none">None</p>')
         + f'</section><section class="sec"><div class="sec-h"><h2>Work</h2><span class="n">{work_count}</span></div>{board}</section>'
-        f'{parked_html}{sleepers_html}</div><aside class="col-side">{lease_panel}</aside></main>'
+        f'{pr_html}{parked_html}{sleepers_html}</div><aside class="col-side">{lease_panel}</aside></main>'
     )
     events = (
         '<main class="page"><section class="sec"><div class="sec-h"><h2>Coordinators</h2></div>'
@@ -1068,7 +1105,7 @@ changed = threading.Condition()
 
 
 def inputs():
-    paths = [os.path.join(DIR, n) for n in ("leases.json", "roster.json", "ledger.jsonl", "config.json")]
+    paths = [os.path.join(DIR, n) for n in ("leases.json", "roster.json", "ledger.jsonl", "config.json")] + [PRS_STATE]
     paths += glob.glob(os.path.join(DIR, "projects", "*.json")) + glob.glob(os.path.join(DIR, "dashboard", "*-state.json"))
     paths += glob.glob(os.path.join(MEMORY, "*.json"))
     out = []
@@ -1292,6 +1329,7 @@ def main():
     server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     threading.Thread(target=host_sampler, daemon=True).start()
     threading.Thread(target=watcher, daemon=True).start()
+    threading.Thread(target=run_pr_poller, daemon=True).start()
     print(f"dashboard: http://localhost:{PORT}/", flush=True)
     server.serve_forever()
 
