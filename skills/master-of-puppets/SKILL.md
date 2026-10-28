@@ -56,7 +56,8 @@ proposal and each vote also reach the other coordinators as messages:
    Either one is the user's approval for every coordinator.
 4. Any coordinator runs `update status`; on "ready to install", it runs
    `install --replace --by <you>` once. The command refuses while a lease is
-   granted, while a live coordinator has not agreed, or after another install,
+   granted (unless the user said to ignore leases: add `--ignore-leases` to `update status` and `install`;
+   held leases and their runs go on), while a live coordinator has not agreed, or after another install,
    and it writes the file hashes to the ledger. Restart a dashboard you own.
 
 `update` and `install` message every live coordinator themselves; do not send AGREE, installer elections or install reports by `say`.
