@@ -260,7 +260,7 @@ Watchers and install
          HEAD CLASS ID ...      an entry of C became the first ready entry: acquire it
        watch expiry prints each expired lease once, with left=N processes in its worktree.
        watch prs prints the state of each PR in prs-<C>.txt, then each change, from the shared
-       poller in the dashboard server (one poll per PR for the machine, conditional by ETag), and
+       poller in the dashboard server (one poll for the machine, one conditional request per repo), and
        PR-WATCHER down when that poller stops: start server.py.
        watch cloud reads cloud-<C>.txt (a CodeRabbit cloud task id or URL,
        then the member name, per line) and prints each task's state change from
@@ -2179,7 +2179,7 @@ def watch_expiry():
 
 def watch_prs(me):
     """State changes of the PRs listed in prs-<me>.txt ("owner/repo#123" per line), read from the
-    shared poller's prs-state.json and prs-events.log (the dashboard server polls, with ETags).
+    shared poller's prs-state.json and prs-events.log (the dashboard server polls, one conditional request per repo).
     Prints each PR's current state first, then each change. PR-WATCHER down when the poller stops."""
     path = os.path.join(DIR, f"prs-{me}.txt")
     open(path, "a").close()

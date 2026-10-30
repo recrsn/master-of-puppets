@@ -14,9 +14,12 @@ it samples the host and pushes a `host` event; the host values update without a
 re-render. When the server stops, the green dot in the header turns red with
 "Offline".
 The server also runs the one PR poller for the machine: every 30 s (`prsPollS`)
-it reads each PR in `prs-*.txt` and the roster once, with a conditional
-`gh api` request per PR (a 304 costs no rate limit; an open PR is also fully
-refreshed every 2 min, since checks and reviews do not change the 304). It writes
+it reads each PR in `prs-*.txt` and the roster once. One conditional `gh api`
+request per repo lists its 100 latest updated PRs (a 304 costs no rate limit); a
+PR is fetched with `gh pr view` only when its `updated_at` moved. An open PR is
+also fetched every 2 min, since checks and reviews do not move `updated_at`.
+Merged and closed PRs are not polled. A bare number in `prs-<C>.txt` takes the
+repo of that coordinator's members. It writes
 `prs-state.json` (its `at` is the poller's heartbeat) and appends changes to
 `prs-events.log`; `coordinator.py watch prs` tails them. The Dashboard shows a
 "Pull requests" section from `prs-state.json`: blocked, then open, then done, each
