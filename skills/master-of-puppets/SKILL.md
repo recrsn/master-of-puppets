@@ -131,7 +131,7 @@ skill; `references/protocol.md` lists the coordinator side.
    Only an idle coordinator stops it ("When your work is done").
 6. Run `python3 -I <skill>/scripts/server.py` in the background (a no-op when
    one runs) and give the user `http://localhost:4720/`. The server also polls
-   every watched PR once for the machine (conditional requests by ETag); `watch prs`
+   every watched PR once for the machine (one conditional request per repo); `watch prs`
    only reads that poll. `PR-WATCHER down` means the server stopped: start it.
 7. Tell the other coordinators: `coordinator.py say --from <slug> --message "<slug> coordinates <focus>, PRs ..."`.
 8. Tell the user: "To put an existing thread under this coordinator, run
