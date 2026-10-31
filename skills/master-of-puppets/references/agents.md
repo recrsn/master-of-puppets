@@ -7,7 +7,7 @@ Use only capabilities present in the current session.
 
 | Purpose | Claude | Codex |
 | --- | --- | --- |
-| Current session identity | `$CLAUDE_CODE_SESSION_ID` | `$CODEX_THREAD_ID` when exported; otherwise use the current thread ID supplied by the app. Do not invent an ID or use a subagent ID as a thread ID. |
+| Current session identity | `$CLAUDE_CODE_SESSION_ID` | `$CODEX_THREAD_ID` when exported; otherwise use the current thread ID supplied by the app, and run each `coordinator.py` command as `CODEX_THREAD_ID=<thread id> coordinator.py ...`. Do not invent an ID or use a subagent ID as a thread ID. |
 | Find existing sessions | `ListAgents` | Desktop `list_threads`; CLI `codex agents` (check its help for supported options). |
 | Message another session | `SendMessage` | Desktop `send_message_to_thread` with the returned `threadId` and `hostId` when available; CLI `codex queue --thread <id> --message "<text>"`. |
 | Inspect or wait for a session | Session tools | Desktop `read_thread` for context and `wait_threads` for compact progress; carry its cursor as `afterCursor`. |
@@ -19,7 +19,7 @@ Use only capabilities present in the current session.
 | Scheduled heartbeat | `CronCreate`; `ScheduleWakeup` inside `/loop` | Desktop `automation_update` with `kind: "heartbeat"`, attached to the coordinator chat. See below. |
 | Watch a command | `Monitor` | Run the watcher through `exec_command`, then read it with `write_stdin`, or start a background process with output saved outside the repository. See below. |
 | Bind a PR and repair blockers | `ccd_pr` + Auto-fix when available | Desktop `attach_artifact` with the PR URL, then repair valid review/CI blockers in the owner chat. PR attachment does not start Auto-fix. |
-| Start or track a CodeRabbit cloud task | `coderabbit code` CLI; `Monitor` on `coordinator.py watch cloud` | `coderabbit code` CLI; `coordinator.py watch cloud` as a long-lived command. See [coderabbit-cloud.md](coderabbit-cloud.md). |
+| Start or track a CodeRabbit cloud task | `coderabbit code` CLI; the `CLOUD` lines of `coordinator.py watch` | `coderabbit code` CLI; the `CLOUD` lines of `coordinator.py watch`. See [coderabbit-cloud.md](coderabbit-cloud.md). |
 | Open the dashboard | Browser tools | Desktop `open_in_codex` with browser target `http://localhost:4720/`. |
 
 ## Messaging
@@ -39,8 +39,8 @@ stops. Do not replace it with a standalone cron job unless the user requests
 that mode. If scheduling is unavailable, report that gap; a shell watcher
 does not supply scheduled agent turns.
 
-Codex has no required `Monitor` tool. Run `coordinator.py watch inbox`, `watch prs`
-and (when leases are on) `watch expiry` as long-lived commands. Save watcher
+Codex has no required `Monitor` tool. Run `coordinator.py watch` as a
+long-lived command. Save watcher
 output outside the repository and track how much was read so each heartbeat
 can consume new events. `write_stdin` reads a live `exec_command` session;
 check background logs and process liveness when using detached processes.

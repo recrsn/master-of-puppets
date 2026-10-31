@@ -40,14 +40,13 @@ observed peak unless you tell me why the run is smaller.
 | `JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs ... — phase — commands — parent <parent\|none>` | `member add [--parent <parent>]`, then WELCOME. A task marked `scheduled:` or `sweep:` is background work (`references/leases.md`, "Priority") |
 | `UPDATE — <name> — <phase> — <fact>` | `member update` |
 | `CHILD TASK STARTED — <name> — <child task> — <tool> <child session id> — PRs <n ...\|none>` (after the runtime confirms the start) | `child --parent <name>` (puppet skill, section 6) |
-| `CLOUD UPDATE — <member> — <taskId> — <state> — <fact>` (from the watch helper) | `member update --name <member>`, then act (`references/coderabbit-cloud.md`, "Track") |
-| `CLOUD TASK — <name> — <taskId> — <url> — <task> — PRs <n>` | `member add --tool coderabbit`, `cloud-<slug>.txt`, `watch cloud` (`references/coderabbit-cloud.md`, "Record") |
+| `CLOUD TASK — <name> — <taskId> — <url> — <task> — PRs <n>` | `member add --tool coderabbit`, `cloud-<slug>.txt` (`references/coderabbit-cloud.md`, "Record") |
 | `USER SYNC — <one line>` | `note`, `member update --latest` |
-| `REQUEST <CLASS> <id> ...` in `watch inbox` (sent by the member's `puppet.py request`) | check and grant (`references/leases.md`, "Granting") |
+| `REQUEST <CLASS> <id> ...` in `watch` (sent by the member's `puppet.py request`) | check and grant (`references/leases.md`, "Granting") |
 | `LEASE SIZE — <id> — <why this run is smaller than the observed peak>` | your decision: `acquire --accept-size` when the reason fits the commands, else LEASE RESIZE (`references/leases.md`, "Sizing") |
 | `CONFIG <what> by user: ...`, or `MEMORY <scope> <id> ...` naming `by user` (a save on the dashboard's Config or Rules page) | approve it automatically: apply it; never ask, revert or relay it (SKILL.md, "Memory") |
-| `CLASS DEFAULTS PROPOSED <id> ...` in `watch inbox` (a peer's `config propose`) | check your observations of that class, then `config agree` or `config object --text`; never ask the user (`references/leases.md`, "Class defaults by vote") |
-| `EXTEND <CLASS> <id> <n> min ...` in `watch inbox` (sent by the member's `puppet.py extend`) | your decision: `coordinator.py extend`, or tell it to release (`references/leases.md`, "Extending") |
+| `CLASS DEFAULTS PROPOSED <id> ...` in `watch` (a peer's `config propose`) | check your observations of that class, then `config agree` or `config object --text`; never ask the user (`references/leases.md`, "Class defaults by vote") |
+| `EXTEND <CLASS> <id> <n> min ...` in `watch` (sent by the member's `puppet.py extend`) | your decision: `coordinator.py extend`, or tell it to release (`references/leases.md`, "Extending") |
 | `LEAVE — <name>` | `member remove` |
 | `HANDOFF REQUEST — <name> — to <coordinator\|any> — PRs <n> — note <path>` | `PAUSE` its PRs, then offer (`references/handoff.md`) |
 
@@ -105,7 +104,7 @@ in the ledger; member messages need no shared inbox copy.
 - Codex subagents in the same tree: `collaboration.send_message` (or
   `collaboration.followup_task` for new work). These IDs are not app thread IDs.
 - Coordinator to coordinator only:
-  `coordinator.py say --from <name> --to <name> --message "<text>"`
+  `coordinator.py say --to <name> --message "<text>"`
   Send only what the other coordinator must act on and the shared records do
   not show: blockers, order changes that no command records. A general
   coordinator's one `WORK REQUEST` gets a `HANDOFF` reply only from a
@@ -119,7 +118,7 @@ in the ledger; member messages need no shared inbox copy.
   | Instead of a message about | Use |
   | --- | --- |
   | a release, its result, a drain or cleanup receipt | the release event (`events --id <id>`), `drain-check` |
-  | "your entry is the head", a priority change | `watch inbox` HEAD (from queue state) and PRIORITY lines |
+  | "your entry is the head", a priority change | `watch` HEAD (from queue state) and PRIORITY lines |
   | an admission hold or its clearance | `admission hold\|clear` |
   | a rule or limit change | `memory add\|update\|remove` (messages every live coordinator and member) or `config set-*` with `--reason` (messages every live coordinator only; tell a member only what changes for its task) |
   | a member handoff: offer, custody accepted, complete | `member transfer`, `member accept` |
@@ -127,7 +126,7 @@ in the ledger; member messages need no shared inbox copy.
   | which open PRs touch a file | `prs --path` |
   | the user's answer that concerns every coordinator | `decision add --scope machine` |
   (omit `--to` to reach every live coordinator). It appends to `inbox.jsonl`
-  (`coordinator.py watch inbox` shows it), then delivers directly: a Claude session
+  (`coordinator.py watch` shows it), then delivers directly: a Claude session
   through its inbox socket, a Codex thread through `codex queue`.
   For Desktop direct delivery, use `say --no-direct` for the inbox record,
   then `send_message_to_thread` once; do not duplicate direct delivery.
@@ -165,8 +164,9 @@ in the ledger; member messages need no shared inbox copy.
   chat does not itself authorize a reply; get the user's authorization when
   the tool requires it. Enrollment does not override that requirement.
 - After Claude `/clear`, or a move to a new Codex thread, the session id
-  changes: a member sends JOIN again, a coordinator refreshes its roster
-  session id. Codex context compaction alone is not a new thread.
+  changes: a member sends JOIN again; a coordinator gets its name back with
+  the name handoff (SKILL.md, "Name handoff"). Codex context compaction
+  alone is not a new thread.
 - Deep links for the dashboard: Claude `claude://claude.ai/epitaxy/<sessionId>`,
   Codex `codex://threads/<threadId>`.
 

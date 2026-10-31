@@ -3,7 +3,7 @@
 Leases make sessions take turns on shared actions: heavy jobs, or anything only
 one session may use at a time. They are machine-wide:
 every coordinator shares the same queues. They are off by default. Turn them on
-only on the user's word: `coordinator.py leases on --by <slug>`. Then send the lease
+only on the user's word: `coordinator.py leases on`. Then send the lease
 addendum (`references/protocol.md`) to your members and tell the other
 coordinators.
 
@@ -24,13 +24,13 @@ enforced. Coordinators set values from their observations by vote ("Class
 defaults by vote", below).
 
 Add or change one with
-`coordinator.py config set-class <NAME> --by <slug> --description "..." --default-gib <n> --default-cpus <n> --max-minutes <n> [--settle OTHER=<s>]`,
-and cap it with `config set-machine --by <slug> --max-slots <NAME>=<n>`. A class with
+`coordinator.py config set-class <NAME> --description "..." --default-gib <n> --default-cpus <n> --max-minutes <n> [--settle OTHER=<s>]`,
+and cap it with `config set-machine --max-slots <NAME>=<n>`. A class with
 `--default-gib 0 --default-cpus 0` uses neither budget, so only its slot cap
 limits it. That fits a single resource: one Chrome window for E2E screenshots
 (`BROWSER`, 0 GiB, 1 slot), a shared tunnel, a test database, a device.
 `--settle OTHER=<s>` makes OTHER wait `<s>` seconds after each grant of this
-class. `config remove-class <NAME> --by <slug>` is refused while the class has holders or
+class. `config remove-class <NAME>` is refused while the class has holders or
 queue entries. Add classes only on the user's word, then tell the other
 coordinators and your members.
 
@@ -39,7 +39,7 @@ The holder gets exclusive use of one resource until it releases it; nothing
 about the resource is built in. Make a class a pool by giving it shell commands
 (each optional; `--pool-create ""` removes one):
 
-`coordinator.py config set-class <NAME> --by <slug> --pool-create CMD --pool-start CMD --pool-stop CMD --pool-delete CMD --pool-max N`
+`coordinator.py config set-class <NAME> --pool-create CMD --pool-start CMD --pool-stop CMD --pool-delete CMD --pool-max N`
 
 Each command reads `MOP_CLASS`, `MOP_RESOURCE`, `MOP_RESOURCE_INFO` (JSON),
 `MOP_LEASE_ID` and `MOP_WORKTREE` from its environment. When the request set
@@ -54,13 +54,13 @@ keeps its resource.
 `acquire` assigns a free running resource, else starts a stopped one, else runs
 `create` (it can take minutes: the entry keeps its queue place and
 `await-grant` prints `ASSIGNING`). With none free and the pool at its max, it
-exits 3 and the auto watcher retries. After `GRANTED`, the member sees
+exits 3 and the server's auto acquire retries. After `GRANTED`, the member sees
 `RESOURCE <name> <info>`. `puppet.py release` returns the resource and never stops it: a stop is
-costly and the next grant may come soon. `watch pool` stops it after
-`--pool-stop-after-minutes M` idle (default 0 = never) and the next grant starts it again.
+costly and the next grant may come soon. The server's pool upkeep stops it
+after `--pool-stop-after-minutes M` idle (default 0 = never) and the next grant starts it again.
 A failed `start` or `create` exits 8 and marks the resource failed (a failed
 create leaves none). Manage the pool with
-`coordinator.py resource list|add|mark|remove <NAME> --by <slug> [--name R] [--state free|stopped|failed] [--info JSON] [--delete]`:
+`coordinator.py resource list|add|mark|remove <NAME> [--name R] [--state free|stopped|failed] [--info JSON] [--delete]`:
 `add` registers an existing resource, `mark` repairs a state, `remove --delete`
 runs the delete command. Free or held is derived from the leases.
 
@@ -75,14 +75,18 @@ failed, `acquire` exits 3 with `resource_unavailable`; it never takes another
 resource and never runs `create`. `coordinator.py wait` takes the same two
 options.
 
-Idle cleanup: `--pool-stop-after-minutes M` stops an unheld running resource idle for M minutes; `--pool-idle-delete-hours H` (default 0 = never) lets
-`coordinator.py watch pool --me <slug>` delete an unheld resource that has idled
-for H hours, using the delete command. Every lifecycle step (create, start, stop, delete) claims the
-resource with an op token and a busy state; `resource mark` and `remove` refuse a busy
-resource. The same watcher resets a resource stuck in a busy state for 90 min whose
-operation's process is gone (a crashed command); a live operation is never reset and prints
-`POOL-EXPIRED` for a lease that expired over an hour ago and still holds one; it
-never takes a resource back.
+Idle cleanup runs inside the dashboard server, once a minute, for every pool
+class; there is nothing to arm. `--pool-stop-after-minutes M` stops an unheld
+running resource idle for M minutes; `--pool-idle-delete-hours H` (default 0 =
+never) deletes an unheld resource that has idled for H hours, using the delete
+command. Every lifecycle step (create, start, stop, delete) claims the
+resource with an op token and a busy state; `resource mark` and `remove`
+refuse a busy resource. Upkeep also resets a resource stuck in a busy state
+for 90 min whose operation's process is gone (a crashed command); a live
+operation is never reset. The events log records each reset and deletion.
+For a lease that expired over an hour ago and still holds a resource, the
+lease's coordinator gets `INBOX pool: POOL-EXPIRED ...` in `watch`: ask the
+holder to release. Upkeep never takes a resource back.
 
 **Project rules** can widen a class's scope, for example "a commit whose hooks
 run lint needs a BUILD lease" in one repository. They live in the skill's
@@ -138,24 +142,26 @@ A coordinator may let code grant requests that need no judgment. It is off by
 default. Turn it on for a class or for one stream's members:
 
 ```bash
-coordinator.py config set-class BUILD --by <slug> --auto-acquire on
-coordinator.py stream update --coordinator <slug> --name <stream> --auto-acquire on
+coordinator.py config set-class BUILD --auto-acquire on
+coordinator.py stream update --name <stream> --auto-acquire on
 ```
 
-Then run `coordinator.py watch auto --me <slug>` in the background. When your
-entry is the head of its queue, it runs `acquire` with the entry's own
-figures. Every normal gate applies: queue order, slot cap, settle, host check
-and both budgets. A gate that passes later (exit 3, 4, 5) is retried every
-2 s. `AUTO-GRANTED` or `AUTO-REFUSED` lines report the outcome.
+The dashboard server does the rest, for every live coordinator; there is
+nothing to arm. When your entry is the head of its queue, it runs `acquire`
+with the entry's own figures. Every normal gate applies: queue order, slot
+cap, settle, host check and both budgets. A gate that passes later (exit 3, 4,
+5) is retried every 2 s. Each outcome arrives in your inbox, so in `watch`:
+`INBOX auto: AUTO-GRANTED ...`, `INBOX auto: AUTO-REFUSED ...` or
+`INBOX auto: AUTO-SKIPPED ...` (an entry marked for review).
 
-The loop grants from a snapshot, so `acquire` revalidates under its final lock
+The server grants from a snapshot, so `acquire` revalidates under its final lock
 (after the host check): the entry must exist with the same id, holder,
 minutes, GiB, cores, commands and worktree, must not be held or reviewed, and
 its class or stream must still be on auto. If not, it refuses with exit 7 and
 grants nothing. Your own `acquire` has no such check and may grant a reviewed
 entry.
 
-A deviation always waits for you. The loop never splits a run and never
+A deviation always waits for you. The server never splits a run and never
 accepts a size:
 
 - exit 2, the run is over a limit: ask the member to split it;
@@ -168,13 +174,15 @@ A member's request ends in one of three outcomes: `GRANTED`, `HELD <reason>`
 
 - `coordinator.py hold CLASS --id ID --reason T`: leaves the ready queue.
 - `coordinator.py hold CLASS --id ID --review [--reason T]`: keeps its place,
-  but `watch auto` never grants it; only your `acquire` does. This holds even
+  but the server's auto acquire never grants it (`AUTO-SKIPPED`); only your
+  `acquire` does. This holds even
   when the class or stream is on auto. It applies to the first grant only.
 - `coordinator.py ready CLASS --id ID`: clears a hold or review.
-- `coordinator.py deny CLASS --id ID --by <slug> --reason T`: removes the entry
+- `coordinator.py deny CLASS --id ID --reason T`: removes the entry
   and the member sees `DENIED <reason>` (exit 4).
 
-Auto acquire grants only your own entries, and only the first grant. An
+Auto acquire grants each entry for its own coordinator, and only the first
+grant. An
 extension is never auto-approved: the member asks, and only the coordinator
 runs `extend`. Takeovers stay manual too.
 
@@ -187,14 +195,14 @@ the release lines in `events`. When the observations support a value
 (for example BUILD runs peak at 4 cores, or never run past 15 min):
 
 ```bash
-coordinator.py config propose BUILD --by <slug> [--project-root <path>] [--default-gib <n>] [--default-cpus <n>] [--max-minutes <n>] --reason "<your observations>"
+coordinator.py config propose BUILD [--project-root <path>] [--default-gib <n>] [--default-cpus <n>] [--max-minutes <n>] --reason "<your observations>"
 ```
 
 Without `--project-root` it sets the machine class; with it, that project's
 class, which wins over the machine class. Every live peer gets `CLASS
-DEFAULTS PROPOSED <id> ...` in `watch inbox`. Check your own observations of
-that class, then `config agree --by <slug> --id <id>`, or `config object --by
-<slug> --id <id> --text "<what you observed>"`. The proposal applies when every
+DEFAULTS PROPOSED <id> ...` in `watch`. Check your own observations of
+that class, then `config agree --id <id>`, or
+`config object --id <id> --text "<what you observed>"`. The proposal applies when every
 live coordinator agrees, or 30 minutes after it was made with no objection: a
 live coordinator that has not voted by then agrees. One objection closes it,
 and the proposer may propose again with new observations. The applying
@@ -248,9 +256,9 @@ sum(held cores) + request cores <= CPU cores - reserveCpus
   `--peak-cpus` by hand when you know better.
 - Settings come from the first-run setup (`references/setup.md`): the memory
   and core reserve, the size margin and optional slot caps per machine
-  (`coordinator.py config set-machine --by <slug> --reserve-gib <n> --reserve-cpus <n> --size-margin <f> --max-slots BUILD=<n>`), and
+  (`coordinator.py config set-machine --reserve-gib <n> --reserve-cpus <n> --size-margin <f> --max-slots BUILD=<n>`), and
   per project the peak mode, starting GiB and cores, and max minutes
-  (`coordinator.py config set-project --by <slug> --root <path> --class BUILD --peak learn --default-gib <n> --default-cpus <n> --max-minutes <n>`).
+  (`coordinator.py config set-project --root <path> --class BUILD --peak learn --default-gib <n> --default-cpus <n> --max-minutes <n>`).
   In fixed mode, samples are still recorded but not used.
 - `coordinator.py capacity` prints both budgets, the class peaks and how many of each
   class fit now. The dashboard shows the same numbers.
@@ -269,22 +277,22 @@ The budgets predict; the host check observes. Both must pass, and
    when leases are off, a non-member, an id without the `<slug>-q-<name>-`
    prefix, an id that is already held and a run over the class limit, and
    gives the entry its task's priority. A member cannot set
-   a priority, jump the queue or grant. `watch inbox` shows each request as
+   a priority, jump the queue or grant. `watch` shows each request as
    `INBOX <name>: REQUEST <CLASS> <id> <holder> ...`, and a changed
    one as `REQUEST <CLASS> <id> changed ...`. Check that the
    recorded commands fit the class. If they do not, `unwait` the entry and
    tell the member why. A request that prints an undersized warning to the
    member will refuse at `acquire` (exit 6); you may tell the member at once. A request needs no reply: `request` printed its
    position, and `await-grant` follows the queue. Reply LEASE QUEUED only when
-   you change the entry (split, hold, priority). `watch inbox` shows only new
+   you change the entry (split, hold, priority). `watch` shows only new
    lines, so a request made while it did not run has no message: each heartbeat
    round, `status --brief` shows it.
    To queue for a member yourself, for example the second part of a split:
-   `coordinator.py wait <CLASS> --coordinator <slug> --holder "<task> <what>" --id <slug>-q-<name>-<n> --minutes <est> --commands "<exact commands>" --worktree <path> [--gib <n>] [--cpus <n>]`.
+   `coordinator.py wait <CLASS> --holder "<task> <what>" --id <slug>-q-<name>-<n> --minutes <est> --commands "<exact commands>" --worktree <path> [--gib <n>] [--cpus <n>]`.
    To change an entry later, pass only `--id` and the fields that change.
    Start `--holder` with the task id (the dashboard matches on it, and the
    entry takes that task's priority).
-2. When that entry is the first ready one (`watch inbox` prints
+2. When that entry is the first ready one (`watch` prints
    `HEAD <CLASS> <id>` for your entries), run `coordinator.py acquire ... --measure`.
    It runs the host check itself (about 25 s), then checks the queue, slot cap,
    settle time, max minutes, size and both budgets again under the lock.
@@ -317,35 +325,37 @@ The budgets predict; the host check observes. Both must pass, and
    `coordinator.py drain-check --worktree <path> [--port <n> ...] [--process <pattern> ...]`
    for the list; grant the next E2E only when it exits 0, else ask the holder
    to stop what is left. When the next head belongs to another coordinator,
-   its `watch inbox` prints HEAD: send nothing.
+   its `watch` prints HEAD: send nothing.
    **No receipts.** A coordinator never sends a release, drain or cleanup
    receipt to another coordinator, and never asks for one. The event line is
    the record; when it is not enough, run `drain-check` yourself.
 5. A member running commands outside the recorded scope breaks "use it or
    return it": ask it to release at once.
-6. An expired lease: `watch expiry` prints it once with `left=<n>`, the
-   processes its run still has. Ask its coordinator only when `left` is not 0
-   and the lease blocks your head.
+6. An expired lease of yours: `watch` prints it once as
+   `EXPIRED <CLASS> <id> at <HH:MM>Z left=<n> holder=...`; `left` counts the
+   processes its run still has. Ask its member to release.
+   Another coordinator's expired lease shows in `status`: ask that
+   coordinator only when the lease blocks your head.
 
 **Extending.** Extension is at the coordinator's discretion; only
 `coordinator.py extend` changes an expiry. A member asks with
 `puppet.py extend`, which refuses a run over the class limit and otherwise
-logs the request and sends it to your inbox. Your `watch inbox` prints
+logs the request and sends it to your inbox. Your `watch` prints
 `EXTEND <CLASS> <id> <n> min ... Reason: ...`. Decide: check that
 the reason fits the granted commands, and weigh who waits in that class
 queue and the memory the lease holds. Then run
 `coordinator.py extend <CLASS> --id <id> --minutes <n>` and reply
 LEASE EXTENDED, or reply LEASE EXTEND REFUSED. When the waiting head
 belongs to another coordinator, ask it with `say` first. Reply each time:
-the member waits for your answer. `watch expiry` reports a lease again when
+the member waits for your answer. `watch` reports a lease again when
 it expires after an extension.
 
 **Admission hold.** When no grant of a class may start, for example while a
 failed run's cleanup is uncertain or the disk is low:
-`coordinator.py admission hold <CLASS> --by <you> --reason "<why>"`. `acquire`
+`coordinator.py admission hold <CLASS> --reason "<why>"`. `acquire`
 refuses every grant of that class (exit 3, with the reason), and `status
 --brief` and the dashboard show it. Clear it when the cause is gone:
-`coordinator.py admission clear <CLASS> --by <you> [--reason "<what was done>"]`.
+`coordinator.py admission clear <CLASS> [--reason "<what was done>"]`.
 The events reach every coordinator; do not announce a hold or its clearance
 by `say`.
 
@@ -404,7 +414,7 @@ in the puppet skill, section 5. The coordinator's side:
   member that is paused or waits for the user.
 - **Stack start.** Starting a full local stack is often the heaviest event on
   the machine. `acquire` refuses BUILD for E2E's settle time after an E2E grant
-  (`config set-class E2E --by <slug> --settle BUILD=<s>`, 0 removes it); then trust the
+  (`config set-class E2E --settle BUILD=<s>`, 0 removes it); then trust the
   host check.
 
 ## Host check thresholds

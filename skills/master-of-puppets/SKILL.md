@@ -52,8 +52,14 @@ uses them. Below, `coordinator.py` means
 copies the three files, replacing copies that differ, records the skill copy
 and restarts the server from it. Leases, queues and records stay as they are,
 and open watchers reconnect, so an install needs no vote. `roster`, `whoami`,
-`coordinate`, `heartbeat` and `status` print a warning when the live copies
+`register`, `heartbeat` and `status` print a warning when the live copies
 differ from the server's skill copy: run `install` from the newer copy.
+
+Your identity comes from your session. The server finds the calling
+coordinator from `$CLAUDE_CODE_SESSION_ID` (Claude) or `$CODEX_THREAD_ID`
+(Codex), so no command takes your own name. In a Codex thread without
+`CODEX_THREAD_ID`, run each command as
+`CODEX_THREAD_ID=<thread id> coordinator.py ...`.
 
 Read `references/setup.md` on the first run in a project,
 `references/protocol.md` before you message anyone, `references/rules.md` for
@@ -69,20 +75,45 @@ equivalents, session identity, messaging, watchers, scheduling and PR repair.
 
 This skill is the coordinator role. If the live helpers are missing, run
 `python3 -I <skill>/scripts/coordinator.py install` first. Then read `coordinator.py roster`
-and resolve your role with `coordinator.py whoami --session-id <current-id>`.
+and resolve your role with `coordinator.py whoami`.
 Apply the following routes in order:
 
 | Situation | Action |
 | --- | --- |
-| The user explicitly asks to replace a live coordinator | `coordinate --takeover`, only with the user's approval in this session; an enrolled member needs explicit release from its member role before taking over |
+| The user explicitly asks this session to replace a live coordinator, or this coordinator's session id changed (after `/clear`) | The name handoff ("Name handoff", below); an enrolled member needs explicit release from its member role first |
 | The prompt starts with `MASTER-OF-PUPPETS ENROLLED`, or `whoami` identifies this session as a member | Do not coordinate: use `/puppet` |
 | `whoami` identifies this session as the coordinator | Resume its heartbeat round; do not enroll yourself as a member |
-| Another live coordinator already owns the requested stack | Ask the user: join it with `/puppet`, split the stack with it, or take over |
+| Another live coordinator already owns the requested stack | Ask the user: join it with `/puppet`, split the stack with it, or take over its name ("Name handoff") |
 | The user asked this unowned session to coordinate a stack | Continue with "Coordinator start" |
 
 A coordinator is live while its heartbeat is newer than 40 minutes. Session
 ids are in `references/agents.md`. What members send and do is in the `puppet`
 skill; `references/protocol.md` lists the coordinator side.
+
+### Name handoff
+
+A coordinator name belongs to one session. `register <name>` with a name that
+another session holds exits 3 with `name_in_use`, unless that name's handoff
+is open. To move the name to a new session:
+
+1. Open the handoff. The owner session runs `coordinator.py handoff`, or the
+   user clicks "Hand off" on the coordinator's card on the dashboard's Events
+   page. The name is open for 2 minutes. After a `/clear` the old session id
+   is gone, so the user clicks the button.
+2. In that window, the new session runs `coordinator.py register <name> ...`.
+   It becomes `<name>-new`. Until the user answers, it only waits and runs
+   `coordinator.py watch`.
+3. A machine decision on the dashboard asks the user: "Hand over" or "Keep
+   the current session".
+   - Hand over: the new session becomes `<name>` and gets `HANDOFF
+     CONFIRMED`; it runs `watch` again and resumes the heartbeat round. The
+     old session gets `HANDOFF DONE: ... Stop your watchers and heartbeat.`:
+     it stops both and does no more coordinator work.
+   - Keep the current session: the new session gets `HANDOFF REJECTED`. It
+     stops its watcher and asks the user what to do.
+
+Do this only on the user's word, or to get your own name back after a
+`/clear`.
 
 ## Coordinator start
 
@@ -90,24 +121,36 @@ skill; `references/protocol.md` lists the coordinator side.
    the live copies are missing or a warning says they differ. Run `coordinator.py config show --project-root "$PWD"`; exit 3
    means the machine or project is not configured yet: follow
    `references/setup.md` (detect, then ask setup questions) before step 2.
-2. Claim: `coordinator.py coordinate --name <slug> --tool <claude|codex> --session-id <session-or-thread-id> --focus "<stack in a few words>" --pr <n> [...]`.
+2. Claim: `coordinator.py register <slug> --focus "<stack in a few words>" --pr <n> [...]`.
+   The tool and session id come from your session.
    Add `--general` when the user asked you to coordinate with no fixed stack
    or scope (a general-purpose coordinator).
-   Exit 3 means the name or a PR belongs to a live coordinator: join it with `/puppet`, or
-   agree a split with it by message.
+   Exit 3 with `name_in_use` means another session holds the name: pick
+   another name, or use "Name handoff". Exit 3 with `owned_by_other` means a
+   PR belongs to a live coordinator: join it with `/puppet`, or agree a split
+   with it by message.
 3. Read the skill's memory: `coordinator.py memory list --project-root "$PWD"`
    (machine rules, then this project's). Apply them, and put the project
    rules in every WELCOME. Read the newest `ledger.jsonl` entries and the
    other coordinators' focus.
-   Record decisions with `coordinator.py note --by <slug> --text "..." [--pr <n>]`:
+   Record decisions with `coordinator.py note --text "..." [--pr <n>]`:
    joins, ACTIVE/PAUSE, stack moves, merge SHAs, user decisions. After a
    context reset, `roster`, the ledger and your dashboard file are how you
    recover.
 4. Write `prs-<slug>.txt` in the state dir (`owner/repo#<n>` per line). Arm
-   watchers: `coordinator.py watch inbox --me <slug>` and `coordinator.py watch prs --me <slug>`;
-   add `coordinator.py watch expiry` when leases are on, and
-   `coordinator.py watch cloud --me <slug>` while you track CodeRabbit cloud
-   tasks and no watch helper runs it. Re-arm each one that ends.
+   the one watcher: `coordinator.py watch [--interval <s>]` (`<s>`: seconds
+   between CodeRabbit cloud task polls, default 180). It prints:
+   - `INBOX <from>: <text>`: messages to you or to all;
+   - `HEAD <CLASS> <id> ...`: your entry became the first ready entry;
+   - `PR <ref> <state line>`: each PR in `prs-<slug>.txt`, its current state
+     first, then each change; `PR-WATCHER down|up` when the server's PR
+     poller stops or comes back;
+   - `EXPIRED <CLASS> <id> at <HH:MM>Z left=<n> holder=...`: one of your
+     leases expired;
+   - `CLOUD <task> <member> <state>`: a change of a task in `cloud-<slug>.txt`.
+   Arm it once and re-arm it when it ends. It survives a server restart on
+   its own. Auto acquire and pool upkeep run inside the server; there is
+   nothing else to arm.
 5. Schedule the heartbeat round (required): Claude `CronCreate`, session-only, every
    15 minutes, prompt "master-of-puppets heartbeat round for <slug>: follow
    the Heartbeat round steps". Inside `/loop` dynamic mode, use
@@ -120,8 +163,8 @@ skill; `references/protocol.md` lists the coordinator side.
    Only an idle coordinator stops it ("When your work is done").
 6. Give the user `http://localhost:<dashboardPort>/` (default 4720); the server runs
    already, because your commands started it. It also polls every watched PR once for the
-   machine (one conditional request per repo); `watch prs` only reads that poll.
-7. Tell the other coordinators: `coordinator.py say --from <slug> --message "<slug> coordinates <focus>, PRs ..."`.
+   machine (one conditional request per repo); `watch` only reads that poll.
+7. Tell the other coordinators: `coordinator.py say --message "<slug> coordinates <focus>, PRs ..."`.
 8. Tell the user: "To put an existing thread under this coordinator, run
    `/puppet` in that thread. New tasks for this stack I start and enroll
    myself." From then on, every new task is yours to enroll before it starts
@@ -135,30 +178,30 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
 - **Streams**: group your members by goal, so the user can tell the work apart
   on the dashboard (for example "Repo access security" and "Scope UX"). A
   stream is a named goal; it may own several PR stacks. Create one per goal:
-  `coordinator.py stream add --coordinator <slug> --name <stream-slug> --label "<4 words>" [--goal "<one sentence>"] [--pr <n> ...]`.
+  `coordinator.py stream add --name <stream-slug> --label "<4 words>" [--goal "<one sentence>"] [--pr <n> ...]`.
   Give every member a stream with `--stream` on `enroll` and `member add|update`.
   Close a stream when its goal is done: `coordinator.py stream close`. Stream slugs are
   unique on the machine; only the owner changes a stream.
-- **JOIN** arrives: `coordinator.py member add --coordinator <slug> --name <name> --tool <t> --session-id <id> --worktree <p> --task "<task>" --pr <n> --repo <owner/repo> --session <deep link> --stream <stream-slug> [--parent <parent>]`.
+- **JOIN** arrives: `coordinator.py member add --name <name> --tool <t> --session-id <id> --worktree <p> --task "<task>" --pr <n> --repo <owner/repo> --session <deep link> --stream <stream-slug> [--parent <parent>]`.
   Pass `--parent` when JOIN lists one; it takes over that parent's pending
   child entry (same session id, else the same task text, else its only
   pending child). A JOIN with `parent none` whose session id matches a
   pending `child-of-*` entry is incomplete: ask the member to send JOIN again
   with its parent,
   then send WELCOME (`references/protocol.md`).
-- **UPDATE, STATUS reply or MERGED**: `coordinator.py member update --coordinator <slug> --name <name> --phase "<phase>" --kind ok|work|warn|done --latest "<newest fact>" [--pr ...]`.
+- **UPDATE, STATUS reply or MERGED**: `coordinator.py member update --name <name> --phase "<phase>" --kind ok|work|warn|done --latest "<newest fact>" [--pr ...]`.
   This also updates the member's row on the dashboard. Keep `--phase` and
   `--latest` short; shorten a long UPDATE first (`references/dashboard.md`,
   "Writing for the dashboard").
 - **A task you start yourself**:
-  `coordinator.py enroll --coordinator <slug> --task "<one line>" --stream <stream-slug> [--pr <n>]`.
+  `coordinator.py enroll --task "<one line>" --stream <stream-slug> [--pr <n>]`.
   The printed kickoff line tells the new session to run `/puppet` and join you
   under its enrolled name. Put it first in the prompt of every task you start.
   Members start their own child tasks without asking you: they write the
   enrollment line themselves (puppet skill, section 6), and the child sends
   JOIN with its parent.
 - **CHILD TASK STARTED** arrives:
-  `coordinator.py child --coordinator <slug> --parent <member> --task "<child task>" --tool <t> --session-id <id> [--pr <n>] [--stream <parent's stream>]`.
+  `coordinator.py child --parent <member> --task "<child task>" --tool <t> --session-id <id> [--pr <n>] [--stream <parent's stream>]`.
   It records the child as pending under its parent until the child's JOIN. The routes, the Claude and Codex rules and the subagent exception are
   in that section; they apply to you too. Nothing enforces this; check each
   session-starting prompt yourself.
@@ -174,12 +217,12 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
   under Needs you. Never mark a member done, or tell it LEAVE is fine, while it
   has uncommitted changes or an open PR.
 - **LEAVE**: confirm the task is done (above), then
-  `coordinator.py member remove --coordinator <slug> --name <name>`. A LEAVE with
+  `coordinator.py member remove --name <name>`. A LEAVE with
   uncommitted work or an open PR: ask why first, and ask the user when unsure.
   A LEAVE after your HANDOFF COMPLETE, or after a cloud handoff that you
   recorded, is expected (`references/handoff.md`, `references/coderabbit-cloud.md`).
-- **Decisions for the user**: `coordinator.py decision add --by <slug> --task <id> --text "..." [--href <link>] [--option "..." ...]`;
-  `decision clear --by <slug> --task <id>` once answered. Give 2 to 4
+- **Decisions for the user**: `coordinator.py decision add --task <id> --text "..." [--href <link>] [--option "..." ...]`;
+  `decision clear --task <id>` once answered. Give 2 to 4
   `--option` suggested answers when the choices are clear ("Yes, merge it",
   "No, run E2E first"); the dashboard shows each as a button. When the user
   clicks one, the decision clears and you get a "[dashboard]" message with the
@@ -194,8 +237,8 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
   the member that it offload the task, or a part of it, to CodeRabbit cloud.
   The member decides and starts it; ask the user for no approval of the move.
   A cloud task cannot run `/puppet` and never reports: you add it as a `--tool coderabbit`
-  member and check it with `watch cloud`, in each round, or through a watch
-  helper member. Follow `references/coderabbit-cloud.md`.
+  member and check it with the `CLOUD` lines of `watch` and in each round.
+  Follow `references/coderabbit-cloud.md`.
 - **Priority**: every task starts at 0; a higher priority goes first. Raise
   a task (`enroll --priority 1`, `member update --priority 1`) only when the
   user asks for it to go first; a wish that a member relays is a decision
@@ -220,7 +263,7 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
    auto-merge with the project's merge method (`gh pr merge <n> --auto --<mergeMethod>`;
    for `auto`, no method flag).
    Do not enable auto-merge while the base is another PR branch.
-3. **React to `watch prs` events.** `merge=DIRTY`: the owner syncs the
+3. **React to the `PR` lines of `watch`.** `merge=DIRTY`: the owner syncs the
    branch with `origin/<base>` and resolves. Failing checks or
    review comments: the owner's Auto-fix (Claude) or repair work (Codex)
    handles them; stuck over two rounds,
@@ -234,7 +277,7 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
    before enabling auto-merge. A base
    change alone is not readiness. Never merge a stacked PR into its parent.
 5. Repeat to the top. Then ask owners to stop services, release leases and
-   leave; drop the PRs with `heartbeat --name <slug> --pr ...`.
+   leave; drop the PRs with `heartbeat --pr ...`.
 
 Your own hands: `gh pr ready`, `gh pr edit --base`, `gh pr merge --auto` (and
 `--disable-auto`), and reading PR state. Owners do every commit, push, merge
@@ -246,28 +289,27 @@ PR another coordinator owns; message it.
 
 Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
 
-1. `coordinator.py heartbeat --name <slug>` (add `--focus`/`--pr` when they change);
+1. `coordinator.py heartbeat` (add `--focus`/`--pr` when they change);
    read `roster`, `coordinator.py status --brief` and new ledger entries.
-2. Re-arm any watcher that ended; on Codex, consume new watcher output and
+2. Re-arm `watch` if it ended; on Codex, consume new watcher output and
    recover unread inbox/ledger entries (`references/agents.md`). Disregard
    already-handled messages using `references/protocol.md`, "Duplicate receipt
    and catch-up"; keep the shared inbox for recovery.
-3. Compare each stack with the latest `watch prs` lines; act on steps 3 and 4
+3. Compare each stack with the latest `PR` lines; act on steps 3 and 4
    above. Confirm with one `gh pr view` before each stack move, not on a timer.
 4. Leases on: expiry check and grants (`references/leases.md`). Run
    `coordinator.py status --brief`: a ready entry of yours that you have not
-   acted on is a member request that `watch inbox` did not show you. Then
+   acted on is a member request that `watch` did not show you. Then
    vote on and propose class defaults (`references/leases.md`, "Class
    defaults by vote"); this never involves the user.
 5. Check on members, higher priority first; do not wait for them to report.
-   `coordinator.py member stale --coordinator <slug> --minutes 30` lists members with
-   no recorded update. For each one: read its PRs in the latest `watch prs`
+   `coordinator.py member stale --minutes 30` lists members with
+   no recorded update. For each one: read its PRs in the latest `PR`
    lines and record observations with `note`, then send `STATUS?`. Do not
    refresh member state from watcher observations: `member update` resets its
    freshness timestamp. Record each actual reply with `member update`.
    CodeRabbit cloud members are the exception: they cannot reply, so record
-   their `watch cloud` lines, the watch helper's `CLOUD UPDATE` messages, or
-   `coderabbit code show`, with `member update`
+   their `CLOUD` lines or `coderabbit code show` with `member update`
    and act on them (`references/coderabbit-cloud.md`, "Track").
    Look for members whose work can move to the cloud ("Members and tasks").
    A member silent for two rounds while its PR is blocked: tell the user, with
@@ -280,7 +322,7 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
 Go idle when no work can move: every member is done, has left, or is paused
 because the user parked its work. Parked work stays yours: you keep its PRs
 and paused members, and the dashboard lists them under Parked. Park and
-unpark with `coordinator.py park --coordinator <slug> --name <member> [--until YYYY-MM-DD]`
+unpark with `coordinator.py park --name <member> [--until YYYY-MM-DD]`
 and `coordinator.py unpark`; the user can do both from the dashboard, and you then get
 a "[dashboard]" message: tell the member to stop or resume. A dated park
 returns to Needs you as "Revisit" after its date: ask the user whether to
@@ -289,13 +331,13 @@ active.
 
 1. **General coordinator** (`--general`): just before you go idle, ask the
    other coordinators once for work:
-   `coordinator.py say --from <slug> --message "WORK REQUEST — <slug> is free for a stream, a task or PRs"`.
+   `coordinator.py say --message "WORK REQUEST — <slug> is free for a stream, a task or PRs"`.
    Send it only this once; never repeat it. Wait until your next heartbeat
    round. A HANDOFF reply: take the work (`references/handoff.md`, step 3) and stay active. No handoff:
    go idle. A scoped coordinator sends no work request.
-2. **Go idle (sleep)**: `coordinator.py heartbeat --name <slug> --status idle` (refused while
+2. **Go idle (sleep)**: `coordinator.py heartbeat --status idle` (refused while
    a member is active or pending; it lists parked PRs and members). Then stop
-   your heartbeat schedule and watchers, and tell the user once: "<slug> is
+   your heartbeat schedule and watcher, and tell the user once: "<slug> is
    idle" and what is parked, waiting for the user. The dashboard shows you as
    idle. A sleeping coordinator stays live however old its heartbeat is: it
    keeps its name and PRs, and nobody flags it as stale or chases it. Peer
@@ -305,8 +347,8 @@ active.
    work), or from a HANDOFF in reply to your one request. These wake you
    without a status flag: `enroll`, `child`, `member add`, `member update --status active`
    and `unpark` (also from the dashboard) set you active and refresh your
-   heartbeat. Otherwise run `coordinator.py heartbeat --name <slug> --status active`.
-   Then re-arm the watchers and the heartbeat schedule ("Coordinator start", steps 4 and 5).
+   heartbeat. Otherwise run `coordinator.py heartbeat --status active`.
+   Then re-arm `watch` and the heartbeat schedule ("Coordinator start", steps 4 and 5).
 
 **A WORK REQUEST from a peer**: reply only when you have work to hand off: a
 stream without enough members, a task not yet started, or a PR without an
@@ -327,24 +369,24 @@ BUILD lease", "this repo merges through a merge queue".
 
 - When the user states a rule for this project or machine (directly,
   or relayed as USER SYNC), record it:
-  `coordinator.py memory add --by <slug> --kind rule|note --text "..." [--project-root <path>]`.
+  `coordinator.py memory add --kind rule|note --text "..." [--project-root <path>]`.
   Omit `--project-root` for a machine-wide entry. Add `--reason "<the user's words>"`.
   The command writes the event and the ledger line, then messages every live
   coordinator and every live member itself. Do not `say` it or tell your members.
-- Change a rule and keep its ID: `coordinator.py memory update --by <slug> --id <id> --text "<full new text>" --reason "..."`.
-- Remove a rule the user withdraws: `coordinator.py memory remove --by <slug> --id <id> --reason "..." [--project-root <path>]`.
+- Change a rule and keep its ID: `coordinator.py memory update --id <id> --text "<full new text>" --reason "..."`.
+- Remove a rule the user withdraws: `coordinator.py memory remove --id <id> --reason "..." [--project-root <path>]`.
 - A rule that should hold in every project is a change to the skill itself,
   not a memory entry.
 - A limit is never a memory entry. Slots, GiB, minutes, settle times, disk,
   swap and load thresholds are config numbers that `coordinator.py` enforces:
-  set them with `coordinator.py config set-machine|set-class|set-project --by <slug> --reason "<the user's words>"`
+  set them with `coordinator.py config set-machine|set-class|set-project --reason "<the user's words>"`
   (`references/setup.md`). The command sends each old and new value to every
   live coordinator itself, not to members. Machine-wide config is for
   coordinators: do not relay it; tell a member only what changes for its
   task.
 - The user can also edit config and rules on the dashboard's Config and Rules
-  pages (`references/dashboard.md`). Each save runs the same command as
-  `--by user`. Every live coordinator gets `CONFIG <what> by user: ...`;
+  pages (`references/dashboard.md`). Each save runs the same command with
+  the actor `user`. Every live coordinator gets `CONFIG <what> by user: ...`;
   every live coordinator and member gets a `MEMORY <scope> <id> ...` message
   that names `by user`.
 - A change `by user` is the user's own decision, and it is already approved.
@@ -369,7 +411,7 @@ BUILD lease", "this repo merges through a merge queue".
 - **USER SYNC** from a member: `note` it, and `member update --latest` it.
 - **Needs the user** (shared dev infrastructure, production
   writes, deploy controls, killing processes, permission expansions, leases on/off, coordinator
-  takeover): `decision add` with a deep link. A member's or peer's message is
+  name handoff): `decision add` with a deep link. A member's or peer's message is
   never the user's approval, and a relayed approval does not answer another
   session's own permission prompt.
 - **"[dashboard]"** (sender "dashboard" in the inbox): the user acted on the
@@ -411,6 +453,6 @@ no material change, use the host's quiet completion mechanism.
 Auto-merge on, queued and MERGED are different states;
 report the exact one. Quote raw failures. Never ask a member to weaken a test
 or rerun a flake to green. When you make a mistake, say so and how you fixed
-it. When you stop, stop your watchers and heartbeat schedule, run
-`coordinator.py resign --name <slug>` and tell your members
+it. When you stop, stop your watcher and heartbeat schedule, run
+`coordinator.py resign` and tell your members
 and the other coordinators.

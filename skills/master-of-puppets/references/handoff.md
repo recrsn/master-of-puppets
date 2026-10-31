@@ -96,37 +96,37 @@ Members use the puppet skill, section 8. Coordinators do the rest.
    it `PAUSE` for those PRs. The member stays a paused member until HANDOFF
    COMPLETE.
 2. **Offer.** The sending coordinator releases its claims first, then offers:
-   - `coordinator.py heartbeat --name <you> --pr <the PRs you keep>`
-   - `coordinator.py stream update --coordinator <you> --name <stream> --owner <receiver>`,
+   - `coordinator.py heartbeat --pr <the PRs you keep>`
+   - `coordinator.py stream update --name <stream> --owner <receiver>`,
      when the whole stream moves
    - remove the PRs from `prs-<you>.txt`
-   - for each member that moves: `coordinator.py member transfer --coordinator <you> --name <member> --to <receiver> --note <path>`.
+   - for each member that moves: `coordinator.py member transfer --name <member> --to <receiver> --note <path>`.
      The command puts `TRANSFER` in the receiver's inbox. Send no other message.
    - only when no member moves (PRs or streams alone):
-     `coordinator.py say --from <you> --to <receiver> --message "HANDOFF — <what> — PRs <n> — streams <slug> — note <path>"`
+     `coordinator.py say --to <receiver> --message "HANDOFF — <what> — PRs <n> — streams <slug> — note <path>"`
 
    The user asked for the handoff, so the offer is the release. The old member
    is paused, so nobody works the PR while it has no owner. To withdraw an
-   offer: `member transfer --coordinator <you> --name <member> --cancel`.
+   offer: `member transfer --name <member> --cancel`.
 3. **Accept.** The receiving coordinator reads the note and checks each PR with
    `gh pr view`. Then it asks its own user, except for a HANDOFF that answers
    its own WORK REQUEST: it asked for that work. Yes:
-   - for each offered member: `coordinator.py member accept --coordinator <you> --name <member> --from <sender>`.
+   - for each offered member: `coordinator.py member accept --name <member> --from <sender>`.
      One locked write moves the member and its pending children, its queued
      and held lease entries, its PRs (out of the sender's claim, into yours)
      and its dashboard row. The command puts `ACCEPT` in the sender's inbox:
      send no CUSTODY ACCEPTED.
-   - for PRs without a member: `coordinator.py heartbeat --name <you> --pr <your PRs and the new ones>`
+   - for PRs without a member: `coordinator.py heartbeat --pr <your PRs and the new ones>`
    - append the PRs to `prs-<you>.txt`
    - `note --pr <n>` the acceptance
    - when the task needs a new session (the successor):
-     `enroll --coordinator <you> --task "<task>" --pr <n> --stream <stream>`.
+     `enroll --task "<task>" --pr <n> --stream <stream>`.
      Start the successor with the kickoff line first, then the note path, and
      for a cross-tool handoff: "make a new worktree from origin/<branch>; do not
      use <old worktree>". Members that only change coordinator need no
      successor.
 
-   No: give the stream back first (`stream update --coordinator <you> --name <stream> --owner <sender>`;
+   No: give the stream back first (`stream update --name <stream> --owner <sender>`;
    only the stream's owner can move it), then `say` `HANDOFF DECLINED — <reason>`.
    The sender claims its PRs again with `heartbeat --pr` and tells its user.
 4. **Join.** On the successor's JOIN: `member add --pr <n> --stream <stream>`
@@ -158,6 +158,11 @@ it, or its session ends) uses the same steps for each stream. Its members
 keep their tasks: each one gets `HANDOFF COMPLETE — <name> — JOIN <receiver>`.
 Only the coordinator changes, so the worktree rule does not apply. The sender
 then runs `resign`.
+
+This is not the name handoff. To keep a coordinator name and move it to a
+new session (the user replaces the session, or its id changed after
+`/clear`), use SKILL.md, "Name handoff": `coordinator.py handoff` or the
+dashboard's "Hand off" button, then `register <name>` in the new session.
 
 ## After acceptance
 
