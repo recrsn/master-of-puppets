@@ -53,7 +53,9 @@ copies the three files, replacing copies that differ, records the skill copy
 and restarts the server from it. Leases, queues and records stay as they are,
 and open watchers reconnect, so an install needs no vote. `roster`, `whoami`,
 `register`, `heartbeat` and `status` print a warning when the live copies
-differ from the server's skill copy: run `install` from the newer copy.
+differ from the server's skill copy. Then tell the user and do not install:
+the skill copy may be work in progress, and an install changes every
+coordinator's helpers. Install only when the user says so.
 
 Your identity comes from your session. The server finds the calling
 coordinator from `$CLAUDE_CODE_SESSION_ID` (Claude) or `$CODEX_THREAD_ID`
@@ -118,7 +120,8 @@ Do this only on the user's word, or to get your own name back after a
 ## Coordinator start
 
 1. Run `python3 -I <skill>/scripts/coordinator.py install` from the skill copy when
-   the live copies are missing or a warning says they differ. Run `coordinator.py config show --project-root "$PWD"`; exit 3
+   the live copies are missing. When a warning says they differ, tell the user and
+   install only on the user's word. Run `coordinator.py config show --project-root "$PWD"`; exit 3
    means the machine or project is not configured yet: follow
    `references/setup.md` (detect, then ask setup questions) before step 2.
 2. Claim: `coordinator.py register <slug> --focus "<stack in a few words>" --pr <n> [...]`.
