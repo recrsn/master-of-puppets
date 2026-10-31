@@ -59,6 +59,11 @@ and entries of one priority keep their order. A queue entry takes its task's pri
 An expired lease (past expiresAt) still holds its memory: its holder releases it
 (puppet.py release); a coordinator needs the user's approval for a takeover.
 
+Identity: the server knows the calling coordinator by its session: $CLAUDE_CODE_SESSION_ID
+(Claude) or $CODEX_THREAD_ID (Codex; run CODEX_THREAD_ID=<thread id> coordinator.py ... when
+the thread does not export it). Register once with `register C`; no command takes your own
+name. Below, C is the caller.
+
 State lives in $MACHINE_LEASE_DIR (default ~/.local/state/machine-leases), not beside
 this file, so every coordinator that runs any copy shares one state.
 
@@ -66,9 +71,9 @@ Usage: python3 -I coordinator.py <command> ...
        (the skill's other files are moplib.py, puppet.py and server.py)
 
 Leases
-  leases on|off --by C            machine-wide; only on the user's word
+  leases on|off                   machine-wide; only on the user's word
   status [--brief] | capacity
-  wait CLASS --coordinator C --holder NAME --id ID [--minutes N] [--gib N] [--cpus N] [--commands TEXT] [--worktree P]
+  wait CLASS --holder NAME --id ID [--minutes N] [--gib N] [--cpus N] [--commands TEXT] [--worktree P]
        [--prefer KEY=VALUE ...] [--resource NAME]   (pool classes)
        [--priority N] [--front]
        for an existing ID every flag is optional and only the given fields change.
@@ -77,7 +82,7 @@ Leases
        place among the others. --front: the head, at the highest priority in the queue.
        Members queue their own requests with puppet.py request; each puts a REQUEST
        message in the coordinator's inbox. Only acquire grants.
-  acquire CLASS --coordinator C --holder NAME --id ID --worktree P --minutes N [--gib N] [--cpus N]
+  acquire CLASS --holder NAME --id ID --worktree P --minutes N [--gib N] [--cpus N]
           [--commands TEXT] [--measure] [--accept-size]
        runs the host check itself (about 2 × swapIntervalS), then checks again under the lock.
        GiB and cores: --gib/--cpus, else the queue entry's, else the project's class peak.
@@ -88,14 +93,14 @@ Leases
        --accept-size grants an undersized request: only when the member's reason fits.
        --commands records the granted scope; --measure starts measure-peak itself.
        The holder releases with puppet.py release.
-  admission hold CLASS --by C --reason TEXT | admission clear CLASS --by C [--reason TEXT]
+  admission hold CLASS --reason TEXT | admission clear CLASS [--reason TEXT]
        no grant of CLASS while a hold is set (acquire exits 3 with its reason), for example
        while a failed run's cleanup is uncertain; status --brief and the dashboard show it
   unwait | ready CLASS --id ID    ready clears hold and review
   hold CLASS --id ID [--reason T] [--review]
        hold: the entry leaves the ready queue; the member sees HELD <reason>.
-       --review: it keeps its place, but `watch auto` never grants it; only your acquire does.
-  deny CLASS --id ID --by C --reason T   remove the entry; the member sees DENIED <reason>
+       --review: it keeps its place, but the server's auto grant skips it; only your acquire does.
+  deny CLASS --id ID --reason T   remove the entry; the member sees DENIED <reason>
   up CLASS --id ID                move a ready entry ahead of the ready entry in front of it
   move CLASS --id ID --to N       move a ready entry to position N among ready entries
        up and move set the entry's priority between its new neighbours' when it is
@@ -116,7 +121,7 @@ Leases
        caller's own ancestors and process group) and bare shells do not count. puppet.py release runs the
        same check and writes result= and drained= on its event line
 
-Config (every set and remove takes --by C [--reason TEXT]; the event and ledger line
+Config (every set and remove takes [--reason TEXT]; the event and ledger line
 show who, why and each changed key with its old and new value)
   config show [--project-root P] | set-machine ... | set-project --root P ... | project-key P
        machine: --reserve-gib --reserve-cpus --size-margin --disk-floor-gib --disk-alarm-gib
@@ -126,22 +131,24 @@ show who, why and each changed key with its old and new value)
                 [--settle OTHER=S ...] [--auto-acquire on|off]
                 [--pool-create CMD] [--pool-start CMD] [--pool-stop CMD] [--pool-delete CMD] [--pool-max N] [--pool-idle-delete-hours H] [--pool-stop-after-minutes M]
        a class with pool commands leases one named resource at a time (references/leases.md)
-  resource list|add|mark|remove CLASS --by C [--name R] [--state free|stopped|failed] [--info JSON] [--delete]
+  resource list|add|mark|remove CLASS [--name R] [--state free|stopped|failed] [--info JSON] [--delete]
        the resources of a pool class
        stream update ... --auto-acquire on|off   same for one stream's members
-  watch pool --me C     run in the background: stop unheld running pool resources idle past
-       --pool-stop-after-minutes (release never stops); reset pool resources stuck in a busy state for 90 min with no live operation; delete unheld ones idle past the class's --pool-idle-delete-hours; print
-       POOL-EXPIRED for a lease that expired over an hour ago and still holds a resource
-  watch auto --me C     run in the background: acquire C's head entry of each auto class or
-       stream when it has minutes and a worktree. Prints AUTO-GRANTED or AUTO-REFUSED. Exit 2
-       and 6 refusals are left to C (split the run, or acquire --accept-size).
+       The server does pool upkeep once a minute: it stops unheld running pool resources idle past
+       --pool-stop-after-minutes (release never stops), resets resources stuck in a busy state for
+       90 min with no live operation, deletes unheld ones idle past --pool-idle-delete-hours, and
+       sends the lease's coordinator POOL-EXPIRED for a lease that expired over an hour ago and
+       still holds a resource.
+       The server also grants the head entry of each auto class or stream (a live coordinator's,
+       with minutes and a worktree) and sends its coordinator AUTO-GRANTED, AUTO-REFUSED or
+       AUTO-SKIPPED. Exit 2 and 6 refusals are left to C (split the run, or acquire --accept-size).
   config remove-class NAME        refused while the class has holders or queue entries
-  config propose CLASS --by C --reason TEXT [--project-root P] [--default-gib N] [--default-cpus N]
+  config propose CLASS --reason TEXT [--project-root P] [--default-gib N] [--default-cpus N]
                 [--max-minutes N]
        class defaults from C's observations (sizes, capacity, release events); 0 = no limit.
        Without --project-root it sets the machine class; with it, that project's class (which
        wins over the machine class). Every live peer gets CLASS DEFAULTS PROPOSED.
-  config agree --by C --id ID | config object --by C --id ID --text TEXT | config proposals
+  config agree --id ID | config object --id ID --text TEXT | config proposals
        coordinators decide these without the user. A proposal applies when every live
        coordinator agrees, or 30 min after it was made with no objection (a live coordinator
        that has not voted agrees); the event and ledger record it, and every live coordinator
@@ -155,26 +162,32 @@ show who, why and each changed key with its old and new value)
        --max-minutes), a reference that never limits a lease or sets its length.
 
 Roster and members (coordinators write; members send messages, and request and release their own leases)
-  roster | whoami --session-id ID
-  coordinate --name C --tool claude|codex --session-id ID --focus TEXT [--pr N ...] [--takeover] [--general]
+  roster | whoami [--session-id ID]   (default: this session)
+  register C --focus TEXT [--pr N ...] [--general]
+       claims name C for this session (tool and id from the environment). Exit 3 when another
+       session holds C, unless C's handoff is open: then this session is C-new until the user
+       confirms on the dashboard (a machine decision); C-new can only wait and watch.
        --general: a general-purpose coordinator with no fixed scope
-  heartbeat --name C [--focus TEXT] [--pr N ...] [--status active|idle] | resign --name C
+  handoff      opens your name to another session's register for 2 minutes (also the dashboard's
+       Hand off button, for a session that lost its id to /clear). On the user's Hand over, the new
+       session is C and the old one gets HANDOFF DONE.
+  heartbeat [--focus TEXT] [--pr N ...] [--status active|idle] | resign
        --status idle: no work can move. Refused (exit 3) while a member is active or
        pending, or while C holds a lease or queue entry. Paused members and their PRs stay C's as parked work. An idle
        coordinator stays live and is never reported stale; peer broadcasts and update
        votes skip it. enroll, child, member add|update --status active and unpark wake it.
-  stream add|update --coordinator C --name SLUG [--label TEXT] [--goal TEXT] [--pr N ...]
+  stream add|update --name SLUG [--label TEXT] [--goal TEXT] [--pr N ...]
        update --owner C2 hands the stream to live coordinator C2
-  stream close|reopen --coordinator C --name SLUG | stream list [--coordinator C]
+  stream close|reopen --name SLUG | stream list [--coordinator C]
        a stream is a named goal (one or more PR stacks) that groups members on the
        dashboard. The slug is unique on the machine; only its coordinator changes it.
        add needs --label (at most 40 characters); --goal at most 140.
-  enroll --coordinator C --task TEXT [--by MEMBER] [--name NAME] [--pr N ...] [--stream SLUG] [--priority N]
+  enroll --task TEXT [--by MEMBER] [--name NAME] [--pr N ...] [--stream SLUG] [--priority N]
        registers a task before it starts and prints the kickoff line for its prompt
-  child --coordinator C --parent MEMBER --task TEXT --tool T --session-id ID [--pr N ...] [--stream SLUG]
+  child --parent MEMBER --task TEXT --tool T --session-id ID [--pr N ...] [--stream SLUG]
        records a child task that MEMBER started (CHILD TASK STARTED) as pending under its
        parent, until the child's JOIN (member add --parent) takes the entry over
-  member add|update --coordinator C --name NAME [--tool] [--session-id] [--worktree] [--task]
+  member add|update --name NAME [--tool] [--session-id] [--worktree] [--task]
        [--pr N ...] [--repo owner/repo] [--status] [--phase] [--kind] [--latest] [--session URL]
        [--stream SLUG] [--priority N] [--parent MEMBER]   (--stream "" clears it)
        --parent: the member that started this one. On add, it takes over that parent's
@@ -184,35 +197,35 @@ Roster and members (coordinators write; members send messages, and request and r
        updates the roster and the member's row in dashboard/<C>-state.json. Without
        --session the row links to the session from --tool and --session-id; without
        --repo, PR links use the worktree's GitHub origin (a warning when there is none)
-  member remove --coordinator C --name NAME
-  member transfer --coordinator C --name NAME --to C2 [--note PATH] | --cancel
-  member accept --coordinator C2 --name NAME --from C
-       transfer offers a member to live coordinator C2; C2's watch inbox prints TRANSFER.
+  member remove --name NAME
+  member transfer --name NAME --to C2 [--note PATH] | --cancel
+  member accept --name NAME --from C1
+       transfer offers a member to live coordinator C2; C2's watch prints TRANSFER; C2 runs accept.
        accept moves it in one locked write: the roster entry and its pending children,
        its queued and held lease entries (their coordinator field), its PRs and its row
-  member stale --coordinator C [--minutes 30]   members (not done) with no update for N minutes
-  park --coordinator C --name MEMBER [--until YYYY-MM-DD] [--notify]
-  unpark --coordinator C --name MEMBER [--notify]
+  member stale [--minutes 30]   members (not done) with no update for N minutes
+  park --name MEMBER [--until YYYY-MM-DD] [--notify]
+  unpark --name MEMBER [--notify]
        park sets the member to paused; the task leaves Needs you and returns there as
        "Revisit" after --until. The dashboard's Park/Unpark buttons use --notify.
-  decision add --by C --text TEXT [--task ID] [--href URL] [--option TEXT ...] [--scope machine]
+  decision add --text TEXT [--task ID] [--href URL] [--option TEXT ...] [--scope machine]
        prints the decision id. Each --option (at most 4, 60 characters each) is a
        suggested answer: the dashboard shows it as a button on the decision.
        --scope machine: one question for every coordinator (dashboard/machine-state.json);
-       its answer (decision answer --by machine) is the user's own answer for each of
+       its answer (on the dashboard) is the user's own answer for each of
        them, and --notify tells every live coordinator
-  decision answer --by C --id ID --choice N [--notify]
-       the user's answer, option N (from 1): clears the decision and notes it in the
-       ledger. The dashboard's option buttons use --notify, so C gets the answer
-  decision clear --by C (--task ID | --all) [--scope machine]
-  note --by C --text TEXT [--pr N]   shared ledger
+  decision answer --id ID --choice N [--notify]
+       the user's answer, option N (from 1), from the dashboard's option buttons (--notify):
+       clears the decision, notes it in the ledger and tells its coordinator
+  decision clear (--task ID | --all) [--scope machine]
+  note --text TEXT [--pr N]   shared ledger
 
 Memory (the skill's own memory; coordinators write it, everyone reads it)
-  memory add --by NAME --text TEXT [--kind rule|note] [--project-root P] [--reason TEXT]
-  memory update --by NAME --id ID --text TEXT [--kind rule|note] [--project-root P] [--reason TEXT]
+  memory add --text TEXT [--kind rule|note] [--project-root P] [--reason TEXT]
+  memory update --id ID --text TEXT [--kind rule|note] [--project-root P] [--reason TEXT]
        replaces the text and keeps the ID
   memory list [--project-root P] [--json]      machine entries, then the project's
-  memory remove --by NAME --id ID [--project-root P] [--reason TEXT]
+  memory remove --id ID [--project-root P] [--reason TEXT]
        each change logs an event (by=, reason=) and a ledger line with the old and new text
        Stored on this machine, in the state dir, never in a repository.
        Machine scope: memory/machine.json. Project scope (with --project-root):
@@ -236,7 +249,7 @@ Shared records (read-only; puppet.py has them too)
        or a directory prefix), with their owners; --repo also covers coordinator PRs
 
 Peer-coordinator messaging
-  say --from NAME --message TEXT [--to NAME] [--no-direct]
+  say --message TEXT [--to NAME] [--no-direct]
        appends to inbox.jsonl, then delivers directly: a Claude session through its inbox
        socket (protocol: github.com/PeterSR/claude-code-socket-transport, reverse-engineered,
        not an Anthropic interface), a Codex thread through `codex queue`. --to names a
@@ -245,9 +258,9 @@ Peer-coordinator messaging
        permission prompts holds a socket message for the user's approval.
 
 Watchers and install
-  watch inbox --me C | watch expiry | watch prs --me C | watch cloud --me C [--interval S]
-       Monitor sources. watch inbox reads inbox.jsonl only, never events.log. It prints
-       the INBOX messages to C or to all, among them (each is a message in C's inbox):
+  watch [--interval S]
+       the one Monitor source; it runs again by itself after a server restart. It prints
+       INBOX FROM: TEXT for messages to C or to all (inbox.jsonl, never events.log), among them:
          REQUEST CLASS ID ...   C's member queued or changed an entry: check and grant it
          PRIORITY CLASS ID N by=X   another coordinator or the dashboard changed its priority
          TRANSFER NAME ...      another coordinator offers C a member: member accept
@@ -256,21 +269,22 @@ Watchers and install
          CONFIG, MEMORY, LEASES, ADMISSION   a peer changed a machine rule
          CLASS DEFAULTS PROPOSED ID ...  a peer proposes class defaults: check your observations,
                                 then config agree or config object
-       and, from the queue state each 2 s:
+         auto: AUTO-GRANTED|AUTO-REFUSED|AUTO-SKIPPED ...   the server's auto grant
+         pool: POOL-EXPIRED ...  your lease expired over an hour ago and still holds a resource
+       and, each 2 s:
          HEAD CLASS ID ...      an entry of C became the first ready entry: acquire it
-       watch expiry prints each expired lease once, with left=N processes in its worktree.
-       watch prs prints the state of each PR in prs-<C>.txt, then each change, from the shared
-       poller in the dashboard server (one poll for the machine, one conditional request per repo), and
-       PR-WATCHER down when that poller stops: run install from the skill copy to restart the server.
-       watch cloud reads cloud-<C>.txt (a CodeRabbit cloud task id or URL,
-       then the member name, per line) and prints each task's state change from
-       `coderabbit code show --agent`
+         PR <ref> <state>       each PR in prs-<C>.txt: its state first, then each change, from the
+                                server's PR poller (one conditional request per repo)
+         PR-WATCHER down|up     that poller stopped (run install from the skill copy) or came back
+         EXPIRED CLASS ID ...   each of C's expired leases, once, with left=N processes in its worktree
+         CLOUD <task> <member> <state>   a state change of a task in cloud-<C>.txt (a CodeRabbit
+                                cloud task id or URL, then the member name, per line), every --interval s
   install    from the skill copy: copy moplib.py, coordinator.py and puppet.py into the state
        dir (replacing copies that differ), remove obsolete helpers (lease.py), record this
-       copy in source.json and restart the server from it. roster, whoami, coordinate,
+       copy in source.json and restart the server from it. roster, whoami, register,
        heartbeat and status warn on stderr when the live copies differ from that copy
 
-A coordinator is live while its heartbeat is newer than 40 minutes. coordinate and
+A coordinator is live while its heartbeat is newer than 40 minutes. register and
 heartbeat exit 3 when a PR is owned by another live coordinator; enroll and member
 exit 3 when the coordinator is not live.
 """
@@ -290,8 +304,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import (
-    captured, cenv, forward, mark, nap, restart_server,
-    DIR, CONFIG, TOOLS, MEMBER_TOOLS, SLUG, FILES, OBSOLETE, SOURCE, version_warning, PEAKS,
+    caller, captured, cenv, forward, in_run, mark, nap, restart_server, session_identity,
+    DIR, CONFIG, MEMBER_TOOLS, SLUG, FILES, OBSOLETE, SOURCE, version_warning, PEAKS,
     INBOX, PRS_STATE, PRS_EVENTS, PRS_POLL_S, CLASS_NAME, read_json, write_json, load_machine, registry,
     class_names, project_key, load_project, save_project, class_peak, typical_minutes,
     suggested_minutes, over_limit, undersized, extend_lease, now, lock, unlock, log, note,
@@ -683,6 +697,88 @@ def kickoff_line(coord, name, parent):
     )
 
 
+HANDOFF_SECONDS = 120
+
+
+def register(args, roster, cur):
+    """Claim name C for this session. A name another session holds is refused, except while its handoff
+    is open (`handoff`, or the dashboard): then this session is C-new until the user confirms on the dashboard."""
+    coords, name = roster["coordinators"], args.name
+    sid, tool = session_identity()
+    if not SLUG.match(name) or name == MACHINE or name.endswith("-new"):
+        print(f"the name must be a lowercase slug other than {MACHINE} and not end in -new, for example claude-scope-ux")
+        return 2
+    mine = next((n for n, c in coords.items() if c.get("sessionId") == sid), None)
+    if mine and mine != name:
+        print(f"this session is coordinator {mine}; resign it first")
+        return 3
+    clash = pr_conflicts(roster, name, args.pr or [])
+    if clash:
+        print(json.dumps({"owned_by_other": clash}))
+        return 3
+    if cur and cur.get("sessionId") != sid:
+        h = cur.get("handoff") or {}
+        if not h or h.get("to") or dt.datetime.fromisoformat(h["until"]) < now():
+            print(json.dumps({"name_in_use": {name: {k: cur.get(k) for k in ("tool", "focus", "heartbeat", "status")}},
+                              "hint": f"{name}'s session runs coordinator.py handoff, or the user opens a handoff on the dashboard; "
+                                      f"then register within {HANDOFF_SECONDS // 60} minutes"}))
+            return 3
+        h["to"] = {"sessionId": sid, "tool": tool, "focus": args.focus, "prs": args.pr or [], "general": args.general,
+                   "at": now().isoformat()}
+        item = add_decision(name, f"Hand coordinator {name} to the new {tool} session {sid}? Until you confirm, it is {name}-new.",
+                            ["Hand over", "Keep the current session"], MACHINE, extra={"handoff": name})
+        h["decision"] = item["id"]
+        save_roster(roster)
+        log(f"handoff register {name}-new tool={tool}")
+        note(name, f"{name}-new ({tool} {sid}) registered for the handoff; machine decision {item['id']} asks the user")
+        print(json.dumps({"pending": f"{name}-new", "decision": item["id"],
+                          "next": "you act as " + f"{name}-new until the user confirms on the dashboard; coordinator.py watch shows the answer"}))
+        return 0
+    coords[name] = {
+        "tool": tool,
+        "sessionId": sid,
+        "focus": args.focus,
+        "prs": args.pr or [],
+        "since": (cur or {}).get("since") or now().isoformat(),
+        "heartbeat": now().isoformat(),
+        "status": "active",
+        "general": args.general,
+    }
+    roster["members"].setdefault(name, [])
+    save_roster(roster)
+    log(f"coordinate {name} tool={tool} focus={args.focus!r}")
+    note(name, f"coordinates: {args.focus}")
+    print(json.dumps({"coordinator": coords[name], "leases": roster["leases"]}, indent=1))
+    return 0
+
+
+def record_handoff_answer(name, yes):
+    """The user's answer to a handoff's machine decision. The caller holds the lock."""
+    roster = load_roster()
+    cur = roster["coordinators"].get(name)
+    to = ((cur or {}).get("handoff") or {}).get("to")
+    if not to:
+        return
+    old_tool, old_sid = cur.get("tool"), cur.get("sessionId")
+    cur.pop("handoff")
+    if yes:
+        cur.update({"tool": to["tool"], "sessionId": to["sessionId"], "focus": to["focus"] or cur.get("focus"),
+                    "general": to["general"], "heartbeat": now().isoformat(), "status": "active"})
+        cur.pop("sleptAt", None)
+        if to["prs"]:
+            cur["prs"] = to["prs"]
+    save_roster(roster)
+    log(f"handoff {'confirmed' if yes else 'rejected'} {name}")
+    note(name, f"handoff to {to['tool']} {to['sessionId']} {'confirmed' if yes else 'rejected'} by the user")
+    if yes:
+        say("dashboard", f"HANDOFF CONFIRMED: this session is now coordinator {name}. Run coordinator.py watch again.", f"{name}-new")
+        print(deliver(name, to["tool"], to["sessionId"], f"HANDOFF CONFIRMED: this session is now coordinator {name}. Run coordinator.py watch again."))
+        print(deliver(name, old_tool, old_sid, f"HANDOFF DONE: this session is no longer coordinator {name}. Stop your watchers and heartbeat."))
+    else:
+        say("dashboard", f"HANDOFF REJECTED: the user kept {name} with its current session.", f"{name}-new")
+        print(deliver(name, to["tool"], to["sessionId"], f"HANDOFF REJECTED: the user kept {name} with its current session."))
+
+
 def roster_cmd(args):
     roster = load_roster()
     coords = roster["coordinators"]
@@ -693,38 +789,22 @@ def roster_cmd(args):
         note(args.by, f"leases {args.mode}")
         announce(args.by, f"LEASES {args.mode} by {args.by}")
         return 0
-    if args.cmd in ("coordinate", "heartbeat", "resign"):
+    if args.cmd in ("register", "handoff", "heartbeat", "resign"):
         cur = coords.get(args.name)
-        if args.cmd == "coordinate":
-            if not SLUG.match(args.name) or args.name == MACHINE:
-                print(f"--name must be a lowercase slug other than {MACHINE}, for example claude-scope-ux")
-                return 2
-            if live(cur) and cur["sessionId"] != args.session_id and not args.takeover:
-                print(json.dumps({"live_coordinator": {args.name: cur}}))
-                return 3
-            clash = pr_conflicts(roster, args.name, args.pr or [])
-            if clash:
-                print(json.dumps({"owned_by_other": clash}))
-                return 3
-            coords[args.name] = {
-                "tool": args.tool,
-                "sessionId": args.session_id,
-                "focus": args.focus,
-                "prs": args.pr or [],
-                "since": now().isoformat(),
-                "heartbeat": now().isoformat(),
-                "status": "active",
-                "general": args.general,
-            }
-            roster["members"].setdefault(args.name, [])
-            save_roster(roster)
-            log(f"coordinate {args.name} tool={args.tool} focus={args.focus!r}")
-            note(args.name, f"coordinates: {args.focus}")
-            print(json.dumps({"coordinator": coords[args.name], "leases": roster["leases"]}, indent=1))
-            return 0
+        if args.cmd == "register":
+            return register(args, roster, cur)
         if not cur:
             print(f"no coordinator named {args.name}")
             return 3
+        if args.cmd == "handoff":
+            until = now() + dt.timedelta(seconds=HANDOFF_SECONDS)
+            cur["handoff"] = {"until": until.isoformat(), "at": now().isoformat()}
+            save_roster(roster)
+            log(f"handoff open {args.name}")
+            note(args.name, "opened a handoff of the name")
+            print(f"handoff of {args.name} open until {until.strftime('%H:%M:%SZ')}: the next session runs "
+                  f"coordinator.py register {args.name} before then, and the user confirms it on the dashboard")
+            return 0
         if args.cmd == "heartbeat":
             if args.pr is not None:
                 clash = pr_conflicts(roster, args.name, args.pr)
@@ -942,7 +1022,7 @@ def transfer_cmd(args, roster):
             + (f" note={json.dumps(args.note)}" if args.note else ""))
         note(args.coordinator, f"offered {args.name} to {args.to}" + (f"; note {args.note}" if args.note else ""))
         say(args.coordinator, f"TRANSFER {args.name} from {args.coordinator}" + (f", note {args.note}" if args.note else "")
-            + f": take it with member accept --coordinator {args.to} --name {args.name} --from {args.coordinator}", args.to)
+            + f": take it with member accept --name {args.name} --from {args.coordinator}", args.to)
         print(f"offered {args.name} to {args.to}; it takes the member with member accept")
         return 0
     src, dst = args.source, args.coordinator
@@ -1138,7 +1218,7 @@ def add_decision(by, text, options, scope=None, task=None, href=None, extra=None
 def decision_cmd(args):
     """add, answer and clear. answer is the user's choice from the dashboard; it runs in
     another process than the owner's, so it takes the lock. A machine-scope decision
-    (--scope machine; answered with --by machine) is one question for every coordinator:
+    (--scope machine; the dashboard answers it as machine) is one question for every coordinator:
     the answer is the user's own answer for each of them, and each live one is told."""
     if args.dcmd == "add" and args.option:
         if len(args.option) > MAX_OPTIONS or any(len(o) > MAX_OPTION_CHARS or not o.strip() for o in args.option):
@@ -1167,6 +1247,8 @@ def decision_cmd(args):
                 print(f"decision {args.id} of {args.by} has changed or is answered; reload the dashboard")
                 return 3
             answer = options[args.choice - 1]
+            if item.get("handoff"):
+                record_handoff_answer(item["handoff"], args.choice == 1)
             data["decisions"] = [d for d in items if d is not item]
             task = item.get("task", "")
             done = f"Answered{' for ' + task if task else ''}: {answer}"
@@ -1907,176 +1989,111 @@ def auto_entry(entry, machine, roster, cls):
     return bool(m and (roster["streams"].get(m.get("stream")) or {}).get("autoAcquire"))
 
 
-def watch_auto(me):
-    """Grant my head entries by running acquire, for classes or streams with autoAcquire on.
-    Prints AUTO-GRANTED or AUTO-REFUSED when an entry's outcome changes. Exit 2 (over the
-    limit) and 6 (undersized) wait for the coordinator: this loop never splits a run or
-    accepts a size. Exit 7 means the entry changed during the host check; the final check
-    under the lock revalidates the entry, its hold and review state and the auto opt-in.
+def auto_grants():
+    """In the server, forever: grant each live coordinator's head entry by running acquire, for classes or
+    streams with autoAcquire on. The entry's coordinator gets AUTO-GRANTED, AUTO-REFUSED or AUTO-SKIPPED in
+    its inbox when the outcome changes. Exit 2 (over the limit) and 6 (undersized) wait for the coordinator:
+    this never splits a run or accepts a size. Exit 7 means the entry changed during the host check; the
+    final check under the lock revalidates the entry, its hold and review state and the auto opt-in.
     Other refusals retry on the next pass."""
     seen = {}
     while True:
-        machine, roster = load_machine(), load_roster()
-        heads = own_heads(me)
-        for c, q in heads.items():
-            if not auto_entry(q, machine, roster, c):
-                continue
-            key = (q["id"], q.get("minutes"), q.get("gib"), q.get("cpus"))
-            if q.get("review"):
-                if seen.get(c) != (key, "review"):
-                    print(f"AUTO-SKIPPED {c} {q['id']}: marked for review; grant it with acquire", flush=True)
-                    seen[c] = (key, "review")
-                continue
-            if seen.get(c, (None,))[0] == key and seen[c][1] in (2, 6):
-                continue
-            if not q.get("minutes") or not q.get("worktree"):
-                if seen.get(c) != (key, "incomplete"):
-                    print(f"AUTO-REFUSED {c} {q['id']}: entry needs minutes and worktree; set them with wait, then acquire", flush=True)
-                    seen[c] = (key, "incomplete")
-                continue
-            ns = argparse.Namespace(cls=c, coordinator=me, holder=q["holder"], id=q["id"], worktree=q["worktree"],
-                                    minutes=q["minutes"], gib=q.get("gib"), cpus=q.get("cpus"), accept_size=False,
-                                    commands=q.get("commands"), measure=True, auto_expect=entry_tuple(q))
-            with captured() as buf:
-                code = acquire_cmd(ns)
-            if code == 0:
-                print(f"AUTO-GRANTED {c} {q['id']}", flush=True)
-                seen.pop(c, None)
-            elif seen.get(c) != (key, code):
-                print(f"AUTO-REFUSED {c} {q['id']} exit {code}: {buf.getvalue().strip()[:300]}", flush=True)
-                seen[c] = (key, code)
+        try:
+            machine, roster, state = load_machine(), load_roster(), load()
+            for c in class_names(machine):
+                ready = [q for q in state["queue"][c] if not q.get("hold")]
+                q = ready[0] if ready else None
+                if not q or not live(roster["coordinators"].get(q["coordinator"])) or not auto_entry(q, machine, roster, c):
+                    seen.pop(c, None)
+                    continue
+                me, key = q["coordinator"], (q["id"], q.get("minutes"), q.get("gib"), q.get("cpus"))
+                if q.get("review"):
+                    if seen.get(c) != (key, "review"):
+                        say("auto", f"AUTO-SKIPPED {c} {q['id']}: marked for review; grant it with acquire", me)
+                        seen[c] = (key, "review")
+                    continue
+                if seen.get(c, (None,))[0] == key and seen[c][1] in (2, 6):
+                    continue
+                if not q.get("minutes") or not q.get("worktree"):
+                    if seen.get(c) != (key, "incomplete"):
+                        say("auto", f"AUTO-REFUSED {c} {q['id']}: entry needs minutes and worktree; set them with wait, then acquire", me)
+                        seen[c] = (key, "incomplete")
+                    continue
+                ns = argparse.Namespace(cls=c, coordinator=me, holder=q["holder"], id=q["id"], worktree=q["worktree"],
+                                        minutes=q["minutes"], gib=q.get("gib"), cpus=q.get("cpus"), accept_size=False,
+                                        commands=q.get("commands"), measure=True, auto_expect=entry_tuple(q))
+                with captured() as buf:
+                    code = acquire_cmd(ns)
+                if code == 0:
+                    say("auto", f"AUTO-GRANTED {c} {q['id']}", me)
+                    seen.pop(c, None)
+                elif seen.get(c) != (key, code):
+                    say("auto", f"AUTO-REFUSED {c} {q['id']} exit {code}: {buf.getvalue().strip()[:300]}", me)
+                    seen[c] = (key, code)
+        except Exception as exc:  # keep granting; the server log shows the failure
+            print(f"auto grants failed: {exc!r}", file=sys.stderr, flush=True)
         nap(2)
 
 
-def watch_pool(me, once=False):
-    """Once a minute, for each pool class: stop an unheld running resource idle for stopAfterMinutes
-    (release never stops: a stop is costly, and the next grant may come soon); reset a resource
-    stuck in a busy state past POOL_STUCK_MINUTES whose operation's process is gone (a crashed
-    create, start, stop or delete; a live operation is never reset); delete an unheld resource idle
-    for the class's idleDeleteHours (needs a delete command); print POOL-EXPIRED once per lease that
-    expired over an hour ago while still holding a resource (never taken back). Each step claims the
-    resource with an op token first, so two watchers or a manual command never run the same step."""
+def pool_upkeep():
+    """In the server, once a minute, for each pool class: stop an unheld running resource idle for
+    stopAfterMinutes (release never stops: a stop is costly, and the next grant may come soon); reset a
+    resource stuck in a busy state past POOL_STUCK_MINUTES whose operation's process is gone (a crashed
+    create, start, stop or delete; a live operation is never reset); delete an unheld resource idle for the
+    class's idleDeleteHours (needs a delete command). The lease's coordinator gets POOL-EXPIRED in its inbox
+    once per lease that expired over an hour ago while still holding a resource (never taken back). Each step
+    claims the resource with an op token first, so it never runs the same step as a manual command."""
     warned = set()
     while True:
-        t, machine = now(), load_machine()
-        for cls, spec in registry(machine).items():
-            pool = spec.get("pool")
-            if not pool:
-                continue
-            idle, to_stop = [], []
-            lock()
-            try:
-                state = load()
-                held = {h.get("resource") for h in state[cls]}
-                for r in list(state["resources"][cls]):
-                    age = (t - dt.datetime.fromisoformat(r.get("since") or t.isoformat())).total_seconds() / 60
-                    op = r.get("op") or {}
-                    if (op or r["state"] in BUSY_STATES) and age > POOL_STUCK_MINUTES and not op_live(op):
-                        if r["state"] == "creating":
-                            state["resources"][cls].remove(r)
-                        else:
-                            end_op(r, {"assigning": r.get("prior") or "free", "deleting": "failed"}.get(r["state"], "free"))
-                            r.pop("prior", None)
-                        save(state, machine)
-                        log(f"resource reset {cls} {r['name']} stuck {age:.0f} min by={me}")
-                        print(f"POOL-RESET {cls} {r['name']}: stuck {age:.0f} min", flush=True)
-                    elif op or r["state"] in BUSY_STATES or r["name"] in held:
-                        continue
-                    elif r["state"] in ("free", "stopped") and pool.get("idleDeleteHours") and pool.get("delete") \
-                            and age > pool["idleDeleteHours"] * 60:
-                        idle.append(r["name"])
-                    elif r["state"] == "free" and pool.get("stop") and pool.get("stopAfterMinutes") \
-                            and age > pool["stopAfterMinutes"]:
-                        to_stop.append(r["name"])
-                for h in state[cls]:
-                    over = (t - dt.datetime.fromisoformat(h["expiresAt"])).total_seconds() / 60
-                    if h.get("resource") and over > 60 and (cls, h["id"]) not in warned:
-                        warned.add((cls, h["id"]))
-                        print(f"POOL-EXPIRED {cls} {h['id']} ({h['coordinator']}): lease expired {over:.0f} min ago, "
-                              f"still holds {h['resource']}; ask the holder to release", flush=True)
-            finally:
-                unlock()
-            for name in to_stop:
-                if stop_resource(cls, name):
-                    print(f"POOL-STOPPED {cls} {name}", flush=True)
-            for name in idle:
-                ns = argparse.Namespace(rcmd="remove", cls=cls, name=name, by=me, delete=True, state="free", info=None)
-                code = resource_cmd(ns)
-                print(f"POOL-DELETED {cls} {name}" if code == 0 else f"POOL-DELETE-FAILED {cls} {name} exit {code}", flush=True)
-        if once:
-            return
-        nap(60)
-
-
-def watch_inbox(me):
-    """Messages to me or to all (inbox.jsonl only; it never reads events.log), and:
-    HEAD when an entry of mine becomes the first ready entry of its class (acquire it),
-    polled from the queue state."""
-    heads = {}
-
-    def report_heads():
-        nonlocal heads
-        now_heads = own_heads(me)
-        for c, q in now_heads.items():
-            if (heads.get(c) or {}).get("id") != q["id"]:
-                prio = f" priority {q['priority']}" if q.get("priority") else ""
-                print(f"HEAD {c} {q['id']}{prio} — {q['holder'][:60]}: acquire it when the host and budget allow", flush=True)
-        heads = now_heads
-    report_heads()
-    for path, line in follow([INBOX]):
-        if path is None:
-            report_heads()
-            continue
         try:
-            rec = json.loads(line)
-        except ValueError:
-            print(f"INBOX {line}", flush=True)
-            continue
-        if rec.get("from") != me and rec.get("to") in (None, me):
-            print(f"INBOX {rec.get('from')}: {rec.get('message')}", flush=True)
-
-
-def watch_expiry():
-    """Each lease past its expiry, once per expiry, with left=N: the processes its run still has in
-    its worktree (as drain-check counts them). An expired lease still holds its slot."""
-    seen = set()
-    while True:
-        t = now()
-        state = load()
-        for c in class_names():
-            for h in state[c]:
-                key = (c, h["id"], h["expiresAt"])  # an extended lease can expire again
-                if key not in seen and dt.datetime.fromisoformat(h["expiresAt"]) < t:
-                    seen.add(key)
-                    left = len(drain(h["worktree"])) if h.get("worktree") else "?"
-                    print(f'{c} {h["id"]} ({h["coordinator"]}) expired at {h["expiresAt"][11:16]}Z left={left} holder={h["holder"][:60]}', flush=True)
+            pool_pass(warned)
+        except Exception as exc:  # keep upkeep running; the server log shows the failure
+            print(f"pool upkeep failed: {exc!r}", file=sys.stderr, flush=True)
         nap(60)
 
 
-def watch_prs(me):
-    """State changes of the PRs listed in prs-<me>.txt ("owner/repo#123" per line), read from the
-    shared poller's prs-state.json and prs-events.log (the dashboard server polls, one conditional request per repo).
-    Prints each PR's current state first, then each change. PR-WATCHER down when the poller stops."""
-    path = os.path.join(DIR, f"prs-{me}.txt")
-    open(path, "a").close()
-
-    def mine():
-        return {(raw.split() or [""])[0] for raw in open(path).read().splitlines()}
-    state = read_json(PRS_STATE) or {}
-    for ref, rec in (state.get("prs") or {}).items():
-        if ref in mine() and rec.get("line"):
-            print(f"PR {ref} {rec['line']}", flush=True)
-    down = False
-    for p, line in follow([PRS_EVENTS]):
-        if p is None:
-            at = (read_json(PRS_STATE) or {}).get("at", 0)
-            stale = time.time() - at > 3 * ((read_json(PRS_STATE) or {}).get("pollS") or PRS_POLL_S) + 60
-            if stale != down:
-                down = stale
-                print("PR-WATCHER down: no PR poll for a while; restart the server with `python3 -I <skill>/scripts/coordinator.py install`" if down
-                      else "PR-WATCHER up", flush=True)
-        elif line.split(" ", 2)[1:2] and line.split(" ", 2)[1] in mine():
-            print(line, flush=True)
+def pool_pass(warned, by="server"):
+    t, machine = now(), load_machine()
+    for cls, spec in registry(machine).items():
+        pool = spec.get("pool")
+        if not pool:
+            continue
+        idle, to_stop = [], []
+        lock()
+        try:
+            state = load()
+            held = {h.get("resource") for h in state[cls]}
+            for r in list(state["resources"][cls]):
+                age = (t - dt.datetime.fromisoformat(r.get("since") or t.isoformat())).total_seconds() / 60
+                op = r.get("op") or {}
+                if (op or r["state"] in BUSY_STATES) and age > POOL_STUCK_MINUTES and not op_live(op):
+                    if r["state"] == "creating":
+                        state["resources"][cls].remove(r)
+                    else:
+                        end_op(r, {"assigning": r.get("prior") or "free", "deleting": "failed"}.get(r["state"], "free"))
+                        r.pop("prior", None)
+                    save(state, machine)
+                    log(f"resource reset {cls} {r['name']} stuck {age:.0f} min by={by}")
+                elif op or r["state"] in BUSY_STATES or r["name"] in held:
+                    continue
+                elif r["state"] in ("free", "stopped") and pool.get("idleDeleteHours") and pool.get("delete") \
+                        and age > pool["idleDeleteHours"] * 60:
+                    idle.append(r["name"])
+                elif r["state"] == "free" and pool.get("stop") and pool.get("stopAfterMinutes") \
+                        and age > pool["stopAfterMinutes"]:
+                    to_stop.append(r["name"])
+            for h in state[cls]:
+                over = (t - dt.datetime.fromisoformat(h["expiresAt"])).total_seconds() / 60
+                if h.get("resource") and over > 60 and (cls, h["id"]) not in warned:
+                    warned.add((cls, h["id"]))
+                    say("pool", f"POOL-EXPIRED {cls} {h['id']}: lease expired {over:.0f} min ago, still holds "
+                                f"{h['resource']}; ask the holder to release", h["coordinator"])
+        finally:
+            unlock()
+        for name in to_stop:
+            stop_resource(cls, name)
+        for name in idle:
+            resource_cmd(argparse.Namespace(rcmd="remove", cls=cls, name=name, by=by, delete=True, state="free", info=None))
 
 
 def cloud_state(task):
@@ -2106,18 +2123,15 @@ def cloud_state(task):
     keys = ("status", "turnStatus", "patchStatus", "planStatus", "deliveryStatus", "pendingReason", "cancellationPending")
     parts = [f"{k}={val(t[k])}" for k in keys if t.get(k) not in (None, "", False)]
     if (t.get("prHealth") or {}).get("state"):
-        parts.append(f"pr={t['prHealth']['state']}")  # watch prs reports the rest; other PR health fields flap
+        parts.append(f"pr={t['prHealth']['state']}")  # PR lines report the rest; other PR health fields flap
     goal = (t.get("goalState") or {}).get("goal") or {}
     if goal.get("status"):
         parts.append(f"goal={goal['status']}")
     return " ".join(parts) or "shown"
 
 
-def watch_cloud(me, interval):
-    """State changes of the CodeRabbit cloud tasks in cloud-<me>.txt ("<task id or URL> <member>" per line).
-    Cloud tasks cannot run the puppet skill or send messages, so this is their only report."""
-    path = os.path.join(DIR, f"cloud-{me}.txt")
-    open(path, "a").close()
+def watch_cloud(path, interval):
+    """CLOUD lines for watch: a cloud task's state check can take two minutes, so it runs beside the main loop."""
     last = {}
     while True:
         for raw in open(path).read().splitlines():
@@ -2132,21 +2146,61 @@ def watch_cloud(me, interval):
 
 
 def watch_cmd(args):
-    try:
-        if args.what == "inbox":
-            watch_inbox(args.me)
-        elif args.what == "expiry":
-            watch_expiry()
-        elif args.what == "cloud":
-            watch_cloud(args.me, args.interval)
-        elif args.what == "auto":
-            watch_auto(args.me)
-        elif args.what == "pool":
-            watch_pool(args.me)
-        else:
-            watch_prs(args.me)
-    except KeyboardInterrupt:
-        return 0
+    """One stream for coordinator me, every 2 s:
+      INBOX FROM: TEXT   messages to me or to all (among them the server's AUTO-* and POOL-EXPIRED)
+      HEAD ...           an entry of mine became the first ready entry of its class
+      PR <ref> <line>    the current state of each PR in prs-<me>.txt, then each change
+      PR-WATCHER down|up the server's PR poller stopped or came back
+      EXPIRED ...        each of my leases past its expiry, once per expiry, with left=N
+      CLOUD ...          a state change of a cloud task in cloud-<me>.txt, every --interval s"""
+    me = args.me
+    prs_path, cloud_path = os.path.join(DIR, f"prs-{me}.txt"), os.path.join(DIR, f"cloud-{me}.txt")
+    for p in (prs_path, cloud_path):
+        open(p, "a").close()
+
+    def mine():
+        return {(raw.split() or [""])[0] for raw in open(prs_path).read().splitlines()}
+    heads, expired, pr_down = {}, set(), False
+    last_expiry = 0.0
+    threading.Thread(target=in_run(watch_cloud), args=(cloud_path, args.interval), daemon=True).start()
+    for ref, rec in ((read_json(PRS_STATE) or {}).get("prs") or {}).items():
+        if ref in mine() and rec.get("line"):
+            print(f"PR {ref} {rec['line']}", flush=True)
+    for path, line in follow([INBOX, PRS_EVENTS]):
+        if path == INBOX:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                print(f"INBOX {line}", flush=True)
+                continue
+            if rec.get("from") != me and rec.get("to") in (None, me):
+                print(f"INBOX {rec.get('from')}: {rec.get('message')}", flush=True)
+            continue
+        if path == PRS_EVENTS:
+            if line.split(" ", 2)[1:2] and line.split(" ", 2)[1] in mine():
+                print(line, flush=True)
+            continue
+        now_heads = own_heads(me)
+        for c, q in now_heads.items():
+            if (heads.get(c) or {}).get("id") != q["id"]:
+                prio = f" priority {q['priority']}" if q.get("priority") else ""
+                print(f"HEAD {c} {q['id']}{prio} — {q['holder'][:60]}: acquire it when the host and budget allow", flush=True)
+        heads = now_heads
+        prs = read_json(PRS_STATE) or {}
+        down = time.time() - prs.get("at", 0) > 3 * (prs.get("pollS") or PRS_POLL_S) + 60
+        if down != pr_down:
+            pr_down = down
+            print("PR-WATCHER down: no PR poll for a while; restart the server with `python3 -I <skill>/scripts/coordinator.py install`"
+                  if down else "PR-WATCHER up", flush=True)
+        if time.time() - last_expiry >= 60:
+            last_expiry, t, state = time.time(), now(), load()
+            for c in class_names():
+                for h in state[c]:
+                    key = (c, h["id"], h["expiresAt"])  # an extended lease can expire again
+                    if h["coordinator"] == me and key not in expired and dt.datetime.fromisoformat(h["expiresAt"]) < t:
+                        expired.add(key)
+                        left = len(drain(h["worktree"])) if h.get("worktree") else "?"
+                        print(f'EXPIRED {c} {h["id"]} at {h["expiresAt"][11:16]}Z left={left} holder={h["holder"][:60]}', flush=True)
     return 0
 
 
@@ -2195,26 +2249,26 @@ def main(argv=None):
     dc = sub.add_parser("decision")
     dsub = dc.add_subparsers(dest="dcmd", required=True)
     da = dsub.add_parser("add")
-    da.add_argument("--by", required=True)
+    da.set_defaults(_self=("by",))
     da.add_argument("--text", required=True)
     da.add_argument("--task")
     da.add_argument("--href")
     da.add_argument("--option", action="append", help="a suggested answer; repeat for each (at most 4)")
     da.add_argument("--scope", choices=(MACHINE,), help="machine: one question for every coordinator, answered once")
     dn = dsub.add_parser("answer")
-    dn.add_argument("--by", required=True)
+    dn.set_defaults(_self=("by",))
     dn.add_argument("--id", required=True)
     dn.add_argument("--choice", type=int, required=True, help="the option number, from 1")
     dn.add_argument("--notify", action="store_true", help="tell the coordinator (sender: dashboard)")
     dl = dsub.add_parser("clear")
-    dl.add_argument("--by", required=True)
+    dl.set_defaults(_self=("by",))
     dl.add_argument("--task")
     dl.add_argument("--all", action="store_true")
     dl.add_argument("--scope", choices=(MACHINE,), help="clear your machine-scope decisions")
     sub.add_parser("capacity")
     a = sub.add_parser("acquire")
     a.add_argument("cls", metavar="CLASS")
-    a.add_argument("--coordinator", required=True)
+    a.set_defaults(_self=("coordinator",))
     a.add_argument("--holder", required=True)
     a.add_argument("--id", required=True)
     a.add_argument("--worktree", required=True)
@@ -2227,14 +2281,14 @@ def main(argv=None):
     rs = sub.add_parser("resource", help="the resources of a pool class: list, add, mark, remove")
     rs.add_argument("rcmd", choices=("list", "add", "mark", "remove"))
     rs.add_argument("cls", metavar="CLASS")
-    rs.add_argument("--by", required=True)
+    rs.set_defaults(_self=("by",))
     rs.add_argument("--name", help="the resource; not needed for list")
     rs.add_argument("--state", choices=("free", "stopped", "failed"), default="free", help="add: the state it starts in; mark: the new state")
     rs.add_argument("--info", help="add: a JSON object shown to the holder, for example the host to connect to")
     rs.add_argument("--delete", action="store_true", help="remove: run the class's delete command first")
     w = sub.add_parser("wait")
     w.add_argument("cls", metavar="CLASS")
-    w.add_argument("--coordinator", help="required for a new entry")
+    w.set_defaults(_self=("coordinator",))
     w.add_argument("--holder", help="required for a new entry; an existing entry keeps its holder text unless given")
     w.add_argument("--id", required=True)
     w.add_argument("--minutes", type=int)
@@ -2254,12 +2308,12 @@ def main(argv=None):
             u.add_argument("--to", type=int, required=True, help="position among ready entries, from 1")
         u.add_argument("--notify", action="store_true", help="tell each affected coordinator (sender: dashboard)")
     pk = sub.add_parser("park")
-    pk.add_argument("--coordinator", required=True)
+    pk.set_defaults(_self=("coordinator",))
     pk.add_argument("--name", required=True)
     pk.add_argument("--until", help="deadline YYYY-MM-DD; after it the task returns to Needs you as Revisit")
     pk.add_argument("--notify", action="store_true", help="tell the coordinator (sender: dashboard)")
     upk = sub.add_parser("unpark")
-    upk.add_argument("--coordinator", required=True)
+    upk.set_defaults(_self=("coordinator",))
     upk.add_argument("--name", required=True)
     upk.add_argument("--notify", action="store_true", help="tell the coordinator (sender: dashboard)")
     x = sub.add_parser("extend")
@@ -2277,17 +2331,17 @@ def main(argv=None):
     dn = sub.add_parser("deny")
     dn.add_argument("cls", metavar="CLASS")
     dn.add_argument("--id", required=True)
-    dn.add_argument("--by", required=True)
+    dn.set_defaults(_self=("by",))
     dn.add_argument("--reason", required=True, help="shown to the member as DENIED <reason>")
     adm = sub.add_parser("admission")
     asub = adm.add_subparsers(dest="acmd", required=True)
     ah = asub.add_parser("hold")
     ah.add_argument("cls", metavar="CLASS")
-    ah.add_argument("--by", required=True)
+    ah.set_defaults(_self=("by",))
     ah.add_argument("--reason", required=True)
     acl = asub.add_parser("clear")
     acl.add_argument("cls", metavar="CLASS")
-    acl.add_argument("--by", required=True)
+    acl.set_defaults(_self=("by",))
     acl.add_argument("--reason", help="for example what was cleaned up")
     pp = sub.add_parser("prs")
     pp.add_argument("--path", action="append", required=True, help="a glob or a directory prefix; repeat for more")
@@ -2297,7 +2351,7 @@ def main(argv=None):
     cs = csub.add_parser("show")
     cs.add_argument("--project-root")
     cm = csub.add_parser("set-machine")
-    cm.add_argument("--by", required=True)
+    cm.set_defaults(_self=("by",))
     cm.add_argument("--reason", help="why, for example the user's words")
     cm.add_argument("--reserve-gib", type=float)
     cm.add_argument("--reserve-cpus", type=float, help="cores kept free of leases")
@@ -2310,7 +2364,7 @@ def main(argv=None):
     cm.add_argument("--dashboard-port", type=int)
     cm.add_argument("--max-slots", action="append", help="CLASS=N hard cap; N=0 removes it")
     cpj = csub.add_parser("set-project")
-    cpj.add_argument("--by", required=True)
+    cpj.set_defaults(_self=("by",))
     cpj.add_argument("--reason", help="why, for example the user's words")
     cpj.add_argument("--root", required=True)
     cpj.add_argument("--name")
@@ -2325,7 +2379,7 @@ def main(argv=None):
     cpj.add_argument("--default-gib", type=float)
     cpj.add_argument("--default-cpus", type=float)
     sc = csub.add_parser("set-class")
-    sc.add_argument("--by", required=True)
+    sc.set_defaults(_self=("by",))
     sc.add_argument("--reason", help="why, for example the user's words")
     sc.add_argument("name", metavar="CLASS")
     sc.add_argument("--description")
@@ -2338,16 +2392,16 @@ def main(argv=None):
     sc.add_argument("--pool-start", help="shell command that starts a stopped resource (reads MOP_RESOURCE); \"\" removes it")
     sc.add_argument("--pool-stop", help="shell command that stops a released resource; \"\" removes it")
     sc.add_argument("--pool-delete", help="shell command that deletes a resource (resource remove --delete); \"\" removes it")
-    sc.add_argument("--pool-idle-delete-hours", type=float, help="`watch pool` deletes an unheld resource idle this long (needs a delete command); 0 = never")
-    sc.add_argument("--pool-stop-after-minutes", type=float, help="`watch pool` runs the stop command on an unheld running resource idle this long; 0 = never stop")
+    sc.add_argument("--pool-idle-delete-hours", type=float, help="the server's pool upkeep deletes an unheld resource idle this long (needs a delete command); 0 = never")
+    sc.add_argument("--pool-stop-after-minutes", type=float, help="the server's pool upkeep runs the stop command on an unheld running resource idle this long; 0 = never stop")
     sc.add_argument("--pool-max", type=int, help="most resources the pool may hold; 0 = no cap")
-    sc.add_argument("--auto-acquire", choices=("on", "off"), help="on: `watch auto` grants this class's head entry when every gate passes")
+    sc.add_argument("--auto-acquire", choices=("on", "off"), help="on: the server grants this class's head entry when every gate passes")
     rc = csub.add_parser("remove-class")
-    rc.add_argument("--by", required=True)
+    rc.set_defaults(_self=("by",))
     rc.add_argument("--reason", help="why, for example the user's words")
     rc.add_argument("name", metavar="CLASS")
     cp = csub.add_parser("propose", help="class defaults from your observations; applies when every live coordinator agrees")
-    cp.add_argument("--by", required=True)
+    cp.set_defaults(_self=("by",))
     cp.add_argument("name", metavar="CLASS")
     cp.add_argument("--project-root", help="one project's class; default: the machine class registry")
     cp.add_argument("--default-gib", type=float, help="0 = no memory charge")
@@ -2356,14 +2410,14 @@ def main(argv=None):
     cp.add_argument("--reason", required=True, help="your observations, for example sizes figures and recent release peaks")
     for name in ("agree", "object"):
         cv = csub.add_parser(name)
-        cv.add_argument("--by", required=True)
+        cv.set_defaults(_self=("by",))
         cv.add_argument("--id", required=True)
         cv.add_argument("--text", required=name == "object", help="the reason (required to object)")
     csub.add_parser("proposals", help="open class proposals and who has not agreed")
     ck = csub.add_parser("project-key")
     ck.add_argument("path")
     m = sub.add_parser("say")
-    m.add_argument("--from", dest="sender", required=True)
+    m.set_defaults(_self=("sender",))
     m.add_argument("--message", required=True)
     m.add_argument("--to", help="coordinator or member name; omit to reach every live coordinator")
     m.add_argument("--no-direct", action="store_true", help="append to inbox.jsonl only")
@@ -2371,50 +2425,49 @@ def main(argv=None):
     mesub = me.add_subparsers(dest="mcmd", required=True)
     add_read_commands(sub, memory=mesub)
     ma = mesub.add_parser("add")
-    ma.add_argument("--by", required=True)
+    ma.set_defaults(_self=("by",))
     ma.add_argument("--text", required=True)
     ma.add_argument("--kind", choices=("rule", "note"), default="rule")
     ma.add_argument("--project-root")
     ma.add_argument("--reason", help="why, for example the user's words")
     mu = mesub.add_parser("update")
-    mu.add_argument("--by", required=True)
+    mu.set_defaults(_self=("by",))
     mu.add_argument("--id", required=True)
     mu.add_argument("--text", required=True, help="the full new text; the ID stays")
     mu.add_argument("--kind", choices=("rule", "note"))
     mu.add_argument("--project-root")
     mu.add_argument("--reason", help="why, for example the user's words")
     mr2 = mesub.add_parser("remove")
-    mr2.add_argument("--by", required=True)
+    mr2.set_defaults(_self=("by",))
     mr2.add_argument("--id", required=True)
     mr2.add_argument("--project-root")
     mr2.add_argument("--reason", help="why, for example the user's words")
     nt = sub.add_parser("note")
-    nt.add_argument("--by", required=True)
+    nt.set_defaults(_self=("by",))
     nt.add_argument("--text", required=True)
     nt.add_argument("--pr", type=int)
-    co = sub.add_parser("coordinate")
-    co.add_argument("--name", required=True)
-    co.add_argument("--tool", choices=TOOLS, required=True)
-    co.add_argument("--session-id", required=True)
+    co = sub.add_parser("register")
+    co.add_argument("name")
     co.add_argument("--focus", required=True)
     co.add_argument("--pr", type=int, nargs="+", action="extend", help="PR numbers, several allowed (--pr 1 2 or --pr 1 --pr 2)")
-    co.add_argument("--takeover", action="store_true", help="replace a live coordinator of the same name (user approval only)")
     co.add_argument("--general", action="store_true", help="general-purpose coordinator with no fixed scope")
+    ho = sub.add_parser("handoff", help="open your name to another session's register for 2 minutes; the user confirms on the dashboard")
+    ho.set_defaults(_self=("name",))
     hb = sub.add_parser("heartbeat")
-    hb.add_argument("--name", required=True)
+    hb.set_defaults(_self=("name",))
     hb.add_argument("--focus")
     hb.add_argument("--pr", type=int, nargs="+", action="extend", help="PR numbers, several allowed (--pr 1 2 or --pr 1 --pr 2)")
     hb.add_argument("--status", choices=("active", "idle"))
     rs = sub.add_parser("resign")
-    rs.add_argument("--name", required=True)
+    rs.set_defaults(_self=("name",))
     ls = sub.add_parser("leases")
     ls.add_argument("mode", choices=("on", "off"))
-    ls.add_argument("--by", required=True)
+    ls.set_defaults(_self=("by",))
     mb = sub.add_parser("member")
     msub = mb.add_subparsers(dest="mcmd", required=True)
     for name in ("add", "update"):
         mx = msub.add_parser(name)
-        mx.add_argument("--coordinator", required=True)
+        mx.set_defaults(_self=("coordinator",))
         mx.add_argument("--name", required=True)
         mx.add_argument("--tool", choices=MEMBER_TOOLS)
         mx.add_argument("--session-id")
@@ -2431,23 +2484,23 @@ def main(argv=None):
         mx.add_argument("--priority", type=int, help="task priority: 0 default, higher first, below 0 for background work")
         mx.add_argument("--parent", help="the member that started this one (JOIN parent field)")
     mt = msub.add_parser("transfer")
-    mt.add_argument("--coordinator", required=True, help="the member's coordinator (you)")
+    mt.set_defaults(_self=("coordinator",))
     mt.add_argument("--name", required=True)
     mt.add_argument("--to", help="the receiving live coordinator")
     mt.add_argument("--note", help="the handoff note path")
     mt.add_argument("--cancel", action="store_true", help="withdraw the offer")
     mac = msub.add_parser("accept")
-    mac.add_argument("--coordinator", required=True, help="the receiver (you)")
+    mac.set_defaults(_self=("coordinator",))
     mac.add_argument("--name", required=True)
     mac.add_argument("--from", dest="source", required=True, help="the offering coordinator")
     mr = msub.add_parser("remove")
-    mr.add_argument("--coordinator", required=True)
+    mr.set_defaults(_self=("coordinator",))
     mr.add_argument("--name", required=True)
     ms = msub.add_parser("stale")
-    ms.add_argument("--coordinator", required=True)
+    ms.set_defaults(_self=("coordinator",))
     ms.add_argument("--minutes", type=int, default=30)
     en = sub.add_parser("enroll")
-    en.add_argument("--coordinator", required=True)
+    en.set_defaults(_self=("coordinator",))
     en.add_argument("--by", help="member on whose behalf you start the task (it becomes the parent); default: the coordinator")
     en.add_argument("--task", required=True)
     en.add_argument("--name")
@@ -2455,7 +2508,7 @@ def main(argv=None):
     en.add_argument("--stream", help="stream slug (stream add)")
     en.add_argument("--priority", type=int, help="task priority: 0 default, higher first, below 0 for background work")
     ch = sub.add_parser("child")
-    ch.add_argument("--coordinator", required=True)
+    ch.set_defaults(_self=("coordinator",))
     ch.add_argument("--parent", required=True, help="the member that sent CHILD TASK STARTED")
     ch.add_argument("--task", required=True)
     ch.add_argument("--tool", required=True, choices=MEMBER_TOOLS)
@@ -2466,7 +2519,7 @@ def main(argv=None):
     ssub = sm.add_subparsers(dest="scmd", required=True)
     for name in ("add", "update", "close", "reopen"):
         sx = ssub.add_parser(name)
-        sx.add_argument("--coordinator", required=True)
+        sx.set_defaults(_self=("coordinator",))
         sx.add_argument("--name", required=True)
         if name in ("add", "update"):
             sx.add_argument("--label", help="at most 40 characters, about 4 words")
@@ -2474,7 +2527,7 @@ def main(argv=None):
             sx.add_argument("--pr", type=int, nargs="+", action="extend", help="PR numbers, several allowed (--pr 1 2 or --pr 1 --pr 2); replaces the PR list")
         if name == "update":
             sx.add_argument("--owner", help="hand the stream to this live coordinator")
-            sx.add_argument("--auto-acquire", choices=("on", "off"), help="on: `watch auto` grants lease requests of this stream's members")
+            sx.add_argument("--auto-acquire", choices=("on", "off"), help="on: the server grants lease requests of this stream's members")
     sl = ssub.add_parser("list")
     sl.add_argument("--coordinator")
     sub.add_parser("host-check")
@@ -2490,12 +2543,15 @@ def main(argv=None):
     dr.add_argument("--port", type=int, action="append", help="also check for listeners on this port")
     dr.add_argument("--process", action="append", help="also count processes matching this pattern (pgrep -f)")
     wa = sub.add_parser("watch")
-    wa.add_argument("what", choices=("inbox", "expiry", "prs", "cloud", "auto", "pool"))
-    wa.add_argument("--me", help="coordinator name (inbox, prs, cloud)")
+    wa.set_defaults(_self=("me",))
     wa.add_argument("--interval", type=int, default=180, help="seconds between cloud task polls")
     sub.add_parser("install")
     args = p.parse_args(argv)
-    if args.cmd in ("roster", "whoami", "coordinate", "heartbeat", "status"):
+    if getattr(args, "_self", None):
+        me = caller()
+        for attr in args._self:
+            setattr(args, attr, me)
+    if args.cmd in ("roster", "whoami", "register", "heartbeat", "status"):
         version_warning()
     for attr in ("cls", "pcls"):
         name = getattr(args, attr, None)
@@ -2514,8 +2570,6 @@ def main(argv=None):
     unlocked = {"host-check": host_check_cmd, "calm-wait": calm_wait_cmd, "measure-peak": measure_peak_cmd,
                 "drain-check": drain_check_cmd, "watch": watch_cmd, "install": install_cmd, "prs": prs_cmd}
     if args.cmd in unlocked:
-        if args.cmd == "watch" and args.what != "expiry" and not args.me:
-            p.error("watch inbox|prs|cloud|auto needs --me <coordinator>")
         return unlocked[args.cmd](args)
     if args.cmd == "decision":
         return decision_cmd(args)
@@ -2532,7 +2586,7 @@ def main(argv=None):
 
     lock()
     try:
-        if args.cmd in ("coordinate", "heartbeat", "resign", "leases", "member", "enroll", "child", "stream"):
+        if args.cmd in ("register", "handoff", "heartbeat", "resign", "leases", "member", "enroll", "child", "stream"):
             return roster_cmd(args)
         if args.cmd == "config":
             return config_cmd(args)
@@ -2597,7 +2651,7 @@ def main(argv=None):
             return 0
         if args.cmd == "deny":
             if args.by not in roster["coordinators"]:
-                print(f"--by must be a registered coordinator, got {args.by}")
+                print(f"{args.by} is not a registered coordinator")
                 return 2
             entry = next((q for q in queue if q["id"] == args.id), None)
             if not entry:

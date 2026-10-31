@@ -24,7 +24,7 @@ also fetched every 2 min, since checks and reviews do not move `updated_at`.
 Merged and closed PRs are not polled. A bare number in `prs-<C>.txt` takes the
 repo of that coordinator's members. It writes
 `prs-state.json` (its `at` is the poller's heartbeat) and appends changes to
-`prs-events.log`; `coordinator.py watch prs` tails them. The Dashboard shows a
+`prs-events.log`; `coordinator.py watch` tails them. The Dashboard shows a
 "Pull requests" section from `prs-state.json`: blocked, then open, then done, each
 row with state, base, merge, review, checks, owner and check age.
 A file opened in an editor side panel does not update; do not offer that.
@@ -53,15 +53,18 @@ its status, then the running, queued and held entries. Needs you groups, streams
 and Parked collapse; the browser keeps each collapsed group collapsed.
 
 Events: the coordinators (live, stale, sleeping or general; focus, streams, links
-and notes), then the newest 200 shared-ledger entries, newest first.
+and notes), then the newest 200 shared-ledger entries, newest first. Each
+coordinator card has a "Hand off" button: it runs `coordinator.py handoff`
+for that coordinator and opens its name for 2 minutes (SKILL.md, "Name
+handoff"). The card then shows the open handoff, or the waiting `<name>-new`.
 
 Config: the machine limits (`config set-machine`), each lease class
 (`config set-class`, Remove class runs `config remove-class`, and New class
 adds one), and each configured project whose stored root exists
 (`config set-project`, one form for the project and one per class). Rules: the
 machine memory and each project's memory (`memory add|update|remove`). A save
-posts only the changed fields with an optional reason, and runs the command as
-`--by user`. The command records the change in the ledger and tells every live
+posts only the changed fields with an optional reason, and runs the command
+with the actor `user`. The command records the change in the ledger and tells every live
 coordinator and member, as when a coordinator runs it. A project with no
 stored root shows its rules read only.
 
@@ -192,5 +195,5 @@ coordinator slug; it labels your section and your decisions.
   as `$CODEX_THREAD_ID`, not a subagent ID. The JSON above shows Claude links;
   replace them for Codex sessions. Open the live dashboard with
   `mcp__codex_app__open_in_codex` using a browser target when available.
-- Your focus and PRs come from the roster (`coordinate` / `heartbeat`), not
+- Your focus and PRs come from the roster (`register` / `heartbeat`), not
   from this file.

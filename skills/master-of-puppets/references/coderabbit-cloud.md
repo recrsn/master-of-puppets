@@ -6,8 +6,8 @@ delivers to a PR: a push to the PR branch, a stacked PR, or Autofix.
 
 A cloud task cannot run the puppet skill. It sends no JOIN, no UPDATE and no
 reply to `STATUS?`, and it takes no leases. So the coordinator tracks it: a
-member row with `--tool coderabbit`, and `coordinator.py watch cloud` or a
-check in each heartbeat round. Nobody else checks it.
+member row with `--tool coderabbit`, the `CLOUD` lines of
+`coordinator.py watch` and a check in each heartbeat round. Nobody else checks it.
 
 For every `coderabbit code` command:
 
@@ -40,7 +40,7 @@ suggest.
 
 - `repository_not_resolved`: CodeRabbit cloud has no access to this
   repository. Do not suggest it. Record it once:
-  `coordinator.py memory add --by <slug> --kind note --project-root <worktree> --text "CodeRabbit cloud cannot access this repository"`.
+  `coordinator.py memory add --kind note --project-root <worktree> --text "CodeRabbit cloud cannot access this repository"`.
 - `authenticate`, `organization_required` or `unsupported_auth`: tell the
   user. The user logs in or selects the organization.
 
@@ -82,27 +82,24 @@ from the result of `autofix on`.
 1. A member that started a task sends
    `CLOUD TASK — <name> — <taskId> — <url> — <task> — PRs <n>`.
 2. The coordinator adds the member row. Name it `cr-<task slug>`:
-   `coordinator.py member add --coordinator <slug> --name cr-<task> --tool coderabbit --session-id <taskId> --session <url> --task "<task>" --pr <n> --repo <owner/repo> --stream <stream>`.
+   `coordinator.py member add --name cr-<task> --tool coderabbit --session-id <taskId> --session <url> --task "<task>" --pr <n> --repo <owner/repo> --stream <stream>`.
    The dashboard row opens the cloud task.
-3. Append `<taskId> cr-<task>` to `cloud-<slug>.txt` in the state dir. Arm
-   `coordinator.py watch cloud --me <slug>` if it does not run (Claude
-   `Monitor`; Codex, a long-lived command as for `watch prs`). Re-arm it when
-   it ends.
+3. Append `<taskId> cr-<task>` to `cloud-<slug>.txt` in the state dir. Your
+   `coordinator.py watch` reads that file; make sure it runs.
 4. `note --pr <n>` the task id and its URL.
 5. After a handoff, the member sends LEAVE when its tree is clean and its
    branch is pushed. Its PRs move to the cloud row.
 
 ## Track
 
-`watch cloud` prints `CLOUD <taskId> <member> <state>` on each change: task,
-turn, patch, plan and delivery status, and the PR state. `watch prs` reports
-the rest of the PR. It polls every 180
-seconds (`--interval`).
+`watch` prints `CLOUD <taskId> <member> <state>` on each change: task,
+turn, patch, plan and delivery status, and the PR state. Its `PR` lines
+report the rest of the PR. It polls cloud tasks every 180 seconds
+(`watch --interval <s>`).
 
 In each heartbeat round, for each `coderabbit` member:
 
-- Read the newest `CLOUD` lines, or the `CLOUD UPDATE` messages of your watch
-  helper ("Watch helper", below). With neither, run
+- Read the newest `CLOUD` lines. With none, run
   `coderabbit code show <taskId> --agent`.
 - Record each change with `member update --phase --kind --latest`. Watcher
   lines do not refresh other members, but for a cloud task they are its only
@@ -118,47 +115,9 @@ In each heartbeat round, for each `coderabbit` member:
 | The agent waits for an answer | `decision add` with the question and the task URL. The user answers on the task page or in `coderabbit code resume <taskId>`. When the user gives you the answer, send it once with `resume --agent --answer`. Never answer for the user. Never collect the answer to a sensitive question. |
 | A plan is ready | Decision: the user reviews the plan at the URL. The user who started the task cannot approve its plan. Implementation (`/implement`) is billed and is the user's action. |
 | A patch is ready and not delivered | Decision: push to the PR branch, open a stacked PR, or leave it. Run `coderabbit code push <taskId> --agent [--stacked]` only on the user's answer. After `--stacked`, add the new PR: `member update --pr`, `prs-<slug>.txt`. |
-| Delivered | The PR goes through "Driving a stack" like any PR. `watch prs` covers it. |
+| Delivered | The PR goes through "Driving a stack" like any PR. The `PR` lines of `watch` cover it. |
 | Failed or canceled | `--kind warn`. Tell the user, with the URL. A new turn (`resume -m`) is billed: only on the user's word. |
 | `authorize_github` | Give the URL to the user. Never open it yourself. |
-
-## Watch helper
-
-The coordinator can move the cloud watch into a helper session, so that its
-own rounds stay short. The helper is a normal member: it runs `/puppet`.
-
-**Coordinator:**
-
-1. Enroll it: `coordinator.py enroll --coordinator <slug> --task "sweep: cloud watch for <slug>" --priority -1 [--stream <stream>]`.
-   Start it with the kickoff line first. Then give the path of this file,
-   "Watch helper".
-2. Stop your own `watch cloud`. Run only one watcher for each
-   `cloud-<slug>.txt`. You still write `cloud-<slug>.txt` ("Record").
-3. Record each `CLOUD UPDATE` with `member update` on the cloud member's row,
-   and act on it with the table in "Track". Every decision, answer and billed
-   action stays with you and the user.
-4. In each round, check the helper as any member. When it is silent for 30
-   minutes, send `STATUS?`. When it is gone, run `watch cloud` yourself again.
-5. When `cloud-<slug>.txt` is empty and no cloud task is pending, tell the
-   helper to leave.
-
-**Helper:**
-
-1. Run `coordinator.py watch cloud --me <coordinator slug>` (Claude:
-   `Monitor`; Codex: a long-lived command). Re-arm it when it ends. Do not
-   write `cloud-<slug>.txt` or any other shared state.
-2. Read only. Use `coderabbit code show <taskId> --agent` and `coderabbit code ls --agent`
-   to check a line. Never run a command that bills or changes shared state
-   ("Stack rules"). Never answer the cloud agent, and never send it a message.
-3. Report only a meaningful change: a turn finished, the task needs an answer
-   or a plan review, the task failed or was canceled, or it opened or
-   delivered a PR. Send it to your coordinator:
-   `CLOUD UPDATE — <member> — <taskId> — <state> — <fact>`. Do not report
-   status changes while a turn runs.
-4. When nothing meaningful changed for 30 minutes, send
-   `UPDATE — <your name> — Watching — <n> cloud tasks, no change`.
-5. Leave when your coordinator tells you to (puppet skill, section 7). You
-   have no PR, so nothing blocks the LEAVE.
 
 ## Stack rules
 

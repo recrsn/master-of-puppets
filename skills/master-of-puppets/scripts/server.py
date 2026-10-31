@@ -21,13 +21,15 @@ Pages share one shell (dashboard.html) with host values and the page links in th
                buttons: runs `coordinator.py <action> CLASS --id ID --notify`, which tells each
                affected coordinator.
   POST /decide {"coord", "id", "choice"} from a decision's option buttons: runs
-               `coordinator.py decision answer --by C --id ID --choice N --notify`, so the
+               `coordinator.py decision answer --id ID --choice N --notify` as C, so the
                coordinator gets the user's answer. Only the option number crosses the post.
+  POST /handoff {"coord"} from a coordinator's Hand off button: runs `coordinator.py handoff` as that
+               coordinator, so another session may register its name for 2 minutes.
   POST /config {"cmd": "set-machine"|"set-class"|"remove-class"|"set-project", "args", "reason"?} from
-               the Config page: runs `coordinator.py config <cmd> --by user ...`, which records the
+               the Config page: runs `coordinator.py config <cmd> ...` as user, which records the
                change and tells every live coordinator and member.
   POST /memory {"action": "add"|"update"|"remove", "scope", "id"?, "text"?, "kind"?, "reason"?} from
-               the Rules page: runs `coordinator.py memory <action> --by user ...`, which tells them too.
+               the Rules page: runs `coordinator.py memory <action> ...` as user, which tells them too.
   Posts: same-origin JSON with X-Requested-By only.
   POST /run    {"script": "coordinator"|"puppet", "argv", "env"} from coordinator.py and puppet.py, which are
                thin clients: the server is the one reader and writer of the state dir. It runs the command
@@ -741,6 +743,16 @@ def render_page(host):
         state = (sleep_badge(c, paused, now) if c.get("status") == "idle"
                  else f'<span class="{"ok" if live else "danger"}">{"live" if live else "stale"}</span>')
         owned = [slug for slug, st in streams.items() if st.get("coordinator") == name and st.get("status") != "closed"]
+        h = c.get("handoff") or {}
+        if h.get("to"):
+            handoff = f'<p class="c-s">Handoff: {e(name)}-new ({e(h["to"]["tool"])}) waits for your answer under Needs you</p>'
+        elif h and parse(h["until"]) > now:
+            handoff = f'<p class="c-s">Handoff open until {e(local(parse(h["until"])))}: the next session may register {e(name)}</p>'
+        elif c:
+            handoff = (f'<button type="button" class="ghost" data-handoff="{e(name)}" title="Let another session register this name '
+                       f'in the next 2 minutes; you confirm it here">Hand off</button>')
+        else:
+            handoff = ""
         links, notes = [link(l) for l in src.get("links", [])], src.get("notes", [])
         coord_rows += (
             f'<div class="coord" id="coord-{e(name)}"><div class="c-h">{label}{state}'
@@ -750,7 +762,7 @@ def render_page(host):
             + (f'<p class="c-s">Streams: {e(", ".join(f"{stream_label(s)} ({in_stream.get(s, (0, 0))[0]})" for s in owned))}</p>' if owned else "")
             + (f'<div class="links">{"".join(links)}</div>' if links else "")
             + (f'<ul class="notes">{"".join(f"<li>{e(n)}</li>" for n in notes)}</ul>' if notes else "")
-            + "</div>"
+            + handoff + "</div>"
         )
     coord_rows = coord_rows or '<p class="none">None</p>'
 
@@ -853,7 +865,7 @@ CLASS_FIELDS = [
     ("defaultGiB", "Default memory", "--default-gib", float, "GiB; 0 = not memory-bound"),
     ("defaultCpus", "Default cores", "--default-cpus", float, "0 = not CPU-bound"),
     ("maxMinutes", "Max minutes", "--max-minutes", int, "0 = no limit"),
-    ("autoAcquire", "Auto acquire", "--auto-acquire", ("off", "on"), "on: the coordinator's `watch auto` grants when every gate passes"),
+    ("autoAcquire", "Auto acquire", "--auto-acquire", ("off", "on"), "on: the server grants the head entry when every gate passes"),
 ]
 PROJECT_FIELDS = [
     ("name", "Name", "--name", str, ""),
@@ -1012,17 +1024,26 @@ def run_command(script, argv, env, emit, cancel):
             moplib.RUN.__dict__.pop(name, None)
 
 
-def run_inline(argv):
-    """A coordinator.py command for a dashboard post: (exit code, non-empty output lines)."""
+def background(work):
+    """work for a server thread: its output goes to the server log, like a run's to its client."""
+    def wrapped():
+        moplib.RUN.out = lambda kind, text: (sys.stdout.real if kind == "out" else sys.stderr.real).write(text)
+        work()
+    return wrapped
+
+
+def run_inline(argv, actor="dashboard"):
+    """A coordinator.py command for a dashboard post, acting as actor (the user, or the coordinator a
+    button is for): (exit code, non-empty output lines)."""
     chunks = []
-    code = run_command("coordinator", argv, {}, lambda kind, text: chunks.append(text), threading.Event())
+    code = run_command("coordinator", argv, {"MOP_ACTOR": actor}, lambda kind, text: chunks.append(text), threading.Event())
     return code, [x for x in "".join(chunks).splitlines() if x.strip()] or [f"coordinator.py exit {code}"]
 
 
-def coordinator(cmd):
+def coordinator(cmd, actor="user"):
     """Run coordinator.py with argv cmd; returns (ok, output lines). A JSON dump on success is
     left out: the page refreshes with the new values."""
-    code, lines = run_inline(cmd)
+    code, lines = run_inline(cmd, actor)
     return (True, ["Saved"]) if code == 0 else (False, lines)
 
 
@@ -1044,10 +1065,10 @@ def typed(kind, v):
 
 
 def config_action(cmd, args, reason):
-    """Map a Config form post to `coordinator.py config CMD --by user ...`."""
+    """Map a Config form post to `coordinator.py config CMD ...` as user."""
     if not isinstance(args, dict):
         return False, ["bad request"]
-    argv = ["config", cmd, "--by", "user"] + (["--reason", reason] if reason else [])
+    argv = ["config", cmd] + (["--reason", reason] if reason else [])
     try:
         if cmd == "set-machine":
             flags = {k: (flag, kind) for k, _, flag, kind, _ in MACHINE_FIELDS}
@@ -1111,10 +1132,10 @@ MEMORY_ID = re.compile(r"^m-[0-9a-f]{1,32}$")
 
 
 def memory_action(action, scope, entry_id, text, kind, reason):
-    """Map a Rules form post to `coordinator.py memory ACTION --by user ...`."""
+    """Map a Rules form post to `coordinator.py memory ACTION ...` as user."""
     if action not in ("add", "update", "remove") or (action != "add" and not MEMORY_ID.match(entry_id)):
         return False, ["bad request"]
-    argv = ["memory", action, "--by", "user"] + (["--reason", reason] if reason else [])
+    argv = ["memory", action] + (["--reason", reason] if reason else [])
     if scope != "machine":
         proj = known_projects().get(scope)
         if not proj:
@@ -1220,26 +1241,34 @@ DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def park_action(action, coord, name, until):
-    """Run `coordinator.py park|unpark --coordinator C --name N [--until D] --notify`."""
+    """Run `coordinator.py park|unpark --name N [--until D] --notify` as coordinator C."""
     if action not in PARK_ACTIONS or not NAME.match(coord) or not NAME.match(name) or (until and not DATE.match(until)):
         return False, ["bad request"]
-    cmd = [action, "--coordinator", coord, "--name", name, "--notify"]
+    cmd = [action, "--name", name, "--notify"]
     if action == "park" and until:
         cmd += ["--until", until]
-    code, lines = run_inline(cmd)
+    code, lines = run_inline(cmd, coord)
     return code == 0, lines
 
 
 DECISION_ID = re.compile(r"^[0-9a-f]{8}$")
 
 
+def handoff_action(coord):
+    """Run `coordinator.py handoff` as coordinator coord."""
+    if not NAME.match(coord):
+        return False, ["bad request"]
+    code, lines = run_inline(["handoff"], coord)
+    return code == 0, lines
+
+
 def decide_action(coord, decision_id, choice):
-    """Run `coordinator.py decision answer --by C --id ID --choice N --notify`."""
+    """Run `coordinator.py decision answer --id ID --choice N --notify` as C."""
     if not NAME.match(coord) or not DECISION_ID.match(decision_id) or not (isinstance(choice, int) and 1 <= choice <= 9):
         return False, ["bad request"]
-    cmd = ["decision", "answer", "--by", coord, "--id", decision_id,
+    cmd = ["decision", "answer", "--id", decision_id,
            "--choice", str(choice), "--notify"]
-    code, lines = run_inline(cmd)
+    code, lines = run_inline(cmd, coord)
     return code == 0, lines
 
 
@@ -1298,7 +1327,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if kind == "exit":
                     return
         except OSError:
-            cancel.set()
+            pass
+        finally:
+            cancel.set()  # ends the run, and the threads it started, at their next output or nap
 
     def restart_post(self, req):
         """POST /restart {"source"}: once no command holds the state lock, replace this process with
@@ -1332,7 +1363,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             (self.run_post if path == "/run" else self.restart_post)(req)
             return
-        if path not in ("/queue", "/park", "/decide", "/config", "/memory"):
+        if path not in ("/queue", "/park", "/decide", "/config", "/memory", "/handoff"):
             self.send_response(404)
             self.end_headers()
             return
@@ -1352,6 +1383,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 choice = req.get("choice")
                 ok, lines = decide_action(str(req.get("coord", "")), str(req.get("id", "")),
                                           choice if type(choice) is int else None)
+            elif path == "/handoff":
+                ok, lines = handoff_action(str(req.get("coord", "")))
             elif path == "/park":
                 ok, lines = park_action(str(req.get("action", "")), str(req.get("coord", "")), str(req.get("name", "")),
                                         str(req.get("until") or ""))
@@ -1433,6 +1466,8 @@ def main():
     threading.Thread(target=host_sampler, daemon=True).start()
     threading.Thread(target=watcher, daemon=True).start()
     threading.Thread(target=run_pr_poller, daemon=True).start()
+    for work in (coordinator_cmds.auto_grants, coordinator_cmds.pool_upkeep):
+        threading.Thread(target=background(work), daemon=True).start()
     print(f"dashboard: http://localhost:{PORT}/", flush=True)
     server.serve_forever()
 

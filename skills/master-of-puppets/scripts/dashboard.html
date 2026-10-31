@@ -403,6 +403,10 @@ form.cfg:not([data-dirty]) .btn[type=submit]{opacity:.5}
     } else if (rr) {
       if (confirm(`Remove ${rr.dataset.removeRule}? Every live coordinator and member gets a message.`))
         send("/memory", {action: "remove", scope: rr.dataset.scope, id: rr.dataset.removeRule}, rr.closest("form").elements.__reason.value, rr);
+    } else if (ev.target.closest("[data-handoff]")) {
+      const coord = ev.target.closest("[data-handoff]").dataset.handoff;
+      if (confirm(`Open ${coord} to another session for 2 minutes? You confirm the new session here.`))
+        post("/handoff", {coord});
     } else if (dc) {
       decide(dc);
     } else if (pk) {

@@ -34,7 +34,7 @@ Usage: python3 -I puppet.py <command> ...
        prints HELD <reason> while your coordinator holds or reviews the entry (keep waiting),
        ASSIGNING <what> while a pool class creates or starts your resource (can take minutes),
        and after GRANTED of a pool class, RESOURCE <name> <info JSON>: the resource you hold
-       until you release it (release never stops it: your coordinator's `watch pool` does, when idle),
+       until you release it (release never stops it: the server's pool upkeep does, when idle),
        then GRANTED, DENIED <reason> or NOT-GRANTED <reason>. Exit 0 granted (the only grant);
        4 denied by your coordinator (do not retry; ask why); 3 left the queue without a grant; 5 timeout while still queued; 6 never queued
        within --appear-timeout (default 600 s)
@@ -240,7 +240,7 @@ def release(args):
         state[args.cls] = [h for h in holders if h["id"] != args.id]
         res = find_resource(state, args.cls, held.get("resource")) if held.get("resource") else None
         if res and res["state"] == "free":
-            set_state(res, "free")  # stamps the idle clock; `watch pool` stops it later, if the class asks
+            set_state(res, "free")  # stamps the idle clock; the server's pool upkeep stops it later, if the class asks
         save(state, machine)
     finally:
         unlock()

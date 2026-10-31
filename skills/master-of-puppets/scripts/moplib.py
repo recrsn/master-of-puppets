@@ -76,7 +76,8 @@ BOOT = uuid.uuid4().hex[:12]  # this process's start, for op_live
 RUN = threading.local()  # per run in the server: env (the client's), cancel (an Event), out (emit(kind, text))
 CLIENT_ENV = ("CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "XDG_RUNTIME_DIR", "CLAUDE_CODE_TMPDIR",
               "MOP_CLIENT_PID", "MOP_CLIENT_PGID",  # the client process, for session_pids
-              "MOP_FOLLOW_OFFSETS")  # where a resumed run's follow starts
+              "MOP_FOLLOW_OFFSETS",  # where a resumed run's follow starts
+              "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID")  # who calls: session_identity
 PATH_FLAGS = ("--worktree", "--root", "--path", "--project-root")
 RESUMABLE = ("watch", "await-grant", "calm-wait", "measure-peak")  # rerun after a server restart
 SERVER_LOG = os.path.join(DIR, "server.log")
@@ -101,11 +102,55 @@ def nap(seconds):
         raise ClientGone()
 
 
+def session_identity():
+    """(session id, tool) of the calling Claude session or Codex thread; exits 2 without one."""
+    ids = {"claude": cenv("CLAUDE_CODE_SESSION_ID"), "codex": cenv("CODEX_THREAD_ID")}
+    if ids["claude"] and ids["codex"]:  # one inherited the other's: a Codex thread started from a Claude session, or back
+        tool = agent_tool(cenv("MOP_CLIENT_PID") or str(os.getpid())) or "codex"
+        return ids[tool], tool
+    for tool, sid in ids.items():
+        if sid:
+            return sid, tool
+    print("no session identity: Claude Code sets CLAUDE_CODE_SESSION_ID; in Codex, run the command as "
+          "CODEX_THREAD_ID=<this thread's id> coordinator.py ...", file=sys.stderr)
+    sys.exit(2)
+
+
+def caller():
+    """The coordinator this run acts as: the dashboard's actor (MOP_ACTOR, which clients cannot send), else the
+    coordinator whose session id is the caller's, or C-new while the caller waits for C's handoff. Exits 2 for
+    an unregistered session."""
+    actor = (getattr(RUN, "env", None) or {}).get("MOP_ACTOR")
+    if actor:
+        return actor
+    sid, _ = session_identity()
+    for name, c in ((read_json(ROSTER) or {}).get("coordinators") or {}).items():
+        if c.get("sessionId") == sid:
+            return name
+        if (((c.get("handoff") or {}).get("to")) or {}).get("sessionId") == sid:
+            return f"{name}-new"
+    print("this session is not a registered coordinator: run coordinator.py register <name>", file=sys.stderr)
+    sys.exit(2)
+
+
 def mark(data):
     """Send the client a resume marker (a string) that it passes back as MOP_FOLLOW_OFFSETS on a rerun."""
     out = getattr(RUN, "out", None)
     if out is not None:
         out("mark", data)
+
+
+def in_run(fn):
+    """fn for a thread that a run starts: it writes to the run's client and ends with the run."""
+    ctx = dict(RUN.__dict__)
+
+    def wrapped(*args):
+        RUN.__dict__.update(ctx)
+        try:
+            fn(*args)
+        except BaseException:  # ClientGone, or a failure the client can no longer see
+            return
+    return wrapped
 
 
 class RunOutput:
@@ -214,6 +259,24 @@ def absolute_paths(argv):
             a = f"{flag}={os.path.abspath(os.path.expanduser(value))}"
         out.append(a)
     return out
+
+
+def agent_tool(pid):
+    """claude or codex: the nearest agent program among pid's ancestors, else None. The server runs it for a
+    client: a Codex sandbox may forbid ps."""
+    procs = {}
+    for line in subprocess.run(["ps", "-axo", "pid=,ppid=,comm="], capture_output=True, text=True).stdout.splitlines():
+        f = line.split(None, 2)
+        if len(f) == 3:
+            procs[f[0]] = (f[1], os.path.basename(f[2]).lower())
+    seen = set()
+    while pid in procs and pid not in seen:
+        seen.add(pid)
+        ppid, name = procs[pid]
+        if name in ("claude", "codex"):
+            return name
+        pid = ppid
+    return None
 
 
 def forward(script, argv):
@@ -593,7 +656,7 @@ def queue_entry(state, roster, cls, id, coordinator=None, holder=None, minutes=N
                 existing["coordinator"])
     else:
         if not (coordinator and holder):
-            return 2, "a new queue entry needs --coordinator and --holder"
+            return 2, "a new queue entry needs --holder"
         if priority is None:
             priority = task_priority(roster, coordinator, holder)
         entry = {"coordinator": coordinator, "holder": holder, "id": id, "priority": priority,
@@ -1064,7 +1127,7 @@ def add_read_commands(sub, memory=None):
     coordinator.py passes its memory subparsers so add and remove sit beside list."""
     sub.add_parser("roster")
     wh = sub.add_parser("whoami")
-    wh.add_argument("--session-id", required=True)
+    wh.add_argument("--session-id", help="default: this session's")
     if memory is None:
         memory = sub.add_parser("memory").add_subparsers(dest="mcmd", required=True)
     ml = memory.add_parser("list")
@@ -1235,7 +1298,7 @@ def read_cmd(args):
         return sizes_cmd(args)
     roster = load_roster()
     if args.cmd == "whoami":
-        me = find_session(roster, args.session_id)
+        me = find_session(roster, args.session_id or session_identity()[0])
         print(json.dumps(me or {"role": "none"}))
         return 0 if me else 3
     if args.cmd == "roster":
@@ -1259,7 +1322,7 @@ def read_cmd(args):
 
 # ---------------------------------------------------------------- PR watching
 # One poller per machine (the dashboard server runs it) reads every watch list once per
-# cycle and keeps prs-state.json and prs-events.log. `coordinator.py watch prs` only tails them.
+# cycle and keeps prs-state.json and prs-events.log. `coordinator.py watch` only tails them.
 
 PRS_STATE = os.path.join(DIR, "prs-state.json")
 PRS_EVENTS = os.path.join(DIR, "prs-events.log")
@@ -1293,7 +1356,7 @@ def pr_refs():
 
 
 def pr_line(d):
-    """The one-line state that `watch prs` prints, from a `gh pr view --json` record."""
+    """The one-line state that `watch` prints, from a `gh pr view --json` record."""
     sha = f" sha={d['mergeCommit']['oid'][:12]}" if d.get("mergeCommit") else ""
     return (f"{d['state']} base={d['baseRefName']} draft={str(d['isDraft']).lower()} merge={d['mergeStateStatus']} "
             f"automerge={'on' if d.get('autoMergeRequest') else 'off'} review={d.get('reviewDecision') or 'none'}{sha}")
