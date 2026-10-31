@@ -1014,8 +1014,9 @@ def version_warning():
     differ = helpers_differ(src)
     obsolete = [n for n in OBSOLETE if os.path.exists(os.path.join(DIR, n))]
     if differ:
-        print(f"warning: the live {', '.join(differ)} in {DIR} {'differs' if len(differ) == 1 else 'differ'} from the skill copy in {src}: "
-              f"run python3 -I {os.path.join(src, 'coordinator.py')} install", file=sys.stderr)
+        print(f"warning: the live {', '.join(differ)} in {DIR} {'differs' if len(differ) == 1 else 'differ'} from the skill copy in {src}. "
+              f"Do not install: tell the user, who decides when to run python3 -I {os.path.join(src, 'coordinator.py')} install "
+              f"(the skill copy may be work in progress, and an install changes every coordinator's helpers)", file=sys.stderr)
     if obsolete:
         print(f"warning: obsolete {', '.join(obsolete)} in {DIR}: do not run it; "
               f"python3 -I {os.path.join(src, 'coordinator.py')} install removes it", file=sys.stderr)
