@@ -114,7 +114,7 @@ In each heartbeat round, for each `coderabbit` member:
 | A turn runs | `--kind work`. Nothing else. |
 | The agent waits for an answer | `decision add` with the question and the task URL. The user answers on the task page or in `coderabbit code resume <taskId>`. When the user gives you the answer, send it once with `resume --agent --answer`. Never answer for the user. Never collect the answer to a sensitive question. |
 | A plan is ready | Decision: the user reviews the plan at the URL. The user who started the task cannot approve its plan. Implementation (`/implement`) is billed and is the user's action. |
-| A patch is ready and not delivered | Decision: push to the PR branch, open a stacked PR, or leave it. Run `coderabbit code push <taskId> --agent [--stacked]` only on the user's answer. After `--stacked`, add the new PR: `member update --pr`, `prs-<slug>.txt`. |
+| A patch is ready and not delivered | Decision: push to the PR branch, open a stacked PR, or leave it. Run `coderabbit code push <taskId> --agent [--stacked]` only on the user's answer. After `--stacked`, add the new PR with `member update --pr`; `watch` then follows it. |
 | Delivered | The PR goes through "Driving a stack" like any PR. The `PR` lines of `watch` cover it. |
 | Failed or canceled | `--kind warn`. Tell the user, with the URL. A new turn (`resume -m`) is billed: only on the user's word. |
 | `authorize_github` | Give the URL to the user. Never open it yourself. |

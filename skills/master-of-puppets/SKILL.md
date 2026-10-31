@@ -88,7 +88,8 @@ Apply the following routes in order:
 | Another live coordinator already owns the requested stack | Ask the user: join it with `/puppet`, split the stack with it, or take over its name ("Name handoff") |
 | The user asked this unowned session to coordinate a stack | Continue with "Coordinator start" |
 
-A coordinator is live while its heartbeat is newer than 40 minutes. Session
+A coordinator is live while its heartbeat is newer than 40 minutes. A running
+`watch` renews it once a minute; the heartbeat round renews it too. Session
 ids are in `references/agents.md`. What members send and do is in the `puppet`
 skill; `references/protocol.md` lists the coordinator side.
 
@@ -140,13 +141,16 @@ Do this only on the user's word, or to get your own name back after a
    joins, ACTIVE/PAUSE, stack moves, merge SHAs, user decisions. After a
    context reset, `roster`, the ledger and your dashboard file are how you
    recover.
-4. Write `prs-<slug>.txt` in the state dir (`owner/repo#<n>` per line). Arm
+4. Your PRs are what `register`/`heartbeat --pr` and your members' `member add|update --pr`
+   claim; `watch` follows them, so keep those claims current. Arm
    the one watcher: `coordinator.py watch [--interval <s>]` (`<s>`: seconds
    between CodeRabbit cloud task polls, default 180). It prints:
    - `INBOX <from>: <text>`: messages to you or to all;
    - `HEAD <CLASS> <id> ...`: your entry became the first ready entry;
-   - `PR <ref> <state line>`: each PR in `prs-<slug>.txt`, its current state
-     first, then each change; `PR-WATCHER down|up` when the server's PR
+   - `VOTE-REQUEST <id> by <peer>: ...`: an open vote that waits for your vote
+     (`references/leases.md`, "Votes");
+   - `PR <ref> <state line>`: each of your PRs (and any in `prs-<slug>.txt`): an open PR's state
+     when `watch` starts, then each change; `PR-WATCHER down|up` when the server's PR
      poller stops or comes back;
    - `EXPIRED <CLASS> <id> at <HH:MM>Z left=<n> holder=...`: one of your
      leases expired;

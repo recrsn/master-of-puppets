@@ -139,8 +139,8 @@ show who, why and each changed key with its old and new value)
        90 min with no live operation, deletes unheld ones idle past --pool-idle-delete-hours, and
        sends the lease's coordinator POOL-EXPIRED for a lease that expired over an hour ago and
        still holds a resource.
-       The server also grants the head entry of each auto class or stream (a live coordinator's,
-       with minutes and a worktree) and sends its coordinator AUTO-GRANTED, AUTO-REFUSED or
+       The server also grants the head entry of each auto class or stream (any registered
+       coordinator's, with minutes and a worktree) and sends its coordinator AUTO-GRANTED, AUTO-REFUSED or
        AUTO-SKIPPED. Exit 2 and 6 refusals are left to C (split the run, or acquire --accept-size).
   config remove-class NAME        refused while the class has holders or queue entries
        project: --name --base-branch --merge-method merge|squash|rebase|auto --leases-default
@@ -246,8 +246,8 @@ Peer-coordinator messaging
        coordinators use say. A receiver that bypasses
        permission prompts holds a socket message for the user's approval.
   vote propose --text TEXT [--class CLASS [--project-root P] [--default-gib N] [--default-cpus N] [--max-minutes N]]
-       a question every live coordinator votes on, without the user; every live peer gets
-       VOTE ID .... It passes when every live coordinator agrees, or 30 min after it was made
+       a question every live coordinator votes on, without the user; every live peer's watch
+       prints VOTE-REQUEST ID .... It passes when every live coordinator agrees, or 30 min after it was made
        with no objection (a live coordinator that has not voted agrees); one objection closes
        it. Everyone gets VOTE PASSED or VOTE ID REJECTED. --class carries lease class defaults
        from C's observations (sizes, capacity, release events; 0 = no limit) that apply when it
@@ -258,7 +258,8 @@ Peer-coordinator messaging
 
 Watchers and install
   watch [--interval S]
-       the one Monitor source; it runs again by itself after a server restart. It prints
+       the one Monitor source; it runs again by itself after a server restart, and it renews C's
+       heartbeat once a minute while it runs. It prints
        INBOX FROM: TEXT for messages to C or to all (inbox.jsonl, never events.log), among them:
          REQUEST CLASS ID ...   C's member queued or changed an entry: check and grant it
          PRIORITY CLASS ID N by=X   another coordinator or the dashboard changed its priority
@@ -266,13 +267,15 @@ Watchers and install
          ACCEPT NAME ...        another coordinator took a member C offered
          EXTEND CLASS ID N min ...  C's member asks for more time (puppet.py extend): extend or refuse
          CONFIG, MEMORY, LEASES, ADMISSION   a peer changed a machine rule
-         VOTE ID by X: TEXT ... a peer asks for a vote: check your facts, then vote agree or object
-         VOTE PASSED ID | VOTE ID REJECTED   the outcome
+         VOTE PASSED ID | VOTE ID REJECTED   the outcome of a vote
          auto: AUTO-GRANTED|AUTO-REFUSED|AUTO-SKIPPED ...   the server's auto grant
          pool: POOL-EXPIRED ...  your lease expired over an hour ago and still holds a resource
        and, each 2 s:
          HEAD CLASS ID ...      an entry of C became the first ready entry: acquire it
-         PR <ref> <state>       each PR in prs-<C>.txt: its state first, then each change, from the
+         VOTE-REQUEST ID by X: TEXT ...   each open vote that waits for C's vote (also those opened
+                                before watch started): check your facts, then vote agree or object
+         PR <ref> <state>       each of C's PRs (prs-<C>.txt, register/heartbeat --pr and C's members'
+                                --pr): an open PR's state first, then each change, from the
                                 server's PR poller (one conditional request per repo)
          PR-WATCHER down|up     that poller stopped (run install from the skill copy) or came back
          EXPIRED CLASS ID ...   each of C's expired leases, once, with left=N processes in its worktree
@@ -303,7 +306,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import (
-    caller, captured, cenv, forward, in_run, mark, nap, restart_server, session_identity,
+    caller, captured, coordinator_prs, cenv, forward, in_run, mark, nap, restart_server, session_identity,
     DIR, CONFIG, MEMBER_TOOLS, SLUG, FILES, OBSOLETE, SOURCE, version_warning, PEAKS,
     INBOX, PRS_STATE, PRS_EVENTS, PRS_POLL_S, CLASS_NAME, read_json, write_json, load_machine, registry,
     class_names, project_key, load_project, save_project, class_peak, typical_minutes,
@@ -362,6 +365,7 @@ def record_config(by, reason, what, old, new):
 
 
 VOTES = os.path.join(DIR, "votes.json")
+VOTE_REQUEST = re.compile(r"^VOTE [0-9a-f]{8} by ")  # watch prints the request from votes.json instead
 VOTED = (("default_gib", "defaultGiB"), ("default_cpus", "defaultCpus"), ("max_minutes", "maxMinutes"))
 VOTE_WINDOW_MINUTES = 30  # two heartbeat rounds: a live coordinator that has not voted by then agrees
 
@@ -2025,7 +2029,8 @@ def auto_entry(entry, machine, roster, cls):
 
 
 def auto_grants():
-    """In the server, forever: grant each live coordinator's head entry by running acquire, for classes or
+    """In the server, forever: grant the head entry of each registered coordinator (live or not: the opt-in is
+    the class or stream setting, not a heartbeat) by running acquire, for classes or
     streams with autoAcquire on. The entry's coordinator gets AUTO-GRANTED, AUTO-REFUSED or AUTO-SKIPPED in
     its inbox when the outcome changes. Exit 2 (over the limit) and 6 (undersized) wait for the coordinator:
     this never splits a run or accepts a size. Exit 7 means the entry changed during the host check; the
@@ -2038,7 +2043,7 @@ def auto_grants():
             for c in class_names(machine):
                 ready = [q for q in state["queue"][c] if not q.get("hold")]
                 q = ready[0] if ready else None
-                if not q or not live(roster["coordinators"].get(q["coordinator"])) or not auto_entry(q, machine, roster, c):
+                if not q or q["coordinator"] not in roster["coordinators"] or not auto_entry(q, machine, roster, c):
                     seen.pop(c, None)
                     continue
                 me, key = q["coordinator"], (q["id"], q.get("minutes"), q.get("gib"), q.get("cpus"))
@@ -2180,13 +2185,30 @@ def watch_cloud(path, interval):
         nap(interval)
 
 
+def renew_heartbeat(me):
+    """A connected watch keeps its coordinator live: its client runs in the coordinator's session and
+    ends with it. The heartbeat round still checks the members."""
+    lock()
+    try:
+        roster = load_roster()
+        c = roster["coordinators"].get(me)
+        if c:
+            c["heartbeat"] = now().isoformat()
+            save_roster(roster)
+    finally:
+        unlock()
+
+
 def watch_cmd(args):
     """One stream for coordinator me, every 2 s:
       INBOX FROM: TEXT   messages to me or to all (among them the server's AUTO-* and POOL-EXPIRED)
       HEAD ...           an entry of mine became the first ready entry of its class
-      PR <ref> <line>    the current state of each PR in prs-<me>.txt, then each change
+      VOTE-REQUEST ...   each open vote that waits for my vote (its INBOX request line is left out)
+      PR <ref> <line>    each of my PRs (prs-<me>.txt, register/heartbeat --pr, my members' --pr): an open
+                         one's state at start, then each change
       PR-WATCHER down|up the server's PR poller stopped or came back
       EXPIRED ...        each of my leases past its expiry, once per expiry, with left=N
+    While it runs, it renews my heartbeat once a minute.
       CLOUD ...          a state change of a cloud task in cloud-<me>.txt, every --interval s"""
     me = args.me
     prs_path, cloud_path = os.path.join(DIR, f"prs-{me}.txt"), os.path.join(DIR, f"cloud-{me}.txt")
@@ -2194,12 +2216,12 @@ def watch_cmd(args):
         open(p, "a").close()
 
     def mine():
-        return {(raw.split() or [""])[0] for raw in open(prs_path).read().splitlines()}
-    heads, expired, pr_down = {}, set(), False
+        return coordinator_prs(me)
+    heads, expired, pr_down, asked = {}, set(), False, set()
     last_expiry = 0.0
     threading.Thread(target=in_run(watch_cloud), args=(cloud_path, args.interval), daemon=True).start()
     for ref, rec in ((read_json(PRS_STATE) or {}).get("prs") or {}).items():
-        if ref in mine() and rec.get("line"):
+        if ref in mine() and rec.get("line") and rec.get("state") == "OPEN":
             print(f"PR {ref} {rec['line']}", flush=True)
     for path, line in follow([INBOX, PRS_EVENTS]):
         if path == INBOX:
@@ -2208,7 +2230,7 @@ def watch_cmd(args):
             except ValueError:
                 print(f"INBOX {line}", flush=True)
                 continue
-            if rec.get("from") != me and rec.get("to") in (None, me):
+            if rec.get("from") != me and rec.get("to") in (None, me) and not VOTE_REQUEST.match(str(rec.get("message"))):
                 print(f"INBOX {rec.get('from')}: {rec.get('message')}", flush=True)
             continue
         if path == PRS_EVENTS:
@@ -2221,6 +2243,11 @@ def watch_cmd(args):
                 prio = f" priority {q['priority']}" if q.get("priority") else ""
                 print(f"HEAD {c} {q['id']}{prio} — {q['holder'][:60]}: acquire it when the host and budget allow", flush=True)
         heads = now_heads
+        for v in (read_json(VOTES) or {}).get("votes", []):
+            if v["status"] == "open" and me not in v["votes"] and v["id"] not in asked:
+                asked.add(v["id"])
+                print(f"VOTE-REQUEST {v['id']} by {v['by']}: {v['text']}" + (f" · change {vote_change(v)}" if v.get("change") else "")
+                      + f" — vote agree --id {v['id']} or vote object --id {v['id']} --text \"<why>\"", flush=True)
         prs = read_json(PRS_STATE) or {}
         down = time.time() - prs.get("at", 0) > 3 * (prs.get("pollS") or PRS_POLL_S) + 60
         if down != pr_down:
@@ -2228,6 +2255,7 @@ def watch_cmd(args):
             print("PR-WATCHER down: no PR poll for a while; restart the server with `python3 -I <skill>/scripts/coordinator.py install`"
                   if down else "PR-WATCHER up", flush=True)
         if time.time() - last_expiry >= 60:
+            renew_heartbeat(me)
             last_expiry, t, state = time.time(), now(), load()
             for c in class_names():
                 for h in state[c]:
