@@ -1466,7 +1466,7 @@ def main():
     threading.Thread(target=host_sampler, daemon=True).start()
     threading.Thread(target=watcher, daemon=True).start()
     threading.Thread(target=run_pr_poller, daemon=True).start()
-    for work in (coordinator_cmds.auto_grants, coordinator_cmds.pool_upkeep):
+    for work in (coordinator_cmds.auto_grants, coordinator_cmds.pool_upkeep, coordinator_cmds.vote_upkeep):
         threading.Thread(target=background(work), daemon=True).start()
     print(f"dashboard: http://localhost:{PORT}/", flush=True)
     server.serve_forever()

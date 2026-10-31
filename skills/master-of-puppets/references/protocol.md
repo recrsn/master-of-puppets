@@ -45,7 +45,7 @@ observed peak unless you tell me why the run is smaller.
 | `REQUEST <CLASS> <id> ...` in `watch` (sent by the member's `puppet.py request`) | check and grant (`references/leases.md`, "Granting") |
 | `LEASE SIZE — <id> — <why this run is smaller than the observed peak>` | your decision: `acquire --accept-size` when the reason fits the commands, else LEASE RESIZE (`references/leases.md`, "Sizing") |
 | `CONFIG <what> by user: ...`, or `MEMORY <scope> <id> ...` naming `by user` (a save on the dashboard's Config or Rules page) | approve it automatically: apply it; never ask, revert or relay it (SKILL.md, "Memory") |
-| `CLASS DEFAULTS PROPOSED <id> ...` in `watch` (a peer's `config propose`) | check your observations of that class, then `config agree` or `config object --text`; never ask the user (`references/leases.md`, "Class defaults by vote") |
+| `VOTE <id> by <peer>: ...` in `watch` (a peer's `vote propose`) | check your own facts, then `vote agree --id <id>` or `vote object --id <id> --text`; never ask the user (`references/leases.md`, "Votes") |
 | `EXTEND <CLASS> <id> <n> min ...` in `watch` (sent by the member's `puppet.py extend`) | your decision: `coordinator.py extend`, or tell it to release (`references/leases.md`, "Extending") |
 | `LEAVE — <name>` | `member remove` |
 | `HANDOFF REQUEST — <name> — to <coordinator\|any> — PRs <n> — note <path>` | `PAUSE` its PRs, then offer (`references/handoff.md`) |
@@ -125,6 +125,7 @@ in the ledger; member messages need no shared inbox copy.
   | who owns a PR, a worktree or a task | `who` |
   | which open PRs touch a file | `prs --path` |
   | the user's answer that concerns every coordinator | `decision add --scope machine` |
+  | a question the coordinators decide among themselves | `vote propose` (`references/leases.md`, "Votes") |
   (omit `--to` to reach every live coordinator). It appends to `inbox.jsonl`
   (`coordinator.py watch` shows it), then delivers directly: a Claude session
   through its inbox socket, a Codex thread through `codex queue`.

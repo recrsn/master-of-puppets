@@ -143,17 +143,6 @@ show who, why and each changed key with its old and new value)
        with minutes and a worktree) and sends its coordinator AUTO-GRANTED, AUTO-REFUSED or
        AUTO-SKIPPED. Exit 2 and 6 refusals are left to C (split the run, or acquire --accept-size).
   config remove-class NAME        refused while the class has holders or queue entries
-  config propose CLASS --reason TEXT [--project-root P] [--default-gib N] [--default-cpus N]
-                [--max-minutes N]
-       class defaults from C's observations (sizes, capacity, release events); 0 = no limit.
-       Without --project-root it sets the machine class; with it, that project's class (which
-       wins over the machine class). Every live peer gets CLASS DEFAULTS PROPOSED.
-  config agree --id ID | config object --id ID --text TEXT | config proposals
-       coordinators decide these without the user. A proposal applies when every live
-       coordinator agrees, or 30 min after it was made with no objection (a live coordinator
-       that has not voted agrees); the event and ledger record it, and every live coordinator
-       gets CONFIG. One objection closes it. proposals lists open proposals and
-       applies those that are due; run it each heartbeat round
        project: --name --base-branch --merge-method merge|squash|rebase|auto --leases-default
                 [--class CLASS --max-minutes N --minutes learn|fixed --peak learn|fixed --default-gib N
                  --default-cpus N]
@@ -256,6 +245,16 @@ Peer-coordinator messaging
        registered coordinator; without it, every live peer coordinator. Only registered
        coordinators use say. A receiver that bypasses
        permission prompts holds a socket message for the user's approval.
+  vote propose --text TEXT [--class CLASS [--project-root P] [--default-gib N] [--default-cpus N] [--max-minutes N]]
+       a question every live coordinator votes on, without the user; every live peer gets
+       VOTE ID .... It passes when every live coordinator agrees, or 30 min after it was made
+       with no objection (a live coordinator that has not voted agrees); one objection closes
+       it. Everyone gets VOTE PASSED or VOTE ID REJECTED. --class carries lease class defaults
+       from C's observations (sizes, capacity, release events; 0 = no limit) that apply when it
+       passes: the machine class, or with --project-root that project's class (which wins).
+       The server passes due votes once a minute.
+  vote agree --id ID [--text TEXT] | vote object --id ID --text TEXT
+  vote list [--all]     open votes, who has not agreed and your vote; run it each heartbeat round
 
 Watchers and install
   watch [--interval S]
@@ -267,8 +266,8 @@ Watchers and install
          ACCEPT NAME ...        another coordinator took a member C offered
          EXTEND CLASS ID N min ...  C's member asks for more time (puppet.py extend): extend or refuse
          CONFIG, MEMORY, LEASES, ADMISSION   a peer changed a machine rule
-         CLASS DEFAULTS PROPOSED ID ...  a peer proposes class defaults: check your observations,
-                                then config agree or config object
+         VOTE ID by X: TEXT ... a peer asks for a vote: check your facts, then vote agree or object
+         VOTE PASSED ID | VOTE ID REJECTED   the outcome
          auto: AUTO-GRANTED|AUTO-REFUSED|AUTO-SKIPPED ...   the server's auto grant
          pool: POOL-EXPIRED ...  your lease expired over an hour ago and still holds a resource
        and, each 2 s:
@@ -362,7 +361,7 @@ def record_config(by, reason, what, old, new):
              + (f" (reason: {reason})" if reason else ""))
 
 
-PROPOSALS = os.path.join(DIR, "class-proposals.json")
+VOTES = os.path.join(DIR, "votes.json")
 VOTED = (("default_gib", "defaultGiB"), ("default_cpus", "defaultCpus"), ("max_minutes", "maxMinutes"))
 VOTE_WINDOW_MINUTES = 30  # two heartbeat rounds: a live coordinator that has not voted by then agrees
 
@@ -385,83 +384,119 @@ def apply_class_defaults(p):
     return before, raw
 
 
-def settle_proposal(p, roster, by):
-    """Apply open proposal p when every live coordinator agrees, or when VOTE_WINDOW_MINUTES
-    have passed with no objection (silence agrees). Returns the live coordinators still
-    waited for."""
-    waiting = [n for n, c in roster["coordinators"].items() if live(c) and not asleep(c) and p["votes"].get(n, {}).get("vote") != "agree"]
-    due = now() - dt.datetime.fromisoformat(p["at"]) >= dt.timedelta(minutes=VOTE_WINDOW_MINUTES)
-    if p["status"] != "open" or (waiting and not due):
+def settle_vote(v, roster):
+    """Pass open vote v when every live coordinator agrees, or when VOTE_WINDOW_MINUTES have passed with no
+    objection (silence agrees): apply its class defaults, if it carries some, and tell every live coordinator.
+    Returns the live coordinators still waited for. The caller holds the lock."""
+    waiting = [n for n, c in roster["coordinators"].items() if live(c) and not asleep(c) and v["votes"].get(n, {}).get("vote") != "agree"]
+    due = now() - dt.datetime.fromisoformat(v["at"]) >= dt.timedelta(minutes=VOTE_WINDOW_MINUTES)
+    if v["status"] != "open" or (waiting and not due):
         return waiting
-    before, after = apply_class_defaults(p)
-    p["status"], p["appliedAt"] = "applied", now().isoformat()
-    p["silent"] = waiting
-    what = f"class {p['class']}" + (f" project {p['project']}" if p["project"] else "")
-    how = f"vote {p['id']}" + (f", silent after {VOTE_WINDOW_MINUTES} min: {', '.join(waiting)}" if waiting else "")
-    record_config(by, f"{how}: {p['reason']}", what, before, after)
-    announce(by, f"CONFIG {what} defaults {json.dumps(p['values'])} applied by {how}")
+    v["status"], v["passedAt"], v["silent"] = "passed", now().isoformat(), waiting
+    how = f"vote {v['id']}" + (f", silent after {VOTE_WINDOW_MINUTES} min: {', '.join(waiting)}" if waiting else "")
+    if v.get("change"):
+        c = v["change"]
+        before, after = apply_class_defaults(c)
+        record_config(v["by"], f"{how}: {v['text']}", f"class {c['class']}" + (f" project {c['project']}" if c["project"] else ""), before, after)
+    log(f"vote passed {v['id']} by={v['by']}" + (f" silent={','.join(waiting)}" if waiting else ""))
+    announce(v["by"], f"VOTE PASSED {v['id']}: {v['text']}" + (f" (applied {vote_change(v)})" if v.get("change") else "")
+             + (f"; silent after {VOTE_WINDOW_MINUTES} min: {', '.join(waiting)}" if waiting else ""))
     return []
 
 
-def class_vote_cmd(args):
-    """propose, agree, object and proposals: class defaults (GiB, cores, max minutes) that
-    coordinators set from their observations, without the user. A proposal applies when
-    every live coordinator agrees, or after VOTE_WINDOW_MINUTES with no objection; one
-    objection closes it. proposals also applies those that are due. The caller holds the lock."""
-    data = read_json(PROPOSALS) or {"proposals": []}
+def vote_change(v):
+    c = v["change"]
+    return f"{c['class']} ({c['project'] or 'machine'}) {json.dumps(c['values'])}"
+
+
+def settle_votes():
+    """Pass every open vote that is due; the server runs it once a minute. The caller holds the lock."""
+    data = read_json(VOTES) or {"votes": []}
     roster = load_roster()
-    if args.ccmd == "proposals":
-        for p in data["proposals"]:
-            if p["status"] == "open":
-                waiting = settle_proposal(p, roster, p["by"])
-                print(f"{p['id']} {p['class']} {p['project'] or 'machine'} {json.dumps(p['values'])} by {p['by']}"
-                      f" · observations: {p['reason']} · " + (f"waiting: {', '.join(waiting)}" if p["status"] == "open" else "applied"))
-        write_json(PROPOSALS, data)
+    open_before = [v["id"] for v in data["votes"] if v["status"] == "open"]
+    for v in data["votes"]:
+        settle_vote(v, roster)
+    if open_before != [v["id"] for v in data["votes"] if v["status"] == "open"]:
+        write_json(VOTES, data)
+    return data, roster
+
+
+def vote_cmd(args):
+    """propose, agree, object and list: a question every live coordinator votes on, without the user. It
+    passes when every live coordinator agrees, or after VOTE_WINDOW_MINUTES with no objection; one objection
+    closes it. --class carries lease class defaults that apply when it passes. The caller holds the lock."""
+    data, roster = settle_votes()
+    if args.vcmd == "list":
+        for v in data["votes"]:
+            if v["status"] == "open" or args.all:
+                waiting = [n for n, c in roster["coordinators"].items()
+                           if live(c) and not asleep(c) and v["votes"].get(n, {}).get("vote") != "agree"]
+                print(f"{v['id']} {v['status']} by {v['by']}: {v['text']}" + (f" · change {vote_change(v)}" if v.get("change") else "")
+                      + (f" · waiting: {', '.join(waiting)}" if v["status"] == "open" else "")
+                      + (f" · you: {v['votes'][args.by]['vote']}" if args.by in v["votes"] else ""))
         return 0
     if not live(roster["coordinators"].get(args.by)):
         print(f"{args.by} is not a live coordinator")
         return 3
-    if args.ccmd == "propose":
-        if args.name not in registry():
-            print(f"unknown lease class {args.name}; known: {', '.join(class_names())}")
-            return 2
+    if args.vcmd == "propose":
+        change = None
         values = {field: getattr(args, flag) for flag, field in VOTED if getattr(args, flag) is not None}
-        if not values:
-            print("propose at least one of --default-gib, --default-cpus, --max-minutes (0 = no limit)")
+        if args.cls:
+            if args.cls not in registry():
+                print(f"unknown lease class {args.cls}; known: {', '.join(class_names())}")
+                return 2
+            if not values:
+                print("--class needs at least one of --default-gib, --default-cpus, --max-minutes (0 = no limit)")
+                return 2
+            if any(x < 0 for x in values.values()):
+                print("values are 0 (no limit) or more")
+                return 2
+            change = {"class": args.cls, "project": project_key(args.project_root)[0] if args.project_root else None, "values": values}
+        elif values or args.project_root:
+            print("--default-gib, --default-cpus, --max-minutes and --project-root need --class")
             return 2
-        if any(v < 0 for v in values.values()):
-            print("values are 0 (no limit) or more")
-            return 2
-        key = project_key(args.project_root)[0] if args.project_root else None
-        p = {"id": uuid.uuid4().hex[:8], "class": args.name, "project": key, "values": values, "by": args.by,
-             "reason": args.reason, "at": now().isoformat(), "status": "open",
+        v = {"id": uuid.uuid4().hex[:8], "text": args.text, "by": args.by, "at": now().isoformat(), "status": "open",
              "votes": {args.by: {"vote": "agree", "at": now().isoformat()}}}
-        data["proposals"].append(p)
-        log(f"class-propose {p['id']} {args.name} {key or 'machine'} {json.dumps(values, separators=(',', ':'))} by={args.by}")
-        announce(args.by, f"CLASS DEFAULTS PROPOSED {p['id']} by {args.by}: {args.name} ({key or 'machine'}) {json.dumps(values)}. "
-                 f"Observations: {args.reason}. Check your own (sizes, capacity, events), then config agree --id {p['id']} "
-                 f"or config object --id {p['id']} --text. Do not ask the user. With no objection it applies in "
-                 f"{VOTE_WINDOW_MINUTES} min.")
+        if change:
+            v["change"] = change
+        data["votes"].append(v)
+        log(f"vote propose {v['id']} by={args.by}" + (f" change={json.dumps(change, separators=(',', ':'))}" if change else ""))
+        announce(args.by, f"VOTE {v['id']} by {args.by}: {args.text}" + (f" · change {vote_change(v)}" if change else "")
+                 + f". Vote with vote agree --id {v['id']} or vote object --id {v['id']} --text \"<why>\". Do not ask the user. "
+                 f"With no objection it passes in {VOTE_WINDOW_MINUTES} min.")
     else:
-        p = next((x for x in data["proposals"] if x["id"] == args.id), None)
-        if not p or p["status"] != "open":
-            print(f"no open class proposal {args.id}")
+        v = next((x for x in data["votes"] if x["id"] == args.id), None)
+        if not v or v["status"] != "open":
+            print(f"no open vote {args.id}")
             return 3
-        p["votes"][args.by] = {"vote": args.ccmd, "text": args.text or "", "at": now().isoformat()}
-        log(f"class-{args.ccmd} {p['id']} by={args.by}" + (f" text={json.dumps(args.text)}" if args.text else ""))
-        if args.ccmd == "object":
-            p["status"] = "rejected"
-            announce(args.by, f"CLASS DEFAULTS {p['id']}: {args.by} objects — {args.text}. Closed; propose again with new observations.")
-    waiting = settle_proposal(p, roster, args.by)
-    write_json(PROPOSALS, data)
-    print(f"{p['id']} {p['status']}" + (f"; waiting for {', '.join(waiting)}" if p["status"] == "open" else ""))
+        v["votes"][args.by] = {"vote": args.vcmd, "text": args.text or "", "at": now().isoformat()}
+        log(f"vote {args.vcmd} {v['id']} by={args.by}" + (f" text={json.dumps(args.text)}" if args.text else ""))
+        if args.vcmd == "object":
+            v["status"] = "rejected"
+            announce(args.by, f"VOTE {v['id']} REJECTED: {args.by} objects — {args.text}. Propose again with new facts.")
+    waiting = settle_vote(v, roster)
+    write_json(VOTES, data)
+    print(f"{v['id']} {v['status']}" + (f"; waiting for {', '.join(waiting)}" if v["status"] == "open" else ""))
     return 0
+
+
+def vote_upkeep():
+    """In the server, once a minute: pass the votes that are due."""
+    while True:
+        try:
+            lock()
+            try:
+                settle_votes()
+            finally:
+                unlock()
+            flush_pending()
+        except Exception as exc:  # keep settling; the server log shows the failure
+            print(f"vote upkeep failed: {exc!r}", file=sys.stderr, flush=True)
+        nap(60)
 
 
 def config_cmd(args):
     machine = load_machine()
-    if args.ccmd in ("propose", "agree", "object", "proposals"):
-        return class_vote_cmd(args)
     if args.ccmd == "project-key":
         key, base = project_key(args.path)
         print(json.dumps({"key": key, "root": base}))
@@ -2400,22 +2435,26 @@ def main(argv=None):
     rc.set_defaults(_self=("by",))
     rc.add_argument("--reason", help="why, for example the user's words")
     rc.add_argument("name", metavar="CLASS")
-    cp = csub.add_parser("propose", help="class defaults from your observations; applies when every live coordinator agrees")
-    cp.set_defaults(_self=("by",))
-    cp.add_argument("name", metavar="CLASS")
-    cp.add_argument("--project-root", help="one project's class; default: the machine class registry")
-    cp.add_argument("--default-gib", type=float, help="0 = no memory charge")
-    cp.add_argument("--default-cpus", type=float, help="0 = no core charge")
-    cp.add_argument("--max-minutes", type=int, help="0 = no limit")
-    cp.add_argument("--reason", required=True, help="your observations, for example sizes figures and recent release peaks")
-    for name in ("agree", "object"):
-        cv = csub.add_parser(name)
-        cv.set_defaults(_self=("by",))
-        cv.add_argument("--id", required=True)
-        cv.add_argument("--text", required=name == "object", help="the reason (required to object)")
-    csub.add_parser("proposals", help="open class proposals and who has not agreed")
     ck = csub.add_parser("project-key")
     ck.add_argument("path")
+    vt = sub.add_parser("vote", help="a question every live coordinator votes on")
+    vsub = vt.add_subparsers(dest="vcmd", required=True)
+    vp = vsub.add_parser("propose")
+    vp.set_defaults(_self=("by",))
+    vp.add_argument("--text", required=True, help="the question and your facts, in one or two lines")
+    vp.add_argument("--class", dest="cls", help="lease class defaults that apply when the vote passes")
+    vp.add_argument("--project-root", help="with --class: one project's class; default: the machine class registry")
+    vp.add_argument("--default-gib", type=float, help="with --class; 0 = no memory charge")
+    vp.add_argument("--default-cpus", type=float, help="with --class; 0 = no core charge")
+    vp.add_argument("--max-minutes", type=int, help="with --class; 0 = no limit")
+    for name in ("agree", "object"):
+        vv = vsub.add_parser(name)
+        vv.set_defaults(_self=("by",))
+        vv.add_argument("--id", required=True)
+        vv.add_argument("--text", required=name == "object", help="your reason (required to object)")
+    vl = vsub.add_parser("list", help="open votes, who has not agreed, and your vote; passes those that are due")
+    vl.set_defaults(_self=("by",))
+    vl.add_argument("--all", action="store_true", help="also passed and rejected votes")
     m = sub.add_parser("say")
     m.set_defaults(_self=("sender",))
     m.add_argument("--message", required=True)
@@ -2590,6 +2629,8 @@ def main(argv=None):
             return roster_cmd(args)
         if args.cmd == "config":
             return config_cmd(args)
+        if args.cmd == "vote":
+            return vote_cmd(args)
         roster = load_roster()
         state = load()
         machine = load_machine()
