@@ -397,7 +397,7 @@ BUILD lease", "this repo merges through a merge queue".
   - Apply it from your next step. Do not ask the user to confirm it, do not
     add a decision about it, and do not wait for a peer.
   - Do not revert it or change it again. Do not
-    `config propose` a different value for a field the user set, unless the
+    `vote propose` a different value for a field the user set, unless the
     user asks. If your observations contradict the value, `note` what you saw
     and keep the value.
   - Do not relay it to your members; they get the same message. A direction

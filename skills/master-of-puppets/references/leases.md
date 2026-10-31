@@ -186,36 +186,50 @@ grant. An
 extension is never auto-approved: the member asks, and only the coordinator
 runs `extend`. Takeovers stay manual too.
 
-## Class defaults by vote
+## Votes
 
-Class defaults are the coordinators' job, never the user's: do not ask the
-user, and do not add a dashboard decision about them. Coordinators observe and
-vote on each class's default GiB, cores and max minutes. Observe with `coordinator.py sizes --worktree <path>`, `capacity` and
-the release lines in `events`. When the observations support a value
-(for example BUILD runs peak at 4 cores, or never run past 15 min):
+`coordinator.py vote` is a question every live coordinator decides, without
+the user:
 
 ```bash
-coordinator.py config propose BUILD [--project-root <path>] [--default-gib <n>] [--default-cpus <n>] [--max-minutes <n>] --reason "<your observations>"
+coordinator.py vote propose --text "<the question and your facts>"
+coordinator.py vote agree --id <id> [--text "<why>"]
+coordinator.py vote object --id <id> --text "<what you saw>"
+coordinator.py vote list [--all]
+```
+
+Every live peer gets `VOTE <id> by <you>: ...` in `watch`. A vote passes
+when every live coordinator agrees, or 30 minutes after it was made with no
+objection: a live coordinator that has not voted by then agrees. One objection
+closes it, and the proposer may propose again with new facts. Everyone gets
+`VOTE PASSED <id>` or `VOTE <id> REJECTED`. The server passes due votes once a
+minute. `vote list` shows open votes, who has not agreed and your own vote.
+Do not ask the user about a vote, and do not add a dashboard decision for it.
+
+### Class defaults by vote
+
+Class defaults are the coordinators' job, never the user's. Coordinators
+observe and vote on each class's default GiB, cores and max minutes. Observe
+with `coordinator.py sizes --worktree <path>`, `capacity` and the release lines
+in `events`. When the observations support a value (for example BUILD runs
+peak at 4 cores, or never run past 15 min), put it on a vote:
+
+```bash
+coordinator.py vote propose --text "<your observations>" --class BUILD [--project-root <path>] [--default-gib <n>] [--default-cpus <n>] [--max-minutes <n>]
 ```
 
 Without `--project-root` it sets the machine class; with it, that project's
-class, which wins over the machine class. Every live peer gets `CLASS
-DEFAULTS PROPOSED <id> ...` in `watch`. Check your own observations of
-that class, then `config agree --id <id>`, or
-`config object --id <id> --text "<what you observed>"`. The proposal applies when every
-live coordinator agrees, or 30 minutes after it was made with no objection: a
-live coordinator that has not voted by then agrees. One objection closes it,
-and the proposer may propose again with new observations. The applying
-command records the change and sends CONFIG to every live coordinator.
-Members get no CONFIG message: tell a member only what changes for its own
-task, for example a new limit on a request it has queued. `config proposals`
-lists open proposals and who has not agreed, and applies those that are due.
+class, which wins over the machine class. Check your own observations of that
+class before you agree or object. When the vote passes, the values apply, the
+change is recorded and every live coordinator gets CONFIG. Members get no
+CONFIG message: tell a member only what changes for its own task, for example
+a new limit on a request it has queued.
 
 Each heartbeat round ("Heartbeat round" in SKILL.md, step 4):
 
-1. `coordinator.py config proposals`: vote on each open proposal you have not
-   voted on, from your own observations. Object only when your observations
-   contradict the value, and say what you saw.
+1. `coordinator.py vote list`: vote on each open vote you have not voted on,
+   from your own observations. Object only when your facts contradict it, and
+   say what you saw.
 2. `coordinator.py sizes --worktree <path>` for each project you lease in:
    propose a value when your observations support it and the class default
    differs, for example observed core peaks around 4 while `defaultCpus` is
