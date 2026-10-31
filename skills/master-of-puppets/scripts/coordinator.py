@@ -253,7 +253,7 @@ Watchers and install
          TRANSFER NAME ...      another coordinator offers C a member: member accept
          ACCEPT NAME ...        another coordinator took a member C offered
          EXTEND CLASS ID N min ...  C's member asks for more time (puppet.py extend): extend or refuse
-         CONFIG, MEMORY, LEASES, ADMISSION, INSTALLED, UPDATE   a peer changed a machine rule
+         CONFIG, MEMORY, LEASES, ADMISSION   a peer changed a machine rule
          CLASS DEFAULTS PROPOSED ID ...  a peer proposes class defaults: check your observations,
                                 then config agree or config object
        and, from the queue state each 2 s:
@@ -261,40 +261,26 @@ Watchers and install
        watch expiry prints each expired lease once, with left=N processes in its worktree.
        watch prs prints the state of each PR in prs-<C>.txt, then each change, from the shared
        poller in the dashboard server (one poll for the machine, one conditional request per repo), and
-       PR-WATCHER down when that poller stops: start server.py.
+       PR-WATCHER down when that poller stops: run install from the skill copy to restart the server.
        watch cloud reads cloud-<C>.txt (a CodeRabbit cloud task id or URL,
        then the member name, per line) and prints each task's state change from
        `coderabbit code show --agent`
-  install [--replace --by C [--ignore-leases]]  copy moplib.py, coordinator.py and puppet.py into the state dir when absent.
-       A live copy that differs stops the install (all or nothing). --replace installs only
-       the proposed update of exactly these files, once the user approved it and every live
-       coordinator agreed, while no lease is granted (--ignore-leases, only on the user's word, skips
-       that check; held leases and their runs go on); it holds the state lock, so it is the
-       only install, and it writes the file hashes to the ledger (no message needed). A full
-       install removes obsolete helpers (lease.py). Each run except a refused --replace
-       records this skill copy in source.json; roster, whoami, coordinate, heartbeat and
-       status then warn on stderr when an update is due
-  update propose --by C [--text TEXT]   from the skill copy: records the update (file hashes)
-       with C's vote, adds a machine decision that asks the user Install / Do not install,
-       and messages every live peer coordinator
-  update agree --by C [--text TEXT] | update object --by C --text TEXT   record the vote
-       and message every live peer coordinator
-  update approve --by C --quote TEXT    the user's own words in C's session approve it
-  update status [--ignore-leases]       votes, approval, blockers; exit 0 ready, 3 not
+  install    from the skill copy: copy moplib.py, coordinator.py and puppet.py into the state
+       dir (replacing copies that differ), remove obsolete helpers (lease.py), record this
+       copy in source.json and restart the server from it. roster, whoami, coordinate,
+       heartbeat and status warn on stderr when the live copies differ from that copy
 
 A coordinator is live while its heartbeat is newer than 40 minutes. coordinate and
 heartbeat exit 3 when a PR is owned by another live coordinator; enroll and member
 exit 3 when the coordinator is not live.
 """
 import argparse
-import contextlib
 import datetime as dt
-import hashlib
-import io
 import json
 import re
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 import os
@@ -304,6 +290,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import (
+    captured, cenv, forward, mark, nap, restart_server,
     DIR, CONFIG, TOOLS, MEMBER_TOOLS, SLUG, FILES, OBSOLETE, SOURCE, version_warning, PEAKS,
     INBOX, PRS_STATE, PRS_EVENTS, PRS_POLL_S, CLASS_NAME, read_json, write_json, load_machine, registry,
     class_names, project_key, load_project, save_project, class_peak, typical_minutes,
@@ -311,7 +298,7 @@ from moplib import (
     load_roster, save_roster, live, asleep, load, save, budget, order, queue_entry,
     say, deliver, notify, READS, memory_path, add_read_commands,
     read_cmd, run, worktree_pids, drain, pool_spec, pool_env, pool_run, pool_info, find_resource, RESOURCE_NAME, parse_prefer, prefer_matches,
-    set_state, stop_resource, begin_op, end_op, op_current, pid_alive, BUSY_STATES, POOL_STUCK_MINUTES,
+    set_state, stop_resource, begin_op, end_op, op_current, op_live, BUSY_STATES, POOL_STUCK_MINUTES,
 )
 
 
@@ -333,13 +320,20 @@ def changes(old, new):
     return out
 
 
-PENDING = []
+PENDING = threading.local()  # per run: announcements to broadcast after the command
 
 
 def announce(by, message, members=False):
     """Queue a rule change for every live coordinator, and every live member when members is set;
     main sends it after the command releases the lock."""
-    PENDING.append((by, message, members))
+    PENDING.__dict__.setdefault("items", []).append((by, message, members))
+
+
+def flush_pending(send=True):
+    """Broadcast this run's announcements (after the command, outside the lock) and forget them."""
+    items = PENDING.__dict__.pop("items", [])
+    for by, message, members in items if send else []:
+        broadcast(by, message, members)
 
 
 def record_config(by, reason, what, old, new):
@@ -1179,8 +1173,6 @@ def decision_cmd(args):
             whom = " for every coordinator" if machine_scope else ""
             message = (f"The user answered the decision{' for ' + task if task else ''}{whom} on the dashboard: \"{answer}\" "
                        f"(question: \"{item.get('text', '')}\"). This is the user's answer; act on it.")
-            if item.get("update"):
-                record_update_answer(item["update"], args.choice == 1, answer)
         else:
             def keep(d):
                 """Machine scope clears only your own items. A legacy string decision has no
@@ -1207,56 +1199,7 @@ def decision_cmd(args):
     return 0
 
 
-# ---------------------------------------------------------------- helper update vote
-
-
-UPDATE = os.path.join(DIR, "update.json")
-
-
-def file_hashes(src):
-    return {n: hashlib.sha256(open(os.path.join(src, n), "rb").read()).hexdigest() for n in FILES}
-
-
-def digest_of(hashes):
-    return hashlib.sha256("".join(hashes[n] for n in FILES).encode()).hexdigest()[:12]
-
-
-def update_blockers(proposal, roster, state, ignore_leases=False):
-    """Why proposal cannot be installed now: an empty list when it can. ignore_leases (the user's word)
-    drops the granted-lease blocker."""
-    if not proposal:
-        return ["no update proposal; run update propose from the skill copy"]
-    why = []
-    if proposal.get("installed"):
-        why.append(f"already installed by {proposal['installed']['by']} at {proposal['installed']['at']}")
-    if proposal.get("rejected"):
-        why.append(f"the user rejected it: {proposal['rejected']}")
-    if not proposal.get("approval"):
-        why.append("no user approval: the dashboard decision, or update approve with the user's words")
-    votes = proposal.get("votes", {})
-    for name, c in roster["coordinators"].items():
-        v = votes.get(name, {}).get("vote")
-        if v == "object":
-            why.append(f"{name} objects: {votes[name].get('text', '')}")
-        elif live(c) and not asleep(c) and v != "agree":
-            why.append(f"no vote from live coordinator {name}")
-    held = [h["id"] for c in class_names() for h in state[c]]
-    if held and not ignore_leases:
-        why.append(f"leases are granted: {', '.join(held)}; install between grants")
-    return why
-
-
-def record_update_answer(digest, yes, answer):
-    """The user's answer to an update proposal's machine decision. The caller holds the lock."""
-    proposal = read_json(UPDATE)
-    if not proposal or proposal["digest"] != digest:
-        return
-    if yes:
-        proposal["approval"] = {"by": "dashboard", "quote": answer, "at": now().isoformat()}
-    else:
-        proposal["rejected"] = f"{answer} (dashboard, {now().isoformat()})"
-    write_json(UPDATE, proposal)
-    log(f"update {'approve' if yes else 'reject'} {digest} by=dashboard")
+# ---------------------------------------------------------------- broadcast
 
 
 def broadcast(sender, message, members=False):
@@ -1276,80 +1219,6 @@ def broadcast(sender, message, members=False):
         for m in mlist:
             if m.get("status") != "done":
                 print(deliver(m["name"], m.get("tool"), m.get("sessionId"), text))
-
-
-def update_cmd(args):
-    """propose, agree, object, approve and status: one shared record of a helper update
-    that install reads. propose, agree and object also message every live peer."""
-    announce = []
-    code = update_locked(args, announce)
-    for message in announce:
-        broadcast(args.by, message)
-    return code
-
-
-def update_locked(args, announce):
-    lock()
-    try:
-        roster, state = load_roster(), load()
-        proposal = read_json(UPDATE)
-        if args.ucmd == "status":
-            why = update_blockers(proposal, roster, state, args.ignore_leases)
-            if proposal:
-                print(json.dumps({k: proposal.get(k) for k in ("digest", "git", "source", "by", "at", "text", "votes", "approval", "rejected", "installed")}, indent=1))
-            print("ready to install" if not why else "not ready:\n  " + "\n  ".join(why))
-            return 0 if not why else 3
-        if not live(roster["coordinators"].get(args.by)):
-            print(f"{args.by} is not a live coordinator")
-            return 3
-        if args.ucmd == "propose":
-            here = os.path.dirname(os.path.realpath(__file__))
-            if os.path.realpath(DIR) == here:
-                print("run update propose from the skill copy, not the live copy")
-                return 2
-            hashes = file_hashes(here)
-            digest = digest_of(hashes)
-            if proposal and proposal["digest"] == digest and not proposal.get("installed"):
-                print(f"update {digest} is already proposed by {proposal['by']}")
-                return 0
-            git = run(["git", "-C", here, "describe", "--always", "--dirty"]).strip() or None
-            proposal = {"digest": digest, "files": hashes, "source": here, "git": git, "by": args.by, "at": now().isoformat(),
-                        "text": args.text or "", "votes": {args.by: {"vote": "agree", "at": now().isoformat()}}}
-            item = add_decision(args.by, f"Replace the live helpers with {git or digest} from {here}? Proposed by {args.by}"
-                                + (f": {args.text}" if args.text else ""), ["Install", "Do not install"], MACHINE,
-                                extra={"update": digest})
-            proposal["decision"] = item["id"]
-            write_json(UPDATE, proposal)
-            log(f"update propose {digest} by={args.by}")
-            note(args.by, f"proposed helper update {digest} ({git or 'no git'}) from {here}; machine decision {item['id']}")
-            print(f"proposed update {digest}; machine decision {item['id']} asks the user")
-            announce.append(f"UPDATE PROPOSED {digest} ({git or 'no git'}) by {args.by}"
-                            + (f": {args.text}" if args.text else "")
-                            + f". Read the diff with install, then run update agree or update object --text.")
-            return 0
-        if not proposal or proposal.get("installed"):
-            print("no open update proposal")
-            return 3
-        if args.ucmd == "approve":
-            proposal["approval"] = {"by": args.by, "quote": args.quote, "at": now().isoformat()}
-            path = state_path(MACHINE)
-            data = read_json(path) or {}
-            data["decisions"] = [d for d in data.get("decisions", []) if d.get("id") != proposal.get("decision")]
-            write_json(path, data)
-        else:
-            proposal.setdefault("votes", {})[args.by] = {"vote": args.ucmd, "text": args.text or "", "at": now().isoformat()}
-        write_json(UPDATE, proposal)
-        log(f"update {args.ucmd} {proposal['digest']} by={args.by}")
-        note(args.by, f"update {proposal['digest']}: {args.ucmd}" + (f" — user: {args.quote}" if args.ucmd == "approve" else
-                                                                     f" — {args.text}" if args.text else ""))
-        if args.ucmd in ("agree", "object"):
-            announce.append(f"UPDATE {proposal['digest']}: {args.by} {'agrees' if args.ucmd == 'agree' else 'objects'}"
-                            + (f" — {args.text}" if args.text else ""))
-        why = update_blockers(proposal, roster, state)
-        print("ready to install" if not why else "not ready:\n  " + "\n  ".join(why))
-        return 0
-    finally:
-        unlock()
 
 
 # ---------------------------------------------------------------- memory
@@ -1858,7 +1727,7 @@ def host_check():
     calm, parts = True, []
     for i in (1, 2):
         a = swapouts()
-        time.sleep(interval)
+        nap(interval)
         d = swapouts() - a
         parts.append(f"sample{i} swapouts/{interval}s={d}")
         calm = calm and d < max_swap
@@ -1886,13 +1755,13 @@ def host_check_cmd(args):
 def calm_wait_cmd(args):
     """Block until two calm samples, print one CALM line. Run in the background."""
     if args.settle:
-        time.sleep(args.settle)
+        nap(args.settle)
     while True:
         calm, line = host_check()
         if calm:
             print(f"CALM {time.strftime('%H:%M:%SZ', time.gmtime())} {line}", flush=True)
             return 0
-        time.sleep(args.retry)
+        nap(args.retry)
 
 
 def measure_peak_cmd(args):
@@ -1901,7 +1770,7 @@ def measure_peak_cmd(args):
     pages twice, and %CPU is a short decaying average, so both err high."""
     os.makedirs(PEAKS, exist_ok=True)
     peak = {"gib": 0.0, "cpus": 0.0}
-    time.sleep(2)
+    nap(2)
     while any(h["id"] == args.id for c in class_names() for h in load()[c]):
         pids = worktree_pids(args.worktree)
         if pids:
@@ -1916,7 +1785,7 @@ def measure_peak_cmd(args):
                     peak[kind] = value
                     with open(os.path.join(PEAKS, f"{args.id}.{kind}"), "w") as out:
                         out.write(str(value))
-        time.sleep(args.interval)
+        nap(args.interval)
     print(f"peak {args.id} {peak['gib']} GiB {peak['cpus']} cores")
     return 0
 
@@ -1989,20 +1858,28 @@ def prs_cmd(args):
 
 def follow(paths):
     """Yield (path, line) for lines appended to the files after start, and (None, None)
-    after each sweep so the caller can poll state."""
-    files = {}
+    after each sweep so the caller can poll state. The client keeps the read offsets
+    (mark events), so a rerun after a server restart starts where this one stopped."""
+    files, resume = {}, json.loads(cenv("MOP_FOLLOW_OFFSETS") or "{}")
     for p in paths:
         open(p, "a").close()
         f = open(p)
         f.seek(0, os.SEEK_END)
+        if isinstance(resume.get(p), int) and resume[p] <= f.tell():
+            f.seek(resume[p])
         files[p] = f
+    sent = None
     while True:
         for p, f in files.items():
             for line in f.readlines():
                 if line.strip():
                     yield p, line.strip()
+        offsets = {p: f.tell() for p, f in files.items()}
+        if offsets != sent:
+            mark(json.dumps(offsets))
+            sent = offsets
         yield None, None
-        time.sleep(2)
+        nap(2)
 
 
 def own_heads(me):
@@ -2060,8 +1937,7 @@ def watch_auto(me):
             ns = argparse.Namespace(cls=c, coordinator=me, holder=q["holder"], id=q["id"], worktree=q["worktree"],
                                     minutes=q["minutes"], gib=q.get("gib"), cpus=q.get("cpus"), accept_size=False,
                                     commands=q.get("commands"), measure=True, auto_expect=entry_tuple(q))
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
+            with captured() as buf:
                 code = acquire_cmd(ns)
             if code == 0:
                 print(f"AUTO-GRANTED {c} {q['id']}", flush=True)
@@ -2069,7 +1945,7 @@ def watch_auto(me):
             elif seen.get(c) != (key, code):
                 print(f"AUTO-REFUSED {c} {q['id']} exit {code}: {buf.getvalue().strip()[:300]}", flush=True)
                 seen[c] = (key, code)
-        time.sleep(2)
+        nap(2)
 
 
 def watch_pool(me, once=False):
@@ -2095,7 +1971,7 @@ def watch_pool(me, once=False):
                 for r in list(state["resources"][cls]):
                     age = (t - dt.datetime.fromisoformat(r.get("since") or t.isoformat())).total_seconds() / 60
                     op = r.get("op") or {}
-                    if (op or r["state"] in BUSY_STATES) and age > POOL_STUCK_MINUTES and not (op.get("pid") and pid_alive(op["pid"])):
+                    if (op or r["state"] in BUSY_STATES) and age > POOL_STUCK_MINUTES and not op_live(op):
                         if r["state"] == "creating":
                             state["resources"][cls].remove(r)
                         else:
@@ -2129,7 +2005,7 @@ def watch_pool(me, once=False):
                 print(f"POOL-DELETED {cls} {name}" if code == 0 else f"POOL-DELETE-FAILED {cls} {name} exit {code}", flush=True)
         if once:
             return
-        time.sleep(60)
+        nap(60)
 
 
 def watch_inbox(me):
@@ -2174,7 +2050,7 @@ def watch_expiry():
                     seen.add(key)
                     left = len(drain(h["worktree"])) if h.get("worktree") else "?"
                     print(f'{c} {h["id"]} ({h["coordinator"]}) expired at {h["expiresAt"][11:16]}Z left={left} holder={h["holder"][:60]}', flush=True)
-        time.sleep(60)
+        nap(60)
 
 
 def watch_prs(me):
@@ -2197,7 +2073,7 @@ def watch_prs(me):
             stale = time.time() - at > 3 * ((read_json(PRS_STATE) or {}).get("pollS") or PRS_POLL_S) + 60
             if stale != down:
                 down = stale
-                print("PR-WATCHER down: no PR poll for a while; start `python3 -I <skill>/scripts/server.py`" if down
+                print("PR-WATCHER down: no PR poll for a while; restart the server with `python3 -I <skill>/scripts/coordinator.py install`" if down
                       else "PR-WATCHER up", flush=True)
         elif line.split(" ", 2)[1:2] and line.split(" ", 2)[1] in mine():
             print(line, flush=True)
@@ -2252,7 +2128,7 @@ def watch_cloud(me, interval):
             if last.get(f[0]) != line:
                 print(f"CLOUD {f[0]} {f[1] if len(f) > 1 else '-'} {line}", flush=True)
                 last[f[0]] = line
-        time.sleep(interval)
+        nap(interval)
 
 
 def watch_cmd(args):
@@ -2275,67 +2151,26 @@ def watch_cmd(args):
 
 
 def install_cmd(args):
-    """Copy the helpers into the state dir when absent. All or nothing: when a live copy
-    differs, print every diff and install none, so live files never mix versions; with
-    --replace, replace every differing copy, only for the update proposal of exactly these
-    files that the user approved and every live coordinator agreed, while no lease is
-    granted. The state lock makes it the only install. After a full install, remove obsolete
-    helpers. Each run records this skill copy as the source, so later runs can warn when
-    an update is due; a refused --replace records nothing."""
+    """Runs in the calling process, not the server: it copies this skill copy's helpers and restarts the server from it."""
     here = os.path.dirname(os.path.realpath(__file__))
     if os.path.realpath(DIR) == here:
-        print("this is the live copy")
-        return 0
-    if not args.replace:
-        return install_files(args, here)
-    if not args.by:
-        print("install --replace needs --by <coordinator>")
+        print("this is the live copy; run install from the skill copy")
         return 2
-    lock()
-    try:
-        proposal = read_json(UPDATE)
-        why = update_blockers(proposal, load_roster(), load(), args.ignore_leases)
-        if proposal and proposal["files"] != file_hashes(here):
-            why.append(f"this copy is not the proposed update {proposal['digest']}; propose it with update propose")
-        if why:
-            print("not installed:\n  " + "\n  ".join(why))
-            return 3
-        code = install_files(args, here)
-        proposal["installed"] = {"by": args.by, "at": now().isoformat()}
-        write_json(UPDATE, proposal)
-        log(f"install {proposal['digest']} by={args.by}")
-        note(args.by, f"installed helper update {proposal['digest']} ({proposal.get('git') or 'no git'}) from {here}: "
-             + " ".join(f"{n}={h[:12]}" for n, h in proposal["files"].items()))
-        announce(args.by, f"INSTALLED helper update {proposal['digest']} by {args.by}. Restart a dashboard you own.")
-        return code
-    finally:
-        unlock()
+    code = install_files(here)
+    print(restart_server(here))
+    return code
 
 
-def install_files(args, here):
-    import difflib
+def install_files(here):
     write_json(SOURCE, {"path": here, "at": now().isoformat()})
-    plan, differs = [], False
+    plan = []
     for name in FILES:
         src, dst = os.path.join(here, name), os.path.join(DIR, name)
         new = open(src).read()
-        if not os.path.exists(dst):
-            plan.append((dst, new))
-            continue
-        old = open(dst).read()
-        if old == new:
+        if os.path.exists(dst) and open(dst).read() == new:
             print(f"up to date {dst}")
-            continue
-        if args.replace:
+        else:
             plan.append((dst, new))
-            continue
-        differs = True
-        print(f"DIFFERS {dst} (not overwritten; run update propose, and install --replace --by C once the user approves and every live coordinator agrees)")
-        sys.stdout.writelines(difflib.unified_diff(old.splitlines(True), new.splitlines(True), dst, src, n=1))
-    if differs:
-        if plan:
-            print("nothing installed (" + ", ".join(os.path.basename(d) for d, _ in plan) + " too): every live copy must match first")
-        return 2
     for dst, new in plan:
         tmp = f"{dst}.{os.getpid()}.tmp"
         with open(tmp, "w") as f:
@@ -2352,8 +2187,8 @@ def install_files(args, here):
     return 0
 
 
-def main():
-    p = argparse.ArgumentParser()
+def main(argv=None):
+    p = argparse.ArgumentParser(prog="coordinator.py")
     sub = p.add_subparsers(dest="cmd", required=True)
     st = sub.add_parser("status")
     st.add_argument("--brief", action="store_true")
@@ -2658,26 +2493,8 @@ def main():
     wa.add_argument("what", choices=("inbox", "expiry", "prs", "cloud", "auto", "pool"))
     wa.add_argument("--me", help="coordinator name (inbox, prs, cloud)")
     wa.add_argument("--interval", type=int, default=180, help="seconds between cloud task polls")
-    ins = sub.add_parser("install")
-    ins.add_argument("--replace", action="store_true",
-                     help="replace live copies that differ: only the proposed update, approved by the user and agreed by every live coordinator")
-    ins.add_argument("--by", help="the installing coordinator; required with --replace")
-    ins.add_argument("--ignore-leases", action="store_true", help="install although leases are granted; only on the user's word")
-    up = sub.add_parser("update")
-    usub = up.add_subparsers(dest="ucmd", required=True)
-    upr = usub.add_parser("propose")
-    upr.add_argument("--by", required=True)
-    upr.add_argument("--text", help="what changes, in one line")
-    for name in ("agree", "object"):
-        uv = usub.add_parser(name)
-        uv.add_argument("--by", required=True)
-        uv.add_argument("--text", required=name == "object", help="the reason (required to object)")
-    uap = usub.add_parser("approve")
-    uap.add_argument("--by", required=True)
-    uap.add_argument("--quote", required=True, help="the user's own words in your session")
-    ust = usub.add_parser("status")
-    ust.add_argument("--ignore-leases", action="store_true", help="do not count granted leases as a blocker")
-    args = p.parse_args()
+    sub.add_parser("install")
+    args = p.parse_args(argv)
     if args.cmd in ("roster", "whoami", "coordinate", "heartbeat", "status"):
         version_warning()
     for attr in ("cls", "pcls"):
@@ -2702,8 +2519,6 @@ def main():
         return unlocked[args.cmd](args)
     if args.cmd == "decision":
         return decision_cmd(args)
-    if args.cmd == "update":
-        return update_cmd(args)
     if args.cmd in ("unwait", "up", "move"):
         return queue_edit_cmd(args)
     if args.cmd in ("park", "unpark"):
@@ -2802,7 +2617,6 @@ def main():
 
 
 if __name__ == "__main__":
-    code = main()
-    for by, message, members in PENDING:
-        broadcast(by, message, members)
-    sys.exit(code)
+    if sys.argv[1:2] == ["install"]:
+        sys.exit(main())  # install copies this skill copy's own files, so it runs here
+    sys.exit(forward("coordinator", sys.argv[1:]))

@@ -122,7 +122,6 @@ in the ledger; member messages need no shared inbox copy.
   | "your entry is the head", a priority change | `watch inbox` HEAD (from queue state) and PRIORITY lines |
   | an admission hold or its clearance | `admission hold\|clear` |
   | a rule or limit change | `memory add\|update\|remove` (messages every live coordinator and member) or `config set-*` with `--reason` (messages every live coordinator only; tell a member only what changes for its task) |
-  | a helper update: installer, "installed" | `update approve\|status`, `install --replace --by` |
   | a member handoff: offer, custody accepted, complete | `member transfer`, `member accept` |
   | who owns a PR, a worktree or a task | `who` |
   | which open PRs touch a file | `prs --path` |

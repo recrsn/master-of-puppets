@@ -65,6 +65,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import (
+    forward, nap,
     PEAKS, SAMPLES_KEPT, MINUTES_KEPT, load_machine, registry, class_names,
     load_project, save_project, project_key, undersized, now, lock, unlock, log, say,
     load, save, load_roster, queue_entry, extension_refusal, READS, add_read_commands, read_cmd, version_warning, drain,
@@ -164,7 +165,7 @@ def await_grant(args):
             pos = ready.index(args.id) + 1 if args.id in ready else "on hold" if entry else "not queued"
             print(f"NOT-GRANTED {args.cls} {args.id}: timeout after {args.timeout_min:g} min; position {pos}; still queued, wait again")
             return 5
-        time.sleep(args.interval)
+        nap(args.interval)
 
 
 def extend(args):
@@ -254,8 +255,8 @@ def release(args):
     return 0
 
 
-def main():
-    p = argparse.ArgumentParser()
+def main(argv=None):
+    p = argparse.ArgumentParser(prog="puppet.py")
     sub = p.add_subparsers(dest="cmd", required=True)
     add_read_commands(sub)
     rq = sub.add_parser("request")
@@ -294,7 +295,7 @@ def main():
     r.add_argument("--note", help="one short line, for example 'pushed #123' or the first failure")
     r.add_argument("--port", type=int, action="append", help="also check for listeners on this port (E2E)")
     r.add_argument("--process", action="append", help="also count processes matching this pattern (pgrep -f)")
-    args = p.parse_args()
+    args = p.parse_args(argv)
     name = getattr(args, "cls", None)
     if name and name not in registry():
         p.error(f"unknown lease class {name}; known: {', '.join(class_names())}")
@@ -312,4 +313,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(forward("puppet", sys.argv[1:]))

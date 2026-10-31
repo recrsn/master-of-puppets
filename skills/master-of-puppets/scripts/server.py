@@ -29,6 +29,11 @@ Pages share one shell (dashboard.html) with host values and the page links in th
   POST /memory {"action": "add"|"update"|"remove", "scope", "id"?, "text"?, "kind"?, "reason"?} from
                the Rules page: runs `coordinator.py memory <action> --by user ...`, which tells them too.
   Posts: same-origin JSON with X-Requested-By only.
+  POST /run    {"script": "coordinator"|"puppet", "argv", "env"} from coordinator.py and puppet.py, which are
+               thin clients: the server is the one reader and writer of the state dir. It runs the command
+               in-process (mutations under one lock) and streams SSE `out`, `err` and `exit` events.
+  POST /restart {"source"} from install: restart from that skill copy once no command holds the lock.
+  Client posts: JSON with X-MOP-Client and no Origin.
   /stream      text/event-stream: `update` (a page changed) and `host` (JSON sample)
   /host.json   the latest host sample
   /health      "ok <version>"
@@ -40,6 +45,7 @@ import html
 import http.server
 import json
 import os
+import queue
 import re
 import shutil
 import socket
@@ -47,12 +53,16 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import urllib.request
 
 # python3 -I keeps the script's own directory off sys.path; moplib is its sibling.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import CLASS_NAME, MEMORY, PRS_STATE, load_machine, load_project, registry, run_pr_poller  # noqa: E402
+import coordinator as coordinator_cmds  # noqa: E402
+import moplib  # noqa: E402
+import puppet as puppet_cmds  # noqa: E402
 
 DIR = os.path.expanduser(os.environ.get("MACHINE_LEASE_DIR") or "~/.local/state/machine-leases")
 DEFAULT_REGISTRY = {
@@ -974,17 +984,46 @@ def render_rules():
     return "".join(out) + "</main>"
 
 
+def run_command(script, argv, env, emit, cancel):
+    """Run one coordinator.py or puppet.py command in this thread. emit(kind, text) gets its stdout ("out")
+    and stderr ("err"); a set cancel ends it at its next output or nap. Returns the exit code, or None when cancelled."""
+    mod = {"coordinator": coordinator_cmds, "puppet": puppet_cmds}[script]
+    moplib.RUN.env, moplib.RUN.cancel, moplib.RUN.out = env, cancel, emit
+    try:
+        try:
+            code = mod.main(argv)
+        except SystemExit as exc:
+            if isinstance(exc.code, str):
+                print(exc.code, file=sys.stderr)
+            code = exc.code if isinstance(exc.code, int) else 0 if exc.code is None else 1
+        else:
+            if mod is coordinator_cmds:
+                coordinator_cmds.flush_pending()
+        return code or 0
+    except moplib.ClientGone:
+        return None
+    except Exception:
+        print(traceback.format_exc(), file=sys.stderr)
+        return 1
+    finally:
+        if mod is coordinator_cmds:
+            coordinator_cmds.flush_pending(send=False)
+        for name in ("env", "cancel", "out"):
+            moplib.RUN.__dict__.pop(name, None)
+
+
+def run_inline(argv):
+    """A coordinator.py command for a dashboard post: (exit code, non-empty output lines)."""
+    chunks = []
+    code = run_command("coordinator", argv, {}, lambda kind, text: chunks.append(text), threading.Event())
+    return code, [x for x in "".join(chunks).splitlines() if x.strip()] or [f"coordinator.py exit {code}"]
+
+
 def coordinator(cmd):
     """Run coordinator.py with argv cmd; returns (ok, output lines). A JSON dump on success is
     left out: the page refreshes with the new values."""
-    try:
-        r = subprocess.run([sys.executable, "-I", COORDINATOR, *cmd], capture_output=True, text=True, timeout=180)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return False, [f"coordinator.py failed: {exc}"]
-    if r.returncode == 0:
-        return True, ["Saved"]
-    lines = [x for x in (r.stdout + r.stderr).splitlines() if x.strip()]
-    return False, lines or [f"coordinator.py exit {r.returncode}"]
+    code, lines = run_inline(cmd)
+    return (True, ["Saved"]) if code == 0 else (False, lines)
 
 
 def typed(kind, v):
@@ -1161,7 +1200,6 @@ def host_sampler():
         time.sleep(HOST_EVERY)
 
 
-COORDINATOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coordinator.py")
 QUEUE_ACTIONS = ("up", "unwait", "move")
 ENTRY_ID = re.compile(r"^[\w.:@-]{1,200}$")
 
@@ -1171,13 +1209,9 @@ def queue_action(action, cls, entry_id, to=None):
     if (action not in QUEUE_ACTIONS or cls not in (machine_config().get("classes") or DEFAULT_REGISTRY)
             or not ENTRY_ID.match(entry_id) or (action == "move") != (type(to) is int and 1 <= to <= 999)):
         return False, ["bad request"]
-    cmd = [sys.executable, "-I", COORDINATOR, action, cls, "--id", entry_id, "--notify"] + (["--to", str(to)] if action == "move" else [])
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return False, [f"coordinator.py failed: {exc}"]
-    lines = [x for x in (r.stdout + r.stderr).splitlines() if x.strip()]
-    return r.returncode == 0, lines or [f"coordinator.py exit {r.returncode}"]
+    cmd = [action, cls, "--id", entry_id, "--notify"] + (["--to", str(to)] if action == "move" else [])
+    code, lines = run_inline(cmd)
+    return code == 0, lines
 
 
 PARK_ACTIONS = ("park", "unpark")
@@ -1189,15 +1223,11 @@ def park_action(action, coord, name, until):
     """Run `coordinator.py park|unpark --coordinator C --name N [--until D] --notify`."""
     if action not in PARK_ACTIONS or not NAME.match(coord) or not NAME.match(name) or (until and not DATE.match(until)):
         return False, ["bad request"]
-    cmd = [sys.executable, "-I", COORDINATOR, action, "--coordinator", coord, "--name", name, "--notify"]
+    cmd = [action, "--coordinator", coord, "--name", name, "--notify"]
     if action == "park" and until:
         cmd += ["--until", until]
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return False, [f"coordinator.py failed: {exc}"]
-    lines = [x for x in (r.stdout + r.stderr).splitlines() if x.strip()]
-    return r.returncode == 0, lines or [f"coordinator.py exit {r.returncode}"]
+    code, lines = run_inline(cmd)
+    return code == 0, lines
 
 
 DECISION_ID = re.compile(r"^[0-9a-f]{8}$")
@@ -1207,14 +1237,10 @@ def decide_action(coord, decision_id, choice):
     """Run `coordinator.py decision answer --by C --id ID --choice N --notify`."""
     if not NAME.match(coord) or not DECISION_ID.match(decision_id) or not (isinstance(choice, int) and 1 <= choice <= 9):
         return False, ["bad request"]
-    cmd = [sys.executable, "-I", COORDINATOR, "decision", "answer", "--by", coord, "--id", decision_id,
+    cmd = ["decision", "answer", "--by", coord, "--id", decision_id,
            "--choice", str(choice), "--notify"]
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return False, [f"coordinator.py failed: {exc}"]
-    lines = [x for x in (r.stdout + r.stderr).splitlines() if x.strip()]
-    return r.returncode == 0, lines or [f"coordinator.py exit {r.returncode}"]
+    code, lines = run_inline(cmd)
+    return code == 0, lines
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -1230,8 +1256,82 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 and self.headers.get("X-Requested-By") == "dashboard"
                 and self.headers.get("Content-Type", "").startswith("application/json"))
 
+    def from_client(self):
+        """coordinator.py and puppet.py only: the custom header forces a CORS preflight, which this
+        server never answers, and a browser always sends Origin on a cross-site post."""
+        return (self.headers.get("Host") in {f"localhost:{PORT}", f"127.0.0.1:{PORT}"} and not self.headers.get("Origin")
+                and self.headers.get("X-MOP-Client") == "1" and self.headers.get("Content-Type", "").startswith("application/json"))
+
+    def run_post(self, req):
+        """POST /run: run the command in its own thread and stream its output as SSE: `out` and `err`
+        (JSON strings), then `exit` (the code). A broken stream cancels the run."""
+        script, argv, env = req.get("script"), req.get("argv"), req.get("env") or {}
+        if (script not in ("coordinator", "puppet") or not isinstance(argv, list) or not all(isinstance(a, str) for a in argv)
+                or not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items())):
+            self.send(b"bad request", "text/plain", 400)
+            return
+        events, cancel = queue.Queue(), threading.Event()
+
+        def emit(kind, text):
+            if cancel.is_set():
+                raise moplib.ClientGone()
+            events.put((kind, text))
+
+        def work():
+            events.put(("exit", run_command(script, argv, {k: v for k, v in env.items() if k in moplib.CLIENT_ENV}, emit, cancel)))
+
+        threading.Thread(target=work, daemon=True).start()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            while True:
+                try:
+                    kind, data = events.get(timeout=15)
+                except queue.Empty:
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+                    continue
+                self.wfile.write(f"event: {kind}\ndata: {json.dumps(data)}\n\n".encode())
+                self.wfile.flush()
+                if kind == "exit":
+                    return
+        except OSError:
+            cancel.set()
+
+    def restart_post(self, req):
+        """POST /restart {"source"}: once no command holds the state lock, replace this process with
+        source/server.py. Open runs end; their clients rerun the resumable ones."""
+        path = os.path.join(str(req.get("source") or ""), "server.py")
+        if not os.path.isabs(path) or not os.path.exists(path):
+            self.send(b"no server.py there", "text/plain", 400)
+            return
+        self.send(b"restarting", "text/plain")
+
+        def restart():
+            moplib.STATE_LOCK.acquire()
+            sys.stdout.flush()
+            os.execv(sys.executable, [sys.executable, "-I", path] + sys.argv[1:])
+
+        threading.Timer(0.5, restart).start()
+
     def do_POST(self):
         path = self.path.split("?")[0]
+        if path in ("/run", "/restart"):
+            if not self.from_client():
+                self.send(b"forbidden", "text/plain", 403)
+                return
+            try:
+                req = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 1 << 20)))
+            except ValueError:
+                self.send(b"bad request", "text/plain", 400)
+                return
+            if not isinstance(req, dict):
+                self.send(b"bad request", "text/plain", 400)
+                return
+            (self.run_post if path == "/run" else self.restart_post)(req)
+            return
         if path not in ("/queue", "/park", "/decide", "/config", "/memory"):
             self.send_response(404)
             self.end_headers()
@@ -1317,6 +1417,8 @@ def already_serving():
 
 
 def main():
+    os.makedirs(DIR, exist_ok=True)
+    os.chdir(DIR)  # never a worktree: commands it runs (measure-peak) and drain checks count processes there
     try:
         server = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     except OSError:
@@ -1326,6 +1428,7 @@ def main():
         print(f"port {PORT} is in use by something else", file=sys.stderr)
         return 1
     server.daemon_threads = True
+    sys.stdout, sys.stderr = moplib.RunOutput(sys.stdout, "out"), moplib.RunOutput(sys.stderr, "err")
     server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     threading.Thread(target=host_sampler, daemon=True).start()
     threading.Thread(target=watcher, daemon=True).start()

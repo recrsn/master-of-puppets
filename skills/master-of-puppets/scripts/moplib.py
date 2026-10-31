@@ -9,8 +9,10 @@ inbox, ledger, events, who, sizes).
 State lives in $MACHINE_LEASE_DIR (default ~/.local/state/machine-leases), not beside
 these files, so every session that runs any copy shares one state.
 """
+import contextlib
 import datetime as dt
 import hashlib
+import io
 import json
 import os
 import re
@@ -18,7 +20,10 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 
 DIR = os.path.expanduser(os.environ.get("MACHINE_LEASE_DIR") or "~/.local/state/machine-leases")
@@ -32,7 +37,6 @@ TOOLS = ("claude", "codex")
 MEMBER_TOOLS = TOOLS + ("coderabbit",)  # a CodeRabbit cloud task: tracked, never messaged
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}$")
 PEAKS = os.path.join(DIR, "peaks")
-LOCK = os.path.join(DIR, "lock")
 LOG = os.path.join(DIR, "events.log")
 INBOX = os.path.join(DIR, "inbox.jsonl")
 FILES = ("moplib.py", "coordinator.py", "puppet.py")  # the live helpers that install copies
@@ -60,6 +64,214 @@ SAMPLES_KEPT = 5
 SAMPLES_TRUSTED = 3
 MINUTES_KEPT = 10
 MEMORY = os.path.join(DIR, "memory")
+
+
+# ---------------------------------------------------------------- server and clients
+# The dashboard server is the one reader and writer of the state dir. coordinator.py and puppet.py send
+# their arguments to its POST /run and print the output it streams back (SSE). The server runs each
+# command in-process, one thread per run; mutations take STATE_LOCK.
+
+STATE_LOCK = threading.RLock()
+BOOT = uuid.uuid4().hex[:12]  # this process's start, for op_live
+RUN = threading.local()  # per run in the server: env (the client's), cancel (an Event), out (emit(kind, text))
+CLIENT_ENV = ("CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "XDG_RUNTIME_DIR", "CLAUDE_CODE_TMPDIR",
+              "MOP_CLIENT_PID", "MOP_CLIENT_PGID",  # the client process, for session_pids
+              "MOP_FOLLOW_OFFSETS")  # where a resumed run's follow starts
+PATH_FLAGS = ("--worktree", "--root", "--path", "--project-root")
+RESUMABLE = ("watch", "await-grant", "calm-wait", "measure-peak")  # rerun after a server restart
+SERVER_LOG = os.path.join(DIR, "server.log")
+
+
+class ClientGone(BaseException):
+    """The client of a run disconnected. A BaseException, so `except Exception` does not stop it unwinding the run."""
+
+
+def cenv(name):
+    """The calling client's environment variable inside a server run, else this process's."""
+    env = getattr(RUN, "env", None)
+    return env.get(name) if env is not None else os.environ.get(name)
+
+
+def nap(seconds):
+    """time.sleep that ends a server run when its client is gone."""
+    cancel = getattr(RUN, "cancel", None)
+    if cancel is None:
+        time.sleep(seconds)
+    elif cancel.wait(seconds):
+        raise ClientGone()
+
+
+def mark(data):
+    """Send the client a resume marker (a string) that it passes back as MOP_FOLLOW_OFFSETS on a rerun."""
+    out = getattr(RUN, "out", None)
+    if out is not None:
+        out("mark", data)
+
+
+class RunOutput:
+    """sys.stdout or sys.stderr in the server: a run's writes go to its client, other threads' to the real stream."""
+
+    def __init__(self, real, kind):
+        self.real, self.kind = real, kind
+
+    def write(self, text):
+        out = getattr(RUN, "out", None)
+        if out is None:
+            return self.real.write(text)
+        out(self.kind, text)
+        return len(text)
+
+    def flush(self):
+        if getattr(RUN, "out", None) is None:
+            self.real.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.real, name)
+
+
+@contextlib.contextmanager
+def captured():
+    """Collect the current run's stdout in a StringIO; stderr still reaches the client."""
+    buf, prev = io.StringIO(), getattr(RUN, "out", None)
+    if prev is None:
+        with contextlib.redirect_stdout(buf):
+            yield buf
+        return
+    RUN.out = lambda kind, text: buf.write(text) if kind == "out" else prev(kind, text)
+    try:
+        yield buf
+    finally:
+        RUN.out = prev
+
+
+def server_url(path):
+    try:
+        port = int((read_json(CONFIG) or {}).get("dashboardPort") or 4720)
+    except (TypeError, ValueError):
+        port = 4720
+    return f"http://127.0.0.1:{port}{path}"
+
+
+def server_up():
+    import urllib.request
+    try:
+        with urllib.request.urlopen(server_url("/health"), timeout=2) as r:
+            return r.read().startswith(b"ok")
+    except OSError:
+        return False
+
+
+def server_source():
+    """The skill copy the server runs from: source.json (written by install), else this file's directory."""
+    src = (read_json(SOURCE) or {}).get("path")
+    here = os.path.dirname(os.path.realpath(__file__))
+    return src if src and os.path.exists(os.path.join(src, "server.py")) else here
+
+
+def start_server(src=None):
+    """Start the server in the background and wait up to 20 s for it to answer."""
+    path = os.path.join(src or server_source(), "server.py")
+    if not os.path.exists(path):
+        return f"no server: {path} does not exist; run install from the skill copy"
+    os.makedirs(DIR, exist_ok=True)
+    subprocess.Popen([sys.executable, "-I", path], stdin=subprocess.DEVNULL, stdout=open(SERVER_LOG, "a"),
+                     stderr=subprocess.STDOUT, start_new_session=True, cwd=DIR)
+    for _ in range(40):
+        if server_up():
+            return f"server started from {path}"
+        time.sleep(0.5)
+    return f"server did not answer within 20 s; see {SERVER_LOG}"
+
+
+def restart_server(src):
+    """Ask a running server to restart from skill copy src (it waits for the state lock), or start one."""
+    import urllib.request
+    if not server_up():
+        return start_server(src)
+    req = urllib.request.Request(server_url("/restart"), json.dumps({"source": src}).encode(),
+                                 {"Content-Type": "application/json", "X-MOP-Client": "1"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            r.read()
+    except OSError as exc:
+        return f"server restart failed: {exc}"
+    time.sleep(1)
+    for _ in range(40):
+        if server_up():
+            return f"server restarted from {os.path.join(src, 'server.py')}"
+        time.sleep(0.5)
+    return f"server did not come back within 20 s; see {SERVER_LOG}"
+
+
+def absolute_paths(argv):
+    """Path flags resolved against the client's working directory: the server runs elsewhere."""
+    out = []
+    for i, a in enumerate(argv):
+        if i and argv[i - 1] in PATH_FLAGS:
+            a = os.path.abspath(os.path.expanduser(a))
+        elif a.split("=", 1)[0] in PATH_FLAGS and "=" in a:
+            flag, value = a.split("=", 1)
+            a = f"{flag}={os.path.abspath(os.path.expanduser(value))}"
+        out.append(a)
+    return out
+
+
+def forward(script, argv):
+    """Run `script argv` in the server and print its output as it streams; returns the exit code.
+    Starts the server when none answers. A resumable command (watch, await-grant, ...) runs again
+    after a server restart; any other command whose stream breaks exits 75."""
+    import urllib.error
+    import urllib.request
+    env = {**{k: os.environ[k] for k in CLIENT_ENV if k in os.environ},
+           "MOP_CLIENT_PID": str(os.getpid()), "MOP_CLIENT_PGID": str(os.getpgid(0))}
+    resumable = bool(argv) and argv[0] in RESUMABLE
+    started = False
+    while True:
+        body = json.dumps({"script": script, "argv": absolute_paths(argv), "env": env}).encode()
+        req = urllib.request.Request(server_url("/run"), body, {"Content-Type": "application/json", "X-MOP-Client": "1"})
+        try:
+            resp = urllib.request.urlopen(req, timeout=60)
+        except urllib.error.HTTPError as exc:
+            print(f"server refused the command: HTTP {exc.code} {exc.read().decode(errors='replace')[:300]}", file=sys.stderr)
+            return 1
+        except OSError:
+            if not started:
+                started = True
+                msg = start_server()
+                if server_up():
+                    print(msg, file=sys.stderr)
+                    continue
+                print(msg, file=sys.stderr)
+                return 1
+            if resumable:
+                time.sleep(0.5)
+                continue
+            print("server down; start it: " + os.path.join(server_source(), "server.py"), file=sys.stderr)
+            return 1
+        event = None
+        try:
+            with resp:
+                for raw in resp:
+                    line = raw.decode().rstrip("\n")
+                    if line.startswith("event: "):
+                        event = line[7:]
+                    elif line.startswith("data: ") and event:
+                        data = json.loads(line[6:])
+                        if event == "exit":
+                            return data if isinstance(data, int) else 1
+                        if event == "mark":
+                            env["MOP_FOLLOW_OFFSETS"] = data
+                            continue
+                        stream = sys.stdout if event == "out" else sys.stderr
+                        stream.write(data)
+                        stream.flush()
+        except (OSError, ValueError):
+            pass
+        if not resumable:
+            print("server connection lost; the command may not have finished", file=sys.stderr)
+            return 75
+        started = False  # a restart is under way, or the server died: start one if none comes back
+        time.sleep(0.5)
 
 
 # ---------------------------------------------------------------- files and config
@@ -234,25 +446,13 @@ def now():
 
 
 def lock():
-    deadline = time.time() + 30
-    while True:
-        try:
-            os.mkdir(LOCK)
-            return
-        except FileExistsError:
-            try:
-                if time.time() - os.path.getmtime(LOCK) > 60:
-                    os.rmdir(LOCK)
-                    continue
-            except FileNotFoundError:
-                continue  # the holder released the lock; try mkdir again
-            if time.time() > deadline:
-                sys.exit("state lock busy for 30 s")
-            time.sleep(0.2)
+    """The state lock: one mutation at a time. Only the server holds it; clients never write the state dir."""
+    if not STATE_LOCK.acquire(timeout=30):
+        sys.exit("state lock busy for 30 s")
 
 
 def unlock():
-    os.rmdir(LOCK)
+    STATE_LOCK.release()
 
 
 def log(line):
@@ -516,7 +716,7 @@ def begin_op(res, kind, state, lease_id=None):
     the busy state and an op token. The caller holds the lock, saves, and later revalidates the
     token under the lock before it writes anything. Returns the token."""
     token = uuid.uuid4().hex
-    res["op"] = {"kind": kind, "token": token, "pid": os.getpid(), "for": lease_id}
+    res["op"] = {"kind": kind, "token": token, "pid": os.getpid(), "boot": BOOT, "for": lease_id}
     set_state(res, state)
     return token
 
@@ -532,6 +732,12 @@ def end_op(res, state):
     res.pop("op", None)
     res.pop("for", None)
     set_state(res, state)
+
+
+def op_live(op):
+    """Whether the process that began op still runs it: the server keeps its pid across a restart (exec), so its boot must match too."""
+    pid = op.get("pid")
+    return bool(pid) and pid_alive(pid) and (pid != os.getpid() or op.get("boot") == BOOT)
 
 
 def pid_alive(pid):
@@ -668,18 +874,18 @@ def worktree_pids(tree):
 
 
 def session_pids():
-    """Processes that belong to agent sessions, not to a run: this process and its
-    ancestors, its own process group (the pipeline of the command that runs it; each
+    """Processes that belong to agent sessions, not to a run: this process (in the server: the
+    calling client) and its ancestors, its own process group (the pipeline of the command that runs it; each
     agent shell command gets its own group), agent programs (claude, codex), their
     direct children that are not shells (MCP servers and helpers), and every bare shell.
     A heuristic: a run that an earlier command started is a shell child or deeper, in
     another process group, so it still counts."""
-    procs, group = {}, str(os.getpgid(0))
+    procs, group = {}, cenv("MOP_CLIENT_PGID") or str(os.getpgid(0))
     for line in run(["ps", "-axo", "pid=,ppid=,pgid=,comm="]).splitlines():
         f = line.split(None, 3)
         if len(f) == 4:
             procs[f[0]] = (f[1], f[2], os.path.basename(f[3]).lstrip("-"))
-    skip, pid = set(), str(os.getpid())
+    skip, pid = set(), cenv("MOP_CLIENT_PID") or str(os.getpid())
     while pid in procs and pid not in skip:
         skip.add(pid)
         pid = procs[pid][0]
@@ -745,9 +951,8 @@ def version_warning():
     differ = helpers_differ(src)
     obsolete = [n for n in OBSOLETE if os.path.exists(os.path.join(DIR, n))]
     if differ:
-        print(f"warning: an update is due: the live {', '.join(differ)} in {DIR} {'differs' if len(differ) == 1 else 'differ'} from the skill copy in {src}. "
-              f"Check python3 -I {os.path.join(src, 'coordinator.py')} update status; with no open proposal, run "
-              f"python3 -I {os.path.join(src, 'coordinator.py')} update propose --by <you>", file=sys.stderr)
+        print(f"warning: the live {', '.join(differ)} in {DIR} {'differs' if len(differ) == 1 else 'differ'} from the skill copy in {src}: "
+              f"run python3 -I {os.path.join(src, 'coordinator.py')} install", file=sys.stderr)
     if obsolete:
         print(f"warning: obsolete {', '.join(obsolete)} in {DIR}: do not run it; "
               f"python3 -I {os.path.join(src, 'coordinator.py')} install removes it", file=sys.stderr)
@@ -774,7 +979,7 @@ def claude_socket(session_id):
     pid = next((a.get("pid") for a in agents if a.get("sessionId") == session_id), None)
     if not pid:
         return None
-    bases = [os.environ.get("XDG_RUNTIME_DIR"), os.environ.get("CLAUDE_CODE_TMPDIR"), "/tmp", tempfile.gettempdir()]
+    bases = [cenv("XDG_RUNTIME_DIR"), cenv("CLAUDE_CODE_TMPDIR"), "/tmp", tempfile.gettempdir()]
     paths = [os.path.join(b, "cc-socks", f"{pid}.sock") for b in bases if b] + [f"/tmp/cc-socks-{os.getuid()}/{pid}.sock"]
     return next((p for p in paths if os.path.exists(p)), None)
 
@@ -796,8 +1001,8 @@ def send_claude(session_id, text):
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
             sock.settimeout(5)
             sock.connect(path)
-            own = os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET")
-            token = os.environ.get("CLAUDE_CODE_MESSAGING_TOKEN")
+            own = cenv("CLAUDE_CODE_MESSAGING_SOCKET")
+            token = cenv("CLAUDE_CODE_MESSAGING_TOKEN")
             if own and token and os.path.realpath(own) == os.path.realpath(path):
                 sock.sendall((json.dumps({"type": "auth", "token": token}) + "\n").encode())
             sock.sendall((json.dumps(frame) + "\n").encode())
@@ -1060,7 +1265,6 @@ PRS_STATE = os.path.join(DIR, "prs-state.json")
 PRS_EVENTS = os.path.join(DIR, "prs-events.log")
 PRS_POLL_S = 30  # seconds between cycles (config.json: prsPollS)
 PRS_FULL_S = 120  # an open PR is fetched at least this often: check and review changes do not move updated_at
-PR_FIELDS = "state,title,url,baseRefName,isDraft,mergeStateStatus,autoMergeRequest,reviewDecision,mergeCommit,statusCheckRollup"
 
 
 def pr_refs():
@@ -1105,26 +1309,51 @@ def pr_checks(d):
     return "pass" if states else "none"
 
 
-def gh_get(path, etag):
-    """Conditional GET: (status, etag, body). 304 means nothing changed and costs no rate limit.
+_gh_token = None
+
+
+def gh_token():
+    """GH_TOKEN, GITHUB_TOKEN or `gh auth token`, read once and kept until a 401."""
+    global _gh_token
+    if not _gh_token:
+        _gh_token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or subprocess.run(
+            ["gh", "auth", "token"], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30).stdout.strip()
+    return _gh_token
+
+
+def gh_http(url, payload=None, etag=None):
+    """GET, or POST of a JSON payload: (status, etag, body). 304 means nothing changed and costs no rate limit.
     Status 0 means no HTTP response; the body is then the error text."""
-    cmd = ["gh", "api", "-i", path]
+    global _gh_token
+    headers = {"Authorization": f"Bearer {gh_token()}", "Accept": "application/vnd.github+json", "User-Agent": "master-of-puppets"}
     if etag:
-        cmd[2:2] = ["-H", f"If-None-Match: {etag}"]
-    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
-    m = re.match(r"HTTP/\S+ (\d+)", r.stdout)
-    if not m:
-        return 0, None, " ".join((r.stderr or r.stdout or "no response").split())[:200]
-    head, _, body = r.stdout.replace("\r\n", "\n").partition("\n\n")
-    tag = re.search(r"(?im)^etag:\s*(\S.*?)\s*$", head)
-    return int(m.group(1)), (tag.group(1) if tag else None), body
+        headers["If-None-Match"] = etag
+    req = urllib.request.Request(url, json.dumps(payload).encode() if payload else None, headers)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.status, r.headers.get("ETag"), r.read().decode()
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            _gh_token = None
+        return e.code, e.headers.get("ETag"), e.read().decode(errors="replace")
+    except (OSError, ValueError) as e:
+        return 0, None, " ".join(str(e).split())[:200]
+
+
+def http_error(status, body):
+    try:
+        msg = json.loads(body).get("message", "")
+    except (ValueError, AttributeError):
+        msg = ""
+    return f"HTTP {status} {' '.join(str(msg).split())}"[:200] if status else body
 
 
 def pr_scan(repo, old, at):
     """One conditional request lists the repo's 100 most recently updated PRs. Returns {"etag", "seen": {number: updated_at}, "at"},
     or None when the list is unavailable. A 304 keeps the old answer: no PR in the repo changed."""
     old = old or {}
-    status, etag, body = gh_get(f"repos/{repo}/pulls?state=all&sort=updated&direction=desc&per_page=100", old.get("etag"))
+    status, etag, body = gh_http(f"https://api.github.com/repos/{repo}/pulls?state=all&sort=updated&direction=desc&per_page=100",
+                                 etag=old.get("etag"))
     if status == 304 and old.get("seen") is not None:
         return {**old, "at": at}
     if status != 200:
@@ -1135,32 +1364,58 @@ def pr_scan(repo, old, at):
         return None
 
 
-def pr_view(ref):
-    repo, num = ref.rsplit("#", 1)
-    r = subprocess.run(["gh", "pr", "view", num, "--repo", repo, "--json", PR_FIELDS], capture_output=True, text=True,
-                       stdin=subprocess.DEVNULL, timeout=60)
-    if r.returncode != 0:
-        return None, " ".join(r.stderr.split())[:200]
-    return json.loads(r.stdout), None
+PR_GQL = """number state title url baseRefName isDraft mergeStateStatus reviewDecision
+  autoMergeRequest { enabledAt } mergeCommit { oid }
+  commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
+    __typename ... on CheckRun { status conclusion } ... on StatusContext { state } } } } } } }"""
 
 
-def pr_refresh(ref, old, at, seen):
-    """The new record for one PR. `seen` is the repo's {number: updated_at} from pr_scan, or None. A PR is fetched when it has
-    no record, when its updated_at moved, after an error or, while open, every PRS_FULL_S (checks and reviews do not move updated_at).
+def pr_fetch(repo, nums):
+    """One GraphQL request for the given PRs of a repo: ({number: record shaped like `gh pr view --json`}, error)."""
+    owner, name = repo.split("/", 1)
+    query = "query($o: String!, $n: String!) { repository(owner: $o, name: $n) { " + " ".join(
+        f"p{n}: pullRequest(number: {n}) {{ {PR_GQL} }}" for n in nums) + " } }"
+    status, _, body = gh_http("https://api.github.com/graphql", {"query": query, "variables": {"o": owner, "n": name}})
+    if status != 200:
+        return {}, http_error(status, body)
+    try:
+        out = json.loads(body)
+    except ValueError:
+        return {}, "bad GraphQL response"
+    repo_data = (out.get("data") or {}).get("repository") or {}
+    if not repo_data and out.get("errors"):
+        return {}, " ".join(str(out["errors"][0].get("message", "GraphQL error")).split())[:200]
+    got = {}
+    for n in nums:
+        p = repo_data.get(f"p{n}")
+        if p:
+            roll = (((p.get("commits") or {}).get("nodes") or [{}])[0].get("commit") or {}).get("statusCheckRollup") or {}
+            p["statusCheckRollup"] = ((roll.get("contexts") or {}).get("nodes")) or []
+            got[str(n)] = p
+    return got, None
+
+
+def pr_due(old, at, stamp):
+    """Whether a PR needs a fetch. `stamp` is its updated_at from pr_scan, or None. A PR is fetched when it has no record, when its
+    updated_at moved, after an error or, while open, every PRS_FULL_S (checks and reviews do not move updated_at).
     Merged and closed PRs cost nothing until the scan shows them updated."""
-    old = old or {}
-    stamp = (seen or {}).get(ref.rsplit("#", 1)[1])
-    moved = stamp is not None and "updated" in old and stamp != old["updated"]
-    due = not old.get("line") or (
-        (at - old.get("checkedAt", 0) >= PRS_FULL_S) if old.get("error")
-        else old.get("state") == "OPEN" and at - old.get("fullAt", 0) >= PRS_FULL_S)
-    if not (moved or due):
+    if not old.get("line"):
+        return True
+    if stamp is not None and "updated" in old and stamp != old["updated"]:
+        return True
+    if old.get("error"):
+        return at - old.get("checkedAt", 0) >= PRS_FULL_S
+    return old.get("state") == "OPEN" and at - old.get("fullAt", 0) >= PRS_FULL_S
+
+
+def pr_record(old, at, stamp, d, err):
+    """The new record for one PR from a fetch result (d is None on an error), or from the old record when it was not fetched."""
+    if d is None and err is None:
         rec = dict(old)
         rec.setdefault("updated", stamp)
         if not rec.get("error"):
             rec["checkedAt"] = at
         return rec
-    d, err = pr_view(ref)
     if d is None:
         return {**old, "checkedAt": at, "error": err}
     if d["mergeStateStatus"] == "UNKNOWN" and d["state"] == "OPEN" and old.get("merge"):
@@ -1174,8 +1429,8 @@ def pr_refresh(ref, old, at, seen):
 
 
 def poll_prs(cache, lists):
-    """One cycle: a scan per repo, then the PRs that need a fetch (eight at a time). Appends a `PR <ref> <line>` event per
-    change and returns the new cache; `lists` ({repo: scan}) is updated in place. A PR no list names any more is dropped."""
+    """One cycle: a scan per repo, then one GraphQL request per repo for the PRs that are due. Appends a `PR <ref> <line>`
+    event per change and returns the new cache; `lists` ({repo: scan}) is updated in place. A PR no list names any more is dropped."""
     from concurrent.futures import ThreadPoolExecutor
     refs = pr_refs()
     at = time.time()
@@ -1187,8 +1442,21 @@ def poll_prs(cache, lists):
                 lists[repo] = scan
         for repo in [r for r in lists if r not in scans]:
             del lists[repo]
-        new = dict(zip(refs, pool.map(
-            lambda r: pr_refresh(r, cache.get(r), at, (scans.get(r.rsplit("#", 1)[0]) or {}).get("seen")), refs)))
+        stamps = {r: ((scans.get(r.rsplit("#", 1)[0]) or {}).get("seen") or {}).get(r.rsplit("#", 1)[1]) for r in refs}
+        due = {}
+        for ref in refs:
+            if pr_due(cache.get(ref) or {}, at, stamps[ref]):
+                repo, num = ref.rsplit("#", 1)
+                due.setdefault(repo, []).append(num)
+        jobs = [(repo, nums[i:i + 10]) for repo, nums in due.items() for i in range(0, len(nums), 10)]
+        fetched = {}
+        for (repo, nums), (got, err) in zip(jobs, pool.map(lambda j: pr_fetch(*j), jobs)):
+            for num in nums:
+                fetched[f"{repo}#{num}"] = (got.get(num), err or (None if num in got else "PR not found"))
+    new = {}
+    for ref in refs:
+        d, err = fetched.get(ref, (None, None))
+        new[ref] = pr_record(cache.get(ref) or {}, at, stamps[ref], d, err)
     events = []
     for ref, rec in new.items():
         old = cache.get(ref) or {}

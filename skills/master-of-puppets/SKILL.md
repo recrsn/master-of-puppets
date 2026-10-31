@@ -31,40 +31,29 @@ not write product code.
 
 | File | What it does |
 | --- | --- |
-| `scripts/coordinator.py` | Coordinator commands: roster and members, streams, leases, messaging, shared-record reads, watchers, config, update votes and install. Run with `python3 -I`; the docstring lists every command. |
+| `scripts/coordinator.py` | Coordinator commands: roster and members, streams, leases, messaging, shared-record reads, watchers, config and install. Run with `python3 -I`; the docstring lists every command. |
 | `scripts/puppet.py` | Member commands: roster, whoami, memory list, the shared-record reads (`inbox`, `ledger`, `events`, `who`, `sizes`), and for the member's own lease `request`, `await-grant`, `extend` (asks for more time) and `release`. It cannot grant or extend. Members run only this file. |
-| `scripts/moplib.py` | State code that both CLIs import. |
-| `scripts/server.py` | The one dashboard, on `http://localhost:4720/`, with the page shell `scripts/dashboard.html`: host values and page links on every page. Dashboard: "Needs you" first, the work list and lease lanes. Events: coordinators and the ledger. Config and Rules: edit machine, class and project config and memory rules. Live by SSE. Exits with "already serving" when one runs. |
+| `scripts/moplib.py` | State code that the server runs, and the client code that both CLIs use. |
+| `scripts/server.py` | The one dashboard, on `http://localhost:4720/`, with the page shell `scripts/dashboard.html`: host values and page links on every page. Dashboard: "Needs you" first, the work list and lease lanes. Events: coordinators and the ledger. Config and Rules: edit machine, class and project config and memory rules. Live by SSE. It is also the one reader and writer of the state: it runs every `coordinator.py` and `puppet.py` command. Exits with "already serving" when one runs. |
+
+The dashboard server is the one reader and writer of the state dir.
+`coordinator.py` and `puppet.py` are clients: each sends its arguments to the
+server, which runs the command and streams the output back (SSE), and exits
+with the command's code. A client starts the server when none answers. Long
+commands (`watch`, `await-grant`, `calm-wait`, `measure-peak`) run again on
+their own after a server restart, from where they stopped; any other command
+whose stream breaks exits 75 (check before you run it again).
 
 The live copies of `coordinator.py`, `puppet.py` and `moplib.py` are in
 `$MACHINE_LEASE_DIR` (default `~/.local/state/machine-leases`); every session
 uses them. Below, `coordinator.py` means
 `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/coordinator.py"`.
-`coordinator.py install` (run from the skill copy) installs the three files
-when absent. When a live copy differs, it prints the diff and installs none:
-other sessions use them now. An update goes through the shared vote; the
-proposal and each vote also reach the other coordinators as messages:
-
-1. One coordinator runs `update propose --by <you> --text "<what changes>"`
-   from the skill copy. It records the exact files and adds a machine
-   decision that asks the user Install or Do not install on the dashboard.
-2. `update propose` messages every live coordinator (like `say`). Each one reads the diff
-   (`install` without `--replace` prints it), and runs
-   `update agree --by <you>` or `update object --by <you> --text "<why>"`.
-3. The user answers the machine decision. When the user approves in your own
-   session instead, record it: `update approve --by <you> --quote "<the user's words>"`.
-   Either one is the user's approval for every coordinator.
-4. Any coordinator runs `update status`; on "ready to install", it runs
-   `install --replace --by <you>` once. The command refuses while a lease is
-   granted (unless the user said to ignore leases: add `--ignore-leases` to `update status` and `install`;
-   held leases and their runs go on), while a live coordinator has not agreed, or after another install,
-   and it writes the file hashes to the ledger. Restart a dashboard you own.
-
-`update` and `install` message every live coordinator themselves; do not send AGREE, installer elections or install reports by `say`.
-A full install also removes obsolete helpers (an old `lease.py`); never run
-one. `install` records the skill copy, and `roster`, `whoami`, `coordinate`,
-`heartbeat` and `status` then print a warning when an update is due. On that
-warning, start step 1, or check `update status` when a proposal exists.
+`python3 -I <skill>/scripts/coordinator.py install` (run from the skill copy)
+copies the three files, replacing copies that differ, records the skill copy
+and restarts the server from it. Leases, queues and records stay as they are,
+and open watchers reconnect, so an install needs no vote. `roster`, `whoami`,
+`coordinate`, `heartbeat` and `status` print a warning when the live copies
+differ from the server's skill copy: run `install` from the newer copy.
 
 Read `references/setup.md` on the first run in a project,
 `references/protocol.md` before you message anyone, `references/rules.md` for
@@ -97,8 +86,8 @@ skill; `references/protocol.md` lists the coordinator side.
 
 ## Coordinator start
 
-1. Run `coordinator.py install` from the skill copy. On DIFFERS, use the live copy
-   and tell the user; replace it only through the update vote above. Run `coordinator.py config show --project-root "$PWD"`; exit 3
+1. Run `python3 -I <skill>/scripts/coordinator.py install` from the skill copy when
+   the live copies are missing or a warning says they differ. Run `coordinator.py config show --project-root "$PWD"`; exit 3
    means the machine or project is not configured yet: follow
    `references/setup.md` (detect, then ask setup questions) before step 2.
 2. Claim: `coordinator.py coordinate --name <slug> --tool <claude|codex> --session-id <session-or-thread-id> --focus "<stack in a few words>" --pr <n> [...]`.
@@ -129,10 +118,9 @@ skill; `references/protocol.md` lists the coordinator side.
    while you coordinate, and verify it after a context reset. Without
    it, members and peers see you as gone, and silent members go unnoticed.
    Only an idle coordinator stops it ("When your work is done").
-6. Run `python3 -I <skill>/scripts/server.py` in the background (a no-op when
-   one runs) and give the user `http://localhost:4720/`. The server also polls
-   every watched PR once for the machine (one conditional request per repo); `watch prs`
-   only reads that poll. `PR-WATCHER down` means the server stopped: start it.
+6. Give the user `http://localhost:<dashboardPort>/` (default 4720); the server runs
+   already, because your commands started it. It also polls every watched PR once for the
+   machine (one conditional request per repo); `watch prs` only reads that poll.
 7. Tell the other coordinators: `coordinator.py say --from <slug> --message "<slug> coordinates <focus>, PRs ..."`.
 8. Tell the user: "To put an existing thread under this coordinator, run
    `/puppet` in that thread. New tasks for this stack I start and enroll
@@ -311,7 +299,7 @@ active.
    idle" and what is parked, waiting for the user. The dashboard shows you as
    idle. A sleeping coordinator stays live however old its heartbeat is: it
    keeps its name and PRs, and nobody flags it as stale or chases it. Peer
-   broadcasts, WORK REQUESTs and update votes skip it; a message sent to it
+   broadcasts and WORK REQUESTs skip it; a message sent to it
    by name still arrives and wakes the session.
 3. **Wake**: new work comes only from the user (new work, or resuming parked
    work), or from a HANDOFF in reply to your one request. These wake you
@@ -396,7 +384,7 @@ BUILD lease", "this repo merges through a merge queue".
   release result and drain count), `inbox` and `ledger`. Ask only what they
   do not answer.
 - **A question for the user that concerns every coordinator** (a machine rule,
-  a shared limit, a helper update): one `decision add --scope machine`, not
+  a shared limit): one `decision add --scope machine`, not
   one per coordinator. Its answer is the user's own answer for each of them.
 
 ## Reporting to the user
