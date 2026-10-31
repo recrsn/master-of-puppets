@@ -20,8 +20,7 @@ that `coordinator.py` enforces (`references/setup.md`).
   or cleanup receipt; the release event is the record (`references/leases.md`).
 - A change that every coordinator must see is a command, not a message:
   admission holds, rule and config changes (`--reason`; the command also
-  messages every live member, so do not tell them), helper updates
-  (`update`), member handoffs (`member transfer`, `member accept`), and
+  messages every live member, so do not tell them), member handoffs (`member transfer`, `member accept`), and
   questions for the user that concern every coordinator
   (`decision add --scope machine`). `references/protocol.md` has the table.
 

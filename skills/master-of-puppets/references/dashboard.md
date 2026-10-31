@@ -1,9 +1,11 @@
 # Dashboard
 
-There is one dashboard per machine. Every coordinator runs
-`python3 -I scripts/server.py` in the background; the first one serves, later
-ones print "already serving" and exit. Give the user `http://localhost:4720/`
-(or the configured `dashboardPort`).
+There is one dashboard per machine. It is also the one reader and writer of
+the state dir: `coordinator.py` and `puppet.py` send each command to its
+`POST /run`, and the first command starts it when none answers (a second
+start prints "already serving" and exits). `install` restarts it from the
+skill copy. Give the user `http://localhost:4720/` (or the configured
+`dashboardPort`).
 
 `server.py` renders the pages in memory from `leases.json`, `roster.json`,
 `ledger.jsonl`, `config.json`, `projects/*.json`, `memory/*.json` and
@@ -15,8 +17,9 @@ re-render. When the server stops, the green dot in the header turns red with
 "Offline".
 The server also runs the one PR poller for the machine: every 30 s (`prsPollS`)
 it reads each PR in `prs-*.txt` and the roster once. One conditional `gh api`
-request per repo lists its 100 latest updated PRs (a 304 costs no rate limit); a
-PR is fetched with `gh pr view` only when its `updated_at` moved. An open PR is
+request per repo lists its 100 latest updated PRs (a 304 costs no rate limit); the
+PRs whose `updated_at` moved are fetched in one GraphQL request per repo. The poller
+calls the API directly, with the token from `GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`. An open PR is
 also fetched every 2 min, since checks and reviews do not move `updated_at`.
 Merged and closed PRs are not polled. A bare number in `prs-<C>.txt` takes the
 repo of that coordinator's members. It writes
@@ -85,8 +88,6 @@ buttons.
 A machine-scope decision (`decision add --scope machine`) lives in
 `dashboard/machine-state.json` and shows under the name "machine". Its answer
 counts for every coordinator, and every live coordinator gets the message.
-`update propose` adds one for each helper update; its answer is the user's
-approval or rejection that `install --replace` reads.
 
 Each queued lease entry has Move up and Cancel buttons (Cancel asks first).
 A ready entry can also be dragged onto another ready entry of its class to
