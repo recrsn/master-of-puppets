@@ -146,8 +146,8 @@ coordinator.py config set-class BUILD --auto-acquire on
 coordinator.py stream update --name <stream> --auto-acquire on
 ```
 
-The dashboard server does the rest, for every live coordinator; there is
-nothing to arm. When your entry is the head of its queue, it runs `acquire`
+The dashboard server does the rest, for every registered coordinator, live
+or not (the class or stream setting is the opt-in); there is nothing to arm. When your entry is the head of its queue, it runs `acquire`
 with the entry's own figures. Every normal gate applies: queue order, slot
 cap, settle, host check and both budgets. A gate that passes later (exit 3, 4,
 5) is retried every 2 s. Each outcome arrives in your inbox, so in `watch`:
@@ -198,7 +198,8 @@ coordinator.py vote object --id <id> --text "<what you saw>"
 coordinator.py vote list [--all]
 ```
 
-Every live peer gets `VOTE <id> by <you>: ...` in `watch`. A vote passes
+Every live peer's `watch` prints `VOTE-REQUEST <id> by <you>: ...`, and again
+for each open vote it has not voted on when `watch` starts. A vote passes
 when every live coordinator agrees, or 30 minutes after it was made with no
 objection: a live coordinator that has not voted by then agrees. One objection
 closes it, and the proposer may propose again with new facts. Everyone gets

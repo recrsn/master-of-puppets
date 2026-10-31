@@ -1332,28 +1332,43 @@ PRS_FULL_S = 120  # an open PR is fetched at least this often: check and review 
 
 
 def pr_refs():
-    """{"owner/repo#n": [who, ...]} from the prs-<coordinator>.txt watch lists and the roster's members.
-    A bare number in a list takes the repo of that coordinator's members or of its other entries, when that is one repo."""
+    """{"owner/repo#n": [who, ...]} from the prs-<coordinator>.txt watch lists, each coordinator's own PRs
+    (register or heartbeat --pr) and its members' PRs. A bare number takes the repo of that coordinator's
+    members or watch-list entries, when that is one repo."""
     out = {}
-    members = (read_json(ROSTER) or {}).get("members") or {}
+    roster = read_json(ROSTER) or {}
+    members, coords = roster.get("members") or {}, roster.get("coordinators") or {}
+    lists = {}
     for name in sorted(os.listdir(DIR)):
         if name.startswith("prs-") and name.endswith(".txt"):
-            coord = name[4:-4]
-            words = [(raw.split() or [""])[0] for raw in open(os.path.join(DIR, name)).read().splitlines()]
+            lists[name[4:-4]] = [(raw.split() or [""])[0] for raw in open(os.path.join(DIR, name)).read().splitlines()]
+
+    def add(coord, ref, who):
+        if ref.isdigit():
             repos = {m["repo"] for m in members.get(coord, []) if m.get("repo")}
-            repos |= {w.rpartition("#")[0] for w in words if w.rpartition("#")[0]}
-            for ref in words:
-                if ref.isdigit() and len(repos) == 1:
-                    ref = f"{next(iter(repos))}#{ref}"
-                if "#" in ref and not ref.startswith("#") and ref.rpartition("#")[2].isdigit():
-                    out.setdefault(ref, []).append(coord)
+            repos |= {w.rpartition("#")[0] for w in lists.get(coord, []) if w.rpartition("#")[0]}
+            if len(repos) != 1:
+                return
+            ref = f"{next(iter(repos))}#{ref}"
+        if "#" in ref and not ref.startswith("#") and ref.rpartition("#")[2].isdigit():
+            if who not in out.setdefault(ref, []):
+                out[ref].append(who)
+    for coord, words in lists.items():
+        for ref in words:
+            add(coord, ref, coord)
+    for coord, c in coords.items():
+        for n in c.get("prs") or []:
+            add(coord, str(n), coord)
     for coord, ms in members.items():
         for m in ms:
             for n in m.get("prs", []) if m.get("repo") else []:
-                who = out.setdefault(f"{m['repo']}#{n}", [])
-                if f"{coord}/{m['name']}" not in who:
-                    who.append(f"{coord}/{m['name']}")
+                add(coord, f"{m['repo']}#{n}", f"{coord}/{m['name']}")
     return out
+
+
+def coordinator_prs(me):
+    """The PR refs that coordinator me watches: its list, its own PRs and its members' PRs."""
+    return {ref for ref, who in pr_refs().items() if any(w == me or w.startswith(me + "/") for w in who)}
 
 
 def pr_line(d):
