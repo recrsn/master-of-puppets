@@ -536,6 +536,11 @@ def render_page(host):
             out += f'<button type="button" class="ghost" data-park="unpark" {attrs}>Unpark</button>'
         return out
 
+    def dismiss_button(coord, name, done=False):
+        """Dismiss a task (Archive when done): removes its row and member record."""
+        attrs = f'data-coord="{e(coord)}" data-name="{e(name)}"'
+        return f'<button type="button" class="ghost" data-dismiss="{"Archive" if done else "Dismiss"}" {attrs}>{"Archive" if done else "Dismiss"}</button>'
+
     def ask_html(a, title):
         """The question (unless it is the row title), then one button per suggested answer (only for a decision with an id)."""
         out = f'<p class="t1">{e(a["text"])}</p>' if a["text"] and a["text"] != title else ""
@@ -554,7 +559,8 @@ def render_page(host):
                          f"last change {local(n['when'])}" if n["when"] else "")
         body = (meta + "".join(ask_html(a, title) for a in n["asks"])
                 + (f'<p class="t2">{e(n["status"])}</p>' if n["status"] else "")
-                + actions(open_button(n["href"]) + park_buttons(n["coord"], n["id"])))
+                + actions(open_button(n["href"]) + park_buttons(n["coord"], n["id"])
+                                + (dismiss_button(n["coord"], n["id"]) if n["id"] and (n["coord"], n["id"]) in tasks else "")))
         return row(dom_id("n", *key), g["dot"], title, n["when"], body, g["ago"])
 
     def need_group(g):
@@ -582,7 +588,8 @@ def render_page(host):
         body = (meta + (f'<p class="t2">{e(t["latest"])}</p>' if t.get("latest") else "")
                 + (f'<span class="mono sm t2">{e(when)}</span>' if when else "")
                 + (f'<div class="links">{"".join(link(l) for l in links)}</div>' if links else "")
-                + actions(open_button(t.get("session", "")) + park_buttons(coord, tid)))
+                + actions(open_button(t.get("session", "")) + park_buttons(coord, tid)
+                                + dismiss_button(coord, tid, kind == "done")))
         dot = KIND_DOT[kind] + (" live" if kind in ("work", "ok") and not p else "")
         return row(dom_id("t", coord, tid), dot, t.get("name") or tid, last, body, title_cls="t2")
 
@@ -1251,6 +1258,14 @@ def park_action(action, coord, name, until):
     return code == 0, lines
 
 
+def dismiss_action(coord, name):
+    """Run `coordinator.py dismiss --name N --notify` as coordinator C."""
+    if not NAME.match(coord) or not NAME.match(name):
+        return False, ["bad request"]
+    code, lines = run_inline(["dismiss", "--name", name, "--notify"], coord)
+    return code == 0, lines
+
+
 DECISION_ID = re.compile(r"^[0-9a-f]{8}$")
 
 
@@ -1363,7 +1378,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             (self.run_post if path == "/run" else self.restart_post)(req)
             return
-        if path not in ("/queue", "/park", "/decide", "/config", "/memory", "/handoff"):
+        if path not in ("/queue", "/park", "/dismiss", "/decide", "/config", "/memory", "/handoff"):
             self.send_response(404)
             self.end_headers()
             return
@@ -1385,6 +1400,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                           choice if type(choice) is int else None)
             elif path == "/handoff":
                 ok, lines = handoff_action(str(req.get("coord", "")))
+            elif path == "/dismiss":
+                ok, lines = dismiss_action(str(req.get("coord", "")), str(req.get("name", "")))
             elif path == "/park":
                 ok, lines = park_action(str(req.get("action", "")), str(req.get("coord", "")), str(req.get("name", "")),
                                         str(req.get("until") or ""))
