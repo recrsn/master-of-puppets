@@ -394,6 +394,7 @@ form.cfg:not([data-dirty]) .btn[type=submit]{opacity:.5}
     const q = ev.target.closest("[data-q]");
     const pk = ev.target.closest("[data-park]");
     const dc = ev.target.closest("[data-decide]");
+    const dm = ev.target.closest("[data-dismiss]");
     const rc = ev.target.closest("[data-remove-class]");
     const rr = ev.target.closest("[data-remove-rule]");
     if (rc) {
@@ -407,6 +408,10 @@ form.cfg:not([data-dirty]) .btn[type=submit]{opacity:.5}
       const coord = ev.target.closest("[data-handoff]").dataset.handoff;
       if (confirm(`Open ${coord} to another session for 2 minutes? You confirm the new session here.`))
         post("/handoff", {coord});
+    } else if (dm) {
+      const {dismiss: verb, coord, name} = dm.dataset;
+      if (confirm(`${verb} ${name}? Its row and member record are removed, and its coordinator gets a message.`))
+        post("/dismiss", {coord, name}, dm);
     } else if (dc) {
       decide(dc);
     } else if (pk) {

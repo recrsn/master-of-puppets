@@ -76,6 +76,11 @@ optional date; no date means until unparked), and parked ones have Unpark.
 They run `coordinator.py park|unpark --notify`, so the coordinator gets a message
 from "dashboard", as with the queue buttons.
 
+Every task row has a Dismiss button, and a done task has Archive in its place. It runs
+`coordinator.py dismiss --name TASK --notify` as the task's coordinator: the task
+row, the task's decisions and its member record go, and the coordinator gets a message
+from "dashboard". Use it for tasks the coordinator left outdated or incomplete. It asks first.
+
 A task or queue entry with a priority other than 0 shows it ("Priority 2");
 inside each stream, higher-priority tasks come first, and each lease
 queue lists entries by priority, then FIFO.

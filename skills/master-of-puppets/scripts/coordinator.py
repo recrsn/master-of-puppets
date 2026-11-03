@@ -195,6 +195,9 @@ Roster and members (coordinators write; members send messages, and request and r
   member stale [--minutes 30]   members (not done) with no update for N minutes
   park --name MEMBER [--until YYYY-MM-DD] [--notify]
   unpark --name MEMBER [--notify]
+  dismiss --name TASK [--notify]
+       remove the task row, its decisions and its member record. Use it for an outdated or
+       incomplete task, or a done one. The dashboard's Dismiss and Archive buttons use --notify.
        park sets the member to paused; the task leaves Needs you and returns there as
        "Revisit" after --until. The dashboard's Park/Unpark buttons use --notify.
   decision add --text TEXT [--task ID] [--href URL] [--option TEXT ...] [--scope machine]
@@ -657,6 +660,40 @@ def say_cmd(args):
 
 
 PARK_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def dismiss_cmd(args):
+    """dismiss: remove a task from the dashboard: its task row, its decisions, and its member
+    record when it has one. For a task the coordinator left outdated or incomplete, or one that
+    is done. With --notify (the dashboard's Dismiss and Archive buttons), the coordinator gets a message."""
+    lock()
+    try:
+        roster = load_roster()
+        members = roster["members"].get(args.coordinator, [])
+        m = next((x for x in members if x["name"] == args.name), None)
+        path = state_path(args.coordinator)
+        data = read_json(path) or {}
+        t = next((x for x in data.get("tasks", []) if x.get("id") == args.name), None)
+        if m is None and t is None:
+            print(f"{args.name} is not a task of {args.coordinator}")
+            return 3
+        label = (t or {}).get("name") or (m or {}).get("task", "")
+        if m is not None:
+            members.remove(m)
+            save_roster(roster)
+        remove_task(args.coordinator, args.name)
+        data = read_json(path) or {}
+        data["decisions"] = [d for d in data.get("decisions", []) if d.get("task") != args.name]
+        write_json(path, data)
+        note(args.coordinator, f"{args.name} dismissed on the dashboard")
+        log(f"dismiss {args.coordinator} {args.name}" + (" by=dashboard" if args.notify else ""))
+    finally:
+        unlock()
+    print(f"dismissed {args.name}")
+    if args.notify:
+        print(notify(args.coordinator, f"The user dismissed {args.name} ({label}) on the dashboard."
+                     + (" Its member is removed; tell it to stop work on it." if m is not None else "")))
+    return 0
 
 
 def park_cmd(args):
@@ -2379,6 +2416,10 @@ def main(argv=None):
     upk.set_defaults(_self=("coordinator",))
     upk.add_argument("--name", required=True)
     upk.add_argument("--notify", action="store_true", help="tell the coordinator (sender: dashboard)")
+    dm = sub.add_parser("dismiss")
+    dm.set_defaults(_self=("coordinator",))
+    dm.add_argument("--name", required=True, help="the task ID")
+    dm.add_argument("--notify", action="store_true", help="tell the coordinator (sender: dashboard)")
     x = sub.add_parser("extend")
     x.add_argument("cls", metavar="CLASS")
     x.add_argument("--id", required=True)
@@ -2644,6 +2685,8 @@ def main(argv=None):
         return queue_edit_cmd(args)
     if args.cmd in ("park", "unpark"):
         return park_cmd(args)
+    if args.cmd == "dismiss":
+        return dismiss_cmd(args)
     if args.cmd == "acquire":
         return acquire_cmd(args)
     if args.cmd == "resource":
