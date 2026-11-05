@@ -2496,6 +2496,8 @@ def pr_digest(repo, nums):
                 continue
             label = c.get("name") or c.get("context") or "?"
             at = c.get("startedAt") or c.get("createdAt") or ""
+            if c["__typename"] == "CheckRun" and c.get("status") != "COMPLETED":
+                at = "~"  # a rerun that has not started is newer than every finished run; "~" sorts after ISO times
             if c["__typename"] == "CheckRun":
                 verdict = (c.get("conclusion") or "") if c.get("status") == "COMPLETED" else (c.get("status") or "PENDING")
             else:
