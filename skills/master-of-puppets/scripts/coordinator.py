@@ -249,6 +249,9 @@ Shared records (read-only; puppet.py has them too)
   sizes --worktree P [--class CLASS]
        the project's recorded run minutes, GiB and core samples per class, the peaks
        acquire charges and the observed peaks it checks requests against
+  grant --id ID [--accept-size]
+       acquire for a queued request, from its id: class, holder, worktree, minutes, size and
+       commands come from the request. Only the request's coordinator grants it
   pr N|owner/repo#N [...] [--repo owner/repo] [--json]
        one line per PR from one GraphQL request per 10 PRs: state, full head, merge state, review,
        automerge on|off|queued(pos,state)|merged, unresolved threads, the latest CodeRabbit review
@@ -2751,37 +2754,77 @@ def auto_entry(entry, machine, roster, cls):
     return bool(m and (roster["streams"].get(m.get("stream")) or {}).get("autoAcquire"))
 
 
+def grant_cmd(args):
+    """acquire for a queued request, from its id alone: class, holder, worktree, minutes, size and commands
+    come from the entry. Only the entry's coordinator grants it."""
+    state = load()
+    hit = [(c, q) for c in class_names() for q in state["queue"][c] if q["id"] == args.id]
+    if not hit:
+        print(f"{args.id} is not queued; see status --brief")
+        return 3
+    c, q = hit[0]
+    if q["coordinator"] != args.coordinator:
+        print(f"{args.id} is {q['coordinator']}'s request; only {q['coordinator']} grants it")
+        return 3
+    if not q.get("minutes") or not q.get("worktree"):
+        print(f"{args.id} has no minutes or worktree; the member sets them with puppet.py request again")
+        return 2
+    ns = argparse.Namespace(cls=c, coordinator=q["coordinator"], holder=q["holder"], id=q["id"], worktree=q["worktree"],
+                            minutes=q["minutes"], gib=q.get("gib"), cpus=q.get("cpus"), accept_size=args.accept_size,
+                            commands=q.get("commands"), measure=True, auto_expect=None)
+    print(f"granting {c} {q['id']} to {q['holder'][:60]} ({q['minutes']} min)")
+    return acquire_cmd(ns)
+
+
 def auto_grants():
-    """In the server, forever: grant the head entry of each registered coordinator (live or not: the opt-in is
+    """In the server, forever: one worker per lease class (auto_class), started for each class in the
+    registry. A slow grant, such as a pool resource that is created or started, then holds only its own
+    class: a HUTCH VM create once kept every BUILD head waiting for 7 minutes with free capacity."""
+    workers, ctx = {}, dict(RUN.__dict__)
+    while True:
+        try:
+            for c in class_names(load_machine()):
+                if c not in workers or not workers[c].is_alive():
+                    workers[c] = threading.Thread(target=auto_class, args=(c, ctx), daemon=True, name=f"auto-{c}")
+                    workers[c].start()
+        except Exception as exc:  # keep granting; the server log shows the failure
+            print(f"auto grants failed: {exc!r}", file=sys.stderr, flush=True)
+        nap(10)
+
+
+def auto_class(c, ctx):
+    """Grant the head entry of class c of each registered coordinator (live or not: the opt-in is
     the class or stream setting, not a heartbeat) by running acquire, for classes or
-    streams with autoAcquire on. The entry's coordinator gets AUTO-GRANTED, AUTO-REFUSED or AUTO-SKIPPED in
-    its inbox when the outcome changes. Exit 2 (over the limit) and 6 (undersized) wait for the coordinator:
-    this never splits a run or accepts a size. Exit 7 means the entry changed during the host check; the
-    final check under the lock revalidates the entry, its hold and review state and the auto opt-in.
-    Other refusals retry on the next pass."""
-    seen = {}
+    streams with autoAcquire on, until c leaves the registry. The entry's coordinator gets AUTO-GRANTED,
+    AUTO-REFUSED or AUTO-SKIPPED in its inbox when the outcome changes. Exit 2 (over the limit) and 6
+    (undersized) wait for the coordinator: this never splits a run or accepts a size. Exit 7 means the
+    entry changed during the host check; the final check under the lock revalidates the entry, its hold
+    and review state and the auto opt-in. Other refusals retry on the next pass."""
+    RUN.__dict__.update(ctx)  # output to the server log, as in the thread that started this one
+    seen = None
     while True:
         try:
             machine, roster, state = load_machine(), load_roster(), load()
-            for c in class_names(machine):
-                ready = [q for q in state["queue"][c] if not q.get("hold")]
-                q = ready[0] if ready else None
-                if not q or q["coordinator"] not in roster["coordinators"] or not auto_entry(q, machine, roster, c):
-                    seen.pop(c, None)
-                    continue
-                me, key = q["coordinator"], (q["id"], q.get("minutes"), q.get("gib"), q.get("cpus"))
-                if q.get("review"):
-                    if seen.get(c) != (key, "review"):
-                        say("auto", f"AUTO-SKIPPED {c} {q['id']}: marked for review; grant it with acquire", me)
-                        seen[c] = (key, "review")
-                    continue
-                if seen.get(c, (None,))[0] == key and seen[c][1] in (2, 6):
-                    continue
-                if not q.get("minutes") or not q.get("worktree"):
-                    if seen.get(c) != (key, "incomplete"):
-                        say("auto", f"AUTO-REFUSED {c} {q['id']}: entry needs minutes and worktree; set them with wait, then acquire", me)
-                        seen[c] = (key, "incomplete")
-                    continue
+            if c not in class_names(machine):
+                return
+            ready = [q for q in state["queue"][c] if not q.get("hold")]
+            q = ready[0] if ready else None
+            if not q or q["coordinator"] not in roster["coordinators"] or not auto_entry(q, machine, roster, c):
+                seen = None
+                nap(2)
+                continue
+            me, key = q["coordinator"], (q["id"], q.get("minutes"), q.get("gib"), q.get("cpus"))
+            if q.get("review"):
+                if seen != (key, "review"):
+                    say("auto", f"AUTO-SKIPPED {c} {q['id']}: marked for review; grant it with acquire", me)
+                    seen = (key, "review")
+            elif seen and seen[0] == key and seen[1] in (2, 6):
+                pass
+            elif not q.get("minutes") or not q.get("worktree"):
+                if seen != (key, "incomplete"):
+                    say("auto", f"AUTO-REFUSED {c} {q['id']}: entry needs minutes and worktree; set them with wait, then acquire", me)
+                    seen = (key, "incomplete")
+            else:
                 ns = argparse.Namespace(cls=c, coordinator=me, holder=q["holder"], id=q["id"], worktree=q["worktree"],
                                         minutes=q["minutes"], gib=q.get("gib"), cpus=q.get("cpus"), accept_size=False,
                                         commands=q.get("commands"), measure=True, auto_expect=entry_tuple(q))
@@ -2789,12 +2832,12 @@ def auto_grants():
                     code = acquire_cmd(ns)
                 if code == 0:
                     say("auto", f"AUTO-GRANTED {c} {q['id']}", me)
-                    seen.pop(c, None)
-                elif seen.get(c) != (key, code):
+                    seen = None
+                elif seen != (key, code):
                     say("auto", f"AUTO-REFUSED {c} {q['id']} exit {code}: {buf.getvalue().strip()[:300]}", me)
-                    seen[c] = (key, code)
+                    seen = (key, code)
         except Exception as exc:  # keep granting; the server log shows the failure
-            print(f"auto grants failed: {exc!r}", file=sys.stderr, flush=True)
+            print(f"auto grants {c} failed: {exc!r}", file=sys.stderr, flush=True)
         nap(2)
 
 
@@ -3180,6 +3223,10 @@ def main(argv=None):
             rx.add_argument("--about", help="what the words decide")
         rx.add_argument("action", nargs="?", choices=("list",), help="list the records")
         rx.add_argument("-n", type=int, help="list: the last N")
+    gr = sub.add_parser("grant", help="acquire a queued request from its id; the rest comes from the request")
+    gr.set_defaults(_self=("coordinator",))
+    gr.add_argument("--id", required=True)
+    gr.add_argument("--accept-size", action="store_true", help="as acquire --accept-size, after a LEASE SIZE reason")
     rl = sub.add_parser("release", help="read-only release checks: carries, state; never dispatches")
     rlsub = rl.add_subparsers(dest="rcmd", required=True)
     rlc = rlsub.add_parser("carries", help="whether a tag carries each PR's merge commit, by full-SHA ancestry")
@@ -3465,6 +3512,8 @@ def main(argv=None):
         return dismiss_cmd(args)
     if args.cmd == "acquire":
         return acquire_cmd(args)
+    if args.cmd == "grant":
+        return grant_cmd(args)
     if args.cmd == "resource":
         if args.rcmd != "list" and not args.name:
             p.error("resource add|mark|remove needs --name")
