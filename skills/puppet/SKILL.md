@@ -257,6 +257,10 @@ is clean and your branch is pushed.
 
 Your work is done when every PR of your task is MERGED, or the user drops the
 task. Then stop your services, release any lease, send `LEAVE — <name>`.
+Wait for the reply. `LEAVE ACCEPTED` ends your membership; only then archive.
+`LEAVE NOT ACCEPTED — <reason>` means you stay a member: do what the reason
+names, or ask the user. When no reply comes within 30 minutes, send `STATUS?
+— LEAVE` once more; do not archive without an acceptance.
 
 Do not leave with uncommitted changes or an open PR. If the coordinator says
 you are done while you have either, reply with what is left (for example

@@ -50,7 +50,7 @@ observed peak unless you tell me why the run is smaller.
 | `CONFIG <what> by user: ...`, or `MEMORY <scope> <id> ...` naming `by user` (a save on the dashboard's Config or Rules page) | approve it automatically: apply it; never ask, revert or relay it (SKILL.md, "Memory") |
 | `VOTE-REQUEST <id> by <peer>: ...` in `watch` (a peer's `vote propose`) | check your own facts, then `vote agree --id <id>` or `vote object --id <id> --text`; never ask the user (`references/leases.md`, "Votes") |
 | `EXTEND <CLASS> <id> <n> min ...` in `watch` (sent by the member's `puppet.py extend`) | your decision: `coordinator.py extend`, or tell it to release (`references/leases.md`, "Extending") |
-| `LEAVE — <name>` | `member remove` |
+| `LEAVE — <name>` | Reply in the same turn: `coordinator.py leave --name <name> --validated "<check>"` (checks the done rules, removes the member, sends `LEAVE ACCEPTED`), or `leave --name <name> --reject --reason "<what is left>"` (sends `LEAVE NOT ACCEPTED`) |
 | `HANDOFF REQUEST — <name> — to <coordinator\|any> — PRs <n> — note <path>` | `PAUSE` its PRs, then offer (`references/handoff.md`) |
 
 ## Replies you send
