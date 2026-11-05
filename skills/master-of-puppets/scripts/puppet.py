@@ -37,9 +37,9 @@ Usage: python3 -I puppet.py <command> ...
        and after GRANTED of a pool class, RESOURCE <name> <info JSON>: the resource you hold
        until you release it (release never stops it: the server's pool upkeep does, when idle),
        then GRANTED, DENIED <reason> or NOT-GRANTED <reason>. When the class has a recycle command,
-       a granted resource is reset first: RECYCLING <name>, then RECYCLED or NOT-RECYCLED <why> (it
-       could not reach the resource: check your ssh key; you still hold it). A failed reset prints
-       RECYCLE-FAILED: the resource is destroyed and the entry is queued again at the front
+       a granted resource is reset first: RECYCLING <name>, then RECYCLED. A failed reset prints
+       RECYCLE-FAILED (the resource is destroyed); an unreachable one RECYCLE-UNREACHABLE (it is kept,
+       marked failed). Either way you do not get it: the entry is queued again at the front
        (REQUEUED; keep waiting), up to 3 times, then NOT-GRANTED. Exit 0 granted (the only grant);
        4 denied by your coordinator (do not retry; ask why); 3 left the queue without a grant; 5 timeout while still queued; 6 never queued
        within --appear-timeout (default 600 s)
@@ -162,10 +162,11 @@ def request(args):
 
 def recycle_granted(cls, lease_id, requeue):
     """Recycle the resource that granted lease lease_id holds, without the lock. Returns (outcome, line):
-    recycled, none or unreachable keep the grant (recycled and none mark the lease, so a rerun of
-    await-grant does not recycle again); destroyed: the reset failed, so the lease is dropped with a
-    release line, the resource destroyed and, when requeue, the entry queued again at the front for
-    another resource; gone: the lease no longer holds the resource."""
+    recycled or none keep the grant and mark the lease, so a rerun of await-grant does not recycle again;
+    destroyed: the reset failed, so the lease is dropped with a release line, the resource destroyed and,
+    when requeue, the entry queued again at the front for another resource; unreachable: the same, except
+    that the resource is kept and marked failed (out of rotation, files untouched), so no member gets a
+    resource that was not reset; gone: the lease no longer holds the resource."""
     held = next((h for h in load()[cls] if h["id"] == lease_id), None)
     if held is None or not held.get("resource"):
         return "gone", f"{lease_id} holds no resource"
@@ -178,18 +179,20 @@ def recycle_granted(cls, lease_id, requeue):
         held = next((h for h in state[cls] if h["id"] == lease_id and h.get("resource") == name), None)
         if held is None:
             return "gone", f"{lease_id} no longer holds {name}"
-        if outcome != "failed":
-            if outcome != "unreachable":
-                held["recycled"] = True
-                if outcome == "recycled":  # facts the recycle found (an ssh alias, uptime) go on the RESOURCE line
-                    held["resourceInfo"] = {**(held.get("resourceInfo") or {}),
-                                            **{k: v for k, v in detail.items() if k != "failed"}}
-                save(state, machine)
+        if outcome in ("recycled", "none"):
+            held["recycled"] = True
+            if outcome == "recycled":  # facts the recycle found (an ssh alias, uptime) go on the RESOURCE line
+                held["resourceInfo"] = {**(held.get("resourceInfo") or {}),
+                                        **{k: v for k, v in detail.items() if k != "failed"}}
+            save(state, machine)
             return outcome, recycle_note(cls, name, outcome, detail, tail)
         state[cls] = [h for h in state[cls] if h is not held]
         res = find_resource(state, cls, name)
         token = info = None
-        if res is not None and not res.get("op"):
+        if outcome == "unreachable":
+            if res is not None and not res.get("op"):
+                set_state(res, "failed")  # out of rotation, kept: resource mark ... --state free returns it
+        elif res is not None and not res.get("op"):
             token, info = begin_op(res, "delete", "deleting", lease_id), res.get("info")
         if requeue:
             granted, expires = (dt.datetime.fromisoformat(held[k]) for k in ("grantedAt", "expiresAt"))
@@ -199,9 +202,14 @@ def recycle_granted(cls, lease_id, requeue):
                         prefer=held.get("prefer"))  # not wantResource: that resource is gone
         save(state, machine)
         log(f"release {cls} {lease_id} ran 0 min result=fail drained=0 coordinator={coord} "
-            f"note={json.dumps(f'recycle of {name} failed at grant: {detail}')}")
+            f"note={json.dumps(f'recycle of {name} {outcome} at grant: {detail}')}")
     finally:
         unlock()
+    if outcome == "unreachable":
+        log(f"resource recycle-unreachable {cls} {name} marked failed error={json.dumps(detail)} {tail}")
+        say("pool", f"RECYCLE-UNREACHABLE {cls} {name} for {lease_id}: {detail}; not granted, marked failed and kept "
+                    f"(check ssh from the server, then resource mark {cls} --name {name} --state free)", coord)
+        return "unreachable", f"could not reach {name} to reset it ({detail}); marked failed and kept"
     if token is None:
         log(f"resource destroy-skipped {cls} {name} reason={json.dumps(detail)} {tail} (busy or gone)")
         return "destroyed", f"recycle of {name} failed ({detail}); it is busy or gone, so it was not deleted"
@@ -226,16 +234,16 @@ def await_grant(args):
             if outcome == "gone":
                 seen = True
                 continue
-            if outcome == "destroyed":
+            if outcome in ("destroyed", "unreachable"):
                 destroyed += 1
-                print(f"RECYCLE-FAILED {args.cls} {args.id}: {line}", flush=True)
+                print(f"RECYCLE-{'FAILED' if outcome == 'destroyed' else 'UNREACHABLE'} {args.cls} {args.id}: {line}", flush=True)
                 if not any(q["id"] == args.id for q in load()["queue"][args.cls]):
-                    print(f"NOT-GRANTED {args.cls} {args.id}: {destroyed} resource(s) destroyed for failed recycles; ask your coordinator")
+                    print(f"NOT-GRANTED {args.cls} {args.id}: {destroyed} resource(s) failed their reset; ask your coordinator")
                     return 3
                 print(f"REQUEUED {args.cls} {args.id}: at the front of the queue for another resource; keep waiting", flush=True)
                 seen = True
                 continue
-            print(f"{'RECYCLED' if outcome == 'recycled' else 'NOT-RECYCLED'} {args.cls} {args.id}: {line}", flush=True)
+            print(f"{'RECYCLED' if outcome == 'recycled' else 'NOT-RECYCLED'} {args.cls} {args.id}: {line}", flush=True)  # none: no command
             held_lease = next((h for h in load()[args.cls] if h["id"] == args.id), None)
         if held_lease:
             print(f"GRANTED {args.cls} {args.id}")
