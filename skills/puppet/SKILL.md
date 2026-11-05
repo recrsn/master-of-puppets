@@ -14,7 +14,8 @@ own lease, which update the lease queue, lease state and measurement history,
 and your handoff note (section 8). You cannot grant a lease; only your
 coordinator does. Do not request, change or release someone else's lease.
 
-**Every child task starts with the enrollment line** (section 6).
+**Puppets cannot have children.** You never start another session; ask your
+coordinator with `TASK REQUEST` (section 6).
 
 Read [agents.md](../master-of-puppets/references/agents.md) for Claude/Codex
 tool equivalents and session ids, and the "Routes" section of
@@ -45,20 +46,18 @@ session that should coordinate.
 Send one message to the coordinator:
 
 ```
-JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs <n> (base <b>) ... — <phase> — <planned heavy commands> — parent <parent|none>
+JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs <n> (base <b>) ... — <phase> — <planned heavy commands> — parent none
 ```
 
-`<parent>` is the name after "started by" in your enrollment line. Every child
-of an existing puppet must list its parent. Write `none` only when your prompt
-has no enrollment line or the line names no starter.
+The last field is always `parent none`: you answer to the coordinator, even
+when another member's session started yours.
 
 When your task is background work (a sweep, or a run that a schedule
-started), start `<task>` with `sweep:` or `scheduled:`, in JOIN and in the
-enrollment line of each such task you start. The coordinator can then put regular work
-first.
+started), start `<task>` with `sweep:` or `scheduled:` in JOIN. The
+coordinator can then put regular work first.
 
 Send it, and every later message (UPDATE, MERGED, USER SYNC, STATUS replies,
-CHILD TASK STARTED, LEASE SIZE, LEASE RELEASED, LEAVE), by the direct route
+TASK REQUEST, LEASE SIZE, LEASE RELEASED, LEAVE), by the direct route
 for your coordinator's tool (`protocol.md`, "Routes"). Never use `coordinator.py say`
 and never write shared inbox records, even with `--no-direct`. When your
 session id changes, send JOIN again (`protocol.md`, "Routes").
@@ -213,53 +212,32 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
    needs a lease, for example a commit whose hooks run lint. Follow them.
 6. What needs no lease: `leases.md`, "Classes", in the coordinator skill.
 
-## 6. Start a new task
+## 6. New tasks: ask your coordinator
 
-Child tasks follow a formal protocol: enroll the child, start it, report the
-start, and the child joins with you as its parent.
+Puppets cannot have children (user rule, 5 Nov: "puppets cannot have
+children and all child sessions should be answering to coordinator
+instead"). You never start, suggest or enroll another session yourself: no
+task card or chip, no Codex thread, no `claude -p`, no scheduled task.
 
-1. **Enroll.** Put this line first in the child's prompt, before any other
-   text:
+When part of your work should run as its own task, send:
 
-   ```
-   MASTER-OF-PUPPETS ENROLLED — <coord> coordinates this task, started by <your name>. You must enroll: your first action is to run /puppet and send <coord> your JOIN message with parent <your name>, before any other work; then follow <coord>'s directions. Start every child task you create with puppet enrollment: put a line like this one first in its prompt.
-   ```
+```
+TASK REQUEST — <your name> — <task, one line> — <why it is separate> — PRs <n ...|none>
+```
 
-   You write the line yourself. Starting a task needs no message to the
-   coordinator and no reply from it. The new session must enroll: the line
-   makes it run `/puppet` and send JOIN, with you as its parent, before any
-   other work. The line covers every route: a session card or `spawn_task`
-   chip, a new Codex thread (`codex exec`, `codex "<prompt>"`,
-   `create_thread`), `claude -p`, a cloud handoff and a scheduled task.
-2. **Start.**
-   - **Claude**: suggest a task card or chip whenever the work calls for one.
-     The user starts it.
-   - **Codex**: first ask the user with the ask-user tool (`agents.md`, "Ask
-     setup questions"). Give the task, its worktree or branch, and its PRs.
-     Start the session only when the user says yes. Codex permissions for new
-     sessions are in `agents.md`.
-3. **Report the start.** When the runtime confirms that the session started
-   (a tool result or notice that says it started and gives its session or
-   thread id), send:
+Your coordinator decides. When it agrees, it enrolls the task under itself
+and starts or suggests it; the new session answers to the coordinator, not to
+you. A session that you started before this rule answers to the coordinator
+too: it reports to the coordinator, never to you.
 
-   ```
-   CHILD TASK STARTED — <your name> — <child task> — <tool> <child session id> — PRs <n ...|none>
-   ```
+Subagents (Claude `Agent`, Codex `collaboration.spawn_agent`) are not
+sessions: they stay inside your task and need no request.
 
-   Use the child task text from its prompt, word for word: the coordinator
-   matches it when the child's session id differs from the one the runtime
-   gave you. Send it once per child. A card or chip that the user has not started is
-   not a start: send nothing yet. A card the user dismisses never needs one.
-   The coordinator records the child as pending under you, and the child's
-   JOIN takes that entry over.
-
-Subagents (Claude `Agent`, Codex `collaboration.spawn_agent`) need no
-enrollment and no CHILD TASK STARTED.
-
-**CodeRabbit cloud tasks** are the one exception to the enrollment line: a cloud
-task cannot run `/puppet`, so put no enrollment line in its prompt. You may
-start one on your own judgment for your own task, or for a self-contained
-part of it (a cloud task can take code changes end to end). You need no user
+**CodeRabbit cloud tasks** are not sessions: a cloud task cannot run `/puppet`,
+so it has no enrollment line, and your coordinator tracks it from your
+`CLOUD TASK` message. You may start one on your own judgment for your own
+task, or for a self-contained part of it (a cloud task can take code changes
+end to end). You need no user
 request and no dashboard decision. Do not start one for parked work, or for
 work that the user said to keep local. Keep the task local when it needs the
 user's judgment often, local services, E2E or other leases, production or

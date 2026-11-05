@@ -42,7 +42,7 @@ observed peak unless you tell me why the run is smaller.
 | --- | --- |
 | `JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs ... — phase — commands — parent <parent\|none>` | `coordinator.py join --text "<the line>" [--local <local_ id>]`: member add and the WELCOME text to send. A task marked `scheduled:` or `sweep:` is background work (`references/leases.md`, "Priority") |
 | `UPDATE — <name> — <phase> — <fact>` | `member update` |
-| `CHILD TASK STARTED — <name> — <child task> — <tool> <child session id> — PRs <n ...\|none>` (after the runtime confirms the start) | `child --parent <name>` (puppet skill, section 6) |
+| `TASK REQUEST — <name> — <task> — <why> — PRs <n ...\|none>` | Members never start sessions. Decide; to run it, `enroll` it under you and start it (SKILL.md, "Members and tasks"); it answers to you |
 | `CLOUD TASK — <name> — <taskId> — <url> — <task> — PRs <n>` | `member add --tool coderabbit`, `cloud-<slug>.txt` (`references/coderabbit-cloud.md`, "Record") |
 | `USER SYNC — <one line>` | `note`, `member update --latest` |
 | `REQUEST <CLASS> <id> ...` in `watch` (sent by the member's `puppet.py request`) | check and grant (`references/leases.md`, "Granting") |

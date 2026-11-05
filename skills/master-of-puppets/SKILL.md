@@ -18,10 +18,13 @@ not write product code.
   their own lease requests and release their own leases. Only a coordinator
   grants. The coordinator records every enrollment, member and task update in
   the roster and on the dashboard.
-- **Enrollment is voluntary, except for children.** A session joins by running
-  `/puppet` (the member skill). Every independent session that a coordinator
-  or member starts has the enrollment line first in its prompt; subagents stay
-  part of their parent's enrollment.
+- **Enrollment is voluntary, except for sessions you start.** A session joins
+  by running `/puppet` (the member skill). Only a coordinator starts sessions:
+  puppets cannot have children (user rule, 5 Nov: "puppets cannot have
+  children and all child sessions should be answering to coordinator
+  instead"). Every session a coordinator starts has the enrollment line first
+  in its prompt and answers to the coordinator; subagents stay part of their
+  parent's enrollment.
 - **Leases are optional** and machine-wide. Classes are any shared action:
   BUILD and E2E by default, others added with `config set-class`. Turn leases
   on only on the user's word, for example when heavy jobs overlap and the host
@@ -189,32 +192,28 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
   Give every member a stream with `--stream` on `enroll` and `member add|update`.
   Close a stream when its goal is done: `coordinator.py stream close`. Stream slugs are
   unique on the machine; only the owner changes a stream.
-- **JOIN** arrives: `coordinator.py member add --name <name> --tool <t> --session-id <id> --worktree <p> --task "<task>" --pr <n> --repo <owner/repo> --session <deep link> --stream <stream-slug> [--parent <parent>]`.
-  Pass `--parent` when JOIN lists one; it takes over that parent's pending
-  child entry (same session id, else the same task text, else its only
-  pending child). A JOIN with `parent none` whose session id matches a
-  pending `child-of-*` entry is incomplete: ask the member to send JOIN again
-  with its parent,
-  then send WELCOME (`references/protocol.md`).
+- **JOIN** arrives: `coordinator.py join --text "<the JOIN line>" [--local <local_ id>]`
+  (it runs `member add` and prints the WELCOME to send). A JOIN that names a
+  member as `parent` comes from a session that member started before puppets
+  lost children: record it under you as any other member; it answers to you.
 - **UPDATE, STATUS reply or MERGED**: `coordinator.py member update --name <name> --phase "<phase>" --kind ok|work|warn|done --latest "<newest fact>" [--pr ...]`.
   This also updates the member's row on the dashboard. Keep `--phase` and
   `--latest` short; shorten a long UPDATE first (`references/dashboard.md`,
   "Writing for the dashboard").
-- **A task you start yourself**:
+- **A task you start yourself**, including one a member asks for:
   `coordinator.py enroll --task "<one line>" --stream <stream-slug> [--pr <n>]`.
   The printed kickoff line tells the new session to run `/puppet` and join you
   under its enrolled name. Put it first in the prompt of every task you start.
-  Members start their own child tasks without asking you: they write the
-  enrollment line themselves (puppet skill, section 6), and the child sends
-  JOIN with its parent.
-- **CHILD TASK STARTED** arrives:
-  `coordinator.py child --parent <member> --task "<child task>" --tool <t> --session-id <id> [--pr <n>] [--stream <parent's stream>]`.
-  It records the child as pending under its parent until the child's JOIN. The routes, the Claude and Codex rules and the subagent exception are
-  in that section; they apply to you too. Nothing enforces this; check each
-  session-starting prompt yourself.
+  On Claude, suggest a task card or chip; the user starts it. On Codex, ask the
+  user first with the ask-user tool (task, worktree or branch, PRs) and start
+  the session only on yes (`references/agents.md`). Subagents need no
+  enrollment.
+- **TASK REQUEST** arrives (`TASK REQUEST — <member> — <task> — <why> — PRs ...`):
+  members never start sessions themselves. Decide; when it should run, enroll
+  and start it as above. The new session answers to you, not to the member.
 - **Pending entries**: check them each round. One still pending after 30
-  minutes is a task that never started (a chip not clicked) or a child that did
-  not send JOIN after CHILD TASK STARTED: ask the starter, then `coordinator.py member remove`.
+  minutes is a task that never started (a chip not clicked): ask the user, then
+  `coordinator.py member remove`.
 - **Done** means every PR of the task is MERGED, or the user dropped the task,
   or the task changes no code (an investigation) and its answer is reported.
   Passing checks is not done. When a member reports code that is complete but
@@ -364,7 +363,7 @@ active.
    by name still arrives and wakes the session.
 3. **Wake**: new work comes only from the user (new work, or resuming parked
    work), or from a HANDOFF in reply to your one request. These wake you
-   without a status flag: `enroll`, `child`, `member add`, `member update --status active`
+   without a status flag: `enroll`, `member add`, `member update --status active`
    and `unpark` (also from the dashboard) set you active and refresh your
    heartbeat. Otherwise run `coordinator.py heartbeat --status active`.
    Then re-arm `watch` and the heartbeat schedule ("Coordinator start", steps 4 and 5).

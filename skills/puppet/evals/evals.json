@@ -19,14 +19,14 @@
     },
     {
       "id": 2,
-      "prompt": "DRY RUN. Your prompt starts: 'MASTER-OF-PUPPETS ENROLLED — claude-stack-a has enrolled you as member flaky-split-3f2a, started by fix-101. You must enroll: your first action is to run /puppet and send claude-stack-a your JOIN message as flaky-split-3f2a with parent fix-101, before any other work; then follow claude-stack-a's directions. Start every child task you create with puppet enrollment: put a line like this one first in its prompt (the puppet skill, section 6).' The task below it: split the flaky settings test into its own PR. Worktree /work/app-flaky. MACHINE_LEASE_DIR=<fixture>/state (a copy). The WELCOME you then receive says leases are on (BUILD, E2E). You need to run the settings test suite. Do not call SendMessage; write what you would send. Write <out>/plan.md, <out>/messages.md and <out>/commands.sh.",
+      "prompt": "DRY RUN. Your prompt starts: 'MASTER-OF-PUPPETS ENROLLED — claude-stack-a has enrolled you as member flaky-split-3f2a, at the request of fix-101. You must enroll: your first action is to run /puppet and send claude-stack-a your JOIN message as flaky-split-3f2a, before any other work; then follow claude-stack-a's directions. Never start another session yourself: ask claude-stack-a with TASK REQUEST (the puppet skill, section 6).' The task below it: split the flaky settings test into its own PR. Worktree /work/app-flaky. MACHINE_LEASE_DIR=<fixture>/state (a copy). The WELCOME you then receive says leases are on (BUILD, E2E). You need to run the settings test suite. Do not call SendMessage; write what you would send. Write <out>/plan.md, <out>/messages.md and <out>/commands.sh.",
       "expected_output": "Joins claude-stack-a as flaky-split-3f2a without asking; sends JOIN; finishes edits, reads the recorded sizes with puppet.py sizes, then queues its own BUILD request with puppet.py request and the exact commands, sends no LEASE REQUEST message, and waits with puppet.py await-grant; runs only the granted commands; releases and reports LEASE RELEASED; never writes roster, ledger or dashboard state; never writes a polling loop.",
       "files": [],
       "assertions": [
         "The coordinator and name come from the kickoff line; the session does not ask the user which coordinator to join",
-        "A JOIN message to claude-stack-a names flaky-split-3f2a, the worktree /work/app-flaky and the task",
+        "A JOIN message to claude-stack-a names flaky-split-3f2a, the worktree /work/app-flaky and the task, and ends with parent none",
         "commands.sh runs puppet.py sizes --worktree /work/app-flaky (for BUILD) before puppet.py request, and plan.md sizes --minutes from it and from the test command",
-        "commands.sh runs puppet.py request BUILD --coordinator claude-stack-a --name flaky-split-3f2a with an id that starts with claude-stack-a-q-flaky-split-3f2a-, the exact test command, an estimate and the worktree, after all edits are done",
+        "commands.sh runs puppet.py request BUILD --coordinator claude-stack-a --name flaky-split-3f2a (with an id that starts with claude-stack-a-q-flaky-split-3f2a-, or none so that request prints one), the exact test command, an estimate and the worktree, after all edits are done",
         "messages.md has no LEASE REQUEST message, and commands.sh passes no --priority or --front to puppet.py request",
         "commands.sh waits with puppet.py await-grant BUILD --id ... (no until/while polling loop)",
         "commands.sh runs only the granted command, then puppet.py release BUILD --id ... --result pass|fail --note ...",
@@ -72,6 +72,19 @@
         "After LEASE RESIZE, messages.md has `LEASE SIZE — claude-q-typecheck-ui-1 — <reason>` naming the single-package typecheck, or commands.sh re-runs puppet.py request with the same id at the observed peak",
         "No coordinator.py command appears in commands.sh; the member never passes --accept-size",
         "The typecheck runs only after await-grant prints GRANTED"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "DRY RUN. You are member docs-fix of coordinator claude-stack-a (joined, WELCOME received). While fixing #210 you find that the settings page also needs an unrelated copy change that should be its own PR. The user says: 'split that copy change off into its own task'. Do not call SendMessage or any session tool; write what you would do and send. Write <out>/plan.md and <out>/messages.md.",
+      "expected_output": "Starts no session, card, chip, thread or scheduled task and writes no enrollment line; sends claude-stack-a a TASK REQUEST naming docs-fix, the copy change, why it is separate and its PRs; sends USER SYNC with the user's words; keeps working on #210.",
+      "files": [],
+      "assertions": [
+        "plan.md starts no session: no task card or chip, no Codex thread, no claude -p, no scheduled task, and no MASTER-OF-PUPPETS ENROLLED line",
+        "messages.md has a TASK REQUEST to claude-stack-a naming docs-fix, the copy change and why it is separate",
+        "messages.md has a USER SYNC with the user's request",
+        "messages.md has no CHILD TASK STARTED message",
+        "plan.md keeps docs-fix working on #210 and leaves the decision and the start of the new task to claude-stack-a"
       ]
     }
   ]
