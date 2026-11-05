@@ -268,11 +268,12 @@ Shared records (read-only; puppet.py has them too)
        newest runs of the release workflow, and whether one is still going. Both only read;
        neither dispatches a release, a deploy or a gate approval. Whether a checkpoint is still
        pending in prod is not on GitHub: check it where your release process records it
-  round [--focus] [--pr N ...] [--status] [--stale-minutes 30] [--release-repo R [--release-workflow FILE]] [--timeout 60]
+  round [--focus] [--pr N ...] [--status] [--stale-minutes 30] [--open [--open-hours 24]] [--release-repo R [--release-workflow FILE]] [--timeout 60]
        one call per heartbeat round: heartbeat, C's leases (held, expired, queued with position,
        the head of each class), members silent for --stale-minutes, inbox lines to C since its
        last round, vote list, the pr digest of C's PRs and, with --release-repo, release state.
        Each section has its own timeout; one that hangs prints "timed out" and the round goes on
+       --open skips merged and closed PRs and members silent for --open-hours or more
   pr read N [--head SHA] [--text WHAT] | pr delta N | pr auto N [--method squash|merge|rebase]
        read records the full head SHA whose diff C read (a ledger line, kind read). delta shows
        the commits and files from C's last read head to the current head. auto enables
@@ -2324,19 +2325,40 @@ def round_inbox(me, since):
     return 0
 
 
-def round_prs(me):
-    """The digest of C's PRs (its own, its watch list and its members'), open ones first."""
-    refs = []
+def round_prs(me, open_only=False):
+    """The digest of C's PRs (its own, its watch list and its members'), open ones first. open_only skips the
+    PRs that the poller last saw merged or closed, before any request."""
+    refs, cache = [], (read_json(PRS_STATE) or {}).get("prs") or {} if open_only else {}
     for ref in sorted(coordinator_prs(me)):
+        if (cache.get(ref) or {}).get("state") in ("MERGED", "CLOSED"):
+            continue
         r, _, n = ref.rpartition("#")
         refs.append((r, int(n)))
     if not refs:
         print("no PRs")
         return 0
     got = pr_digests(refs)
-    rows = sorted(got.values(), key=lambda d: (d.get("state") != "OPEN", d["ref"]))
+    rows = sorted((d for d in got.values() if not open_only or d.get("state") in (None, "OPEN")),
+                  key=lambda d: (d.get("state") != "OPEN", d["ref"]))
     print("\n".join(f"{d['ref']} error {d['error']}" if "error" in d else digest_line(d) for d in rows))
     return 0
+
+
+def round_stale(minutes, max_hours=None):
+    """member stale; with max_hours, only members silent for less than that (a longer silence is parked work)."""
+    with captured() as buf:
+        code = main(["member", "stale", "--minutes", str(minutes)])
+    rows = buf.getvalue().splitlines()
+    if max_hours is not None:
+        def age(line):
+            m = re.search(r"last update (\d+) min ago", line)
+            return int(m.group(1)) if m else 0
+        kept = [r for r in rows if age(r) < max_hours * 60]
+        if len(kept) < len(rows):
+            kept.append(f"({len(rows) - len(kept)} silent over {max_hours:g} h not shown)")
+        rows = kept
+    print("\n".join(rows))
+    return code
 
 
 def round_cmd(args):
@@ -2350,9 +2372,9 @@ def round_cmd(args):
     hb = ["heartbeat"] + (["--focus", args.focus] if args.focus else []) + (["--pr", *map(str, args.pr)] if args.pr else []) \
         + (["--status", args.status] if args.status else [])
     sections = [("heartbeat", lambda: main(hb)), ("leases", lambda: round_leases(me)),
-                (f"members silent {args.stale_minutes} min", lambda: main(["member", "stale", "--minutes", str(args.stale_minutes)])),
+                (f"members silent {args.stale_minutes} min", lambda: round_stale(args.stale_minutes, args.open_hours if args.open else None)),
                 (f"inbox since {since[:19] + 'Z' if since else 'ever'}", lambda: round_inbox(me, since)),
-                ("votes", lambda: main(["vote", "list"])), ("prs", lambda: round_prs(me))]
+                ("votes", lambda: main(["vote", "list"])), ("prs", lambda: round_prs(me, args.open))]
     if args.release_repo:
         sections.append(("release", lambda: release_state(args.release_repo, args.release_workflow)))
     worst = 0
@@ -3312,6 +3334,8 @@ def main(argv=None):
     rd.add_argument("--pr", type=int, nargs="+", action="extend")
     rd.add_argument("--status", choices=("active", "idle"))
     rd.add_argument("--stale-minutes", type=int, default=30)
+    rd.add_argument("--open", action="store_true", help="skip merged and closed PRs, and members silent over --open-hours")
+    rd.add_argument("--open-hours", type=float, default=24)
     rd.add_argument("--release-repo", help="also show release state for this owner/repo")
     rd.add_argument("--release-workflow", help="with --release-repo: the release workflow file")
     rd.add_argument("--timeout", type=int, default=ROUND_TIMEOUT_S, help="seconds per section")
