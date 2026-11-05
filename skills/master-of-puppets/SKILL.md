@@ -276,8 +276,8 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
    handles them; stuck over two rounds,
    ask for the exact job, revision, test and first causal error.
    `automerge=off` on an active PR: find the cause before you set it again.
-4. **On MERGED**: confirm with `gh pr view <n> --json state,mergeCommit` and
-   `note` the SHA. Read the next PR's `baseRefName`; if it is not the base
+4. **On MERGED**: confirm with `coordinator.py pr <n>` (it prints the full
+   merge SHA) and `note` the SHA. Read the next PR's `baseRefName`; if it is not the base
    branch, run `gh pr edit <next> --base <base>`. Send its owner `ACTIVE` with
    "sync your branch with origin/<base>, resolve, push". When its base is the
    base branch, return to step 2: confirm the owner's applicable evidence
@@ -303,7 +303,11 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    already-handled messages using `references/protocol.md`, "Duplicate receipt
    and catch-up"; keep the shared inbox for recovery.
 3. Compare each stack with the latest `PR` lines; act on steps 3 and 4
-   above. Confirm with one `gh pr view` before each stack move, not on a timer.
+   above. Confirm with one `coordinator.py pr <n> [...]` before each stack
+   move, not on a timer. It gives state, head, merge state, review, the merge
+   queue, auto-merge, unresolved threads, the latest CodeRabbit review and the
+   required checks that fail, in one call. `automerge=queued(...)` or
+   `merged` is not an auto-merge failure.
 4. Leases on: expiry check and grants (`references/leases.md`). Run
    `coordinator.py status --brief`: a ready entry of yours that you have not
    acted on is a member request that `watch` did not show you. Then
