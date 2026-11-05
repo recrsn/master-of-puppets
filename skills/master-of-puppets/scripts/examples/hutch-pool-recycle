@@ -9,6 +9,9 @@
 #                              to the RESOURCE line, so the holder needs no hutch env status call)
 #   {"failed": "<reason>"}     exit 3: the VM was reached and the reset or a check failed (destroy it)
 #   anything else (ssh exit 255, no alias, a timeout): unreachable, the VM is kept
+# A dirty checkout is committed to refs/recycle/<time>-<lease> on the VM first, then reset anyway
+# (the user's rule: "hutch is temporary, we recycle to save on startup time. always git reset them
+# and destory them if not possible"); the JSON line reports savedRef and savedDirty.
 # Git runs as root when sudo -n works, then the checkout goes to the ssh login user, so a
 # root-owned file cannot block the reset and the holder can run git without sudo (a fresh VM's
 # checkout is root-owned).
@@ -22,7 +25,7 @@ if [ -z "$alias" ]; then
 	exit 1
 fi
 exec ssh -o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 \
-	"$alias" "MIN_FREE='$min_free' REPO='$repo' ALIAS='$alias' bash -s" <<'REMOTE'
+	"$alias" "MIN_FREE='$min_free' REPO='$repo' ALIAS='$alias' LEASE='${MOP_LEASE_ID:-none}' bash -s" <<'REMOTE'
 set -uo pipefail
 free=""
 fail() {
@@ -38,6 +41,20 @@ g() { ${as[@]+"${as[@]}"} git -c safe.directory="$REPO" -C "$REPO" "$@"; }
 timeout 300 ${as[@]+"${as[@]}"} git -c safe.directory="$REPO" -C "$REPO" fetch --quiet origin main \
 	|| echo "fetch failed; using the VM's own origin/main" >&2
 g rev-parse --verify --quiet origin/main >/dev/null || fail "no origin/main"
+saved=""
+dirty=$(g status --porcelain | wc -l | tr -d ' ')
+if [ "$dirty" != "0" ]; then
+	# The reset goes ahead (user rule: always reset), but what was there stays recoverable on this VM
+	# under refs/recycle/ until the VM is destroyed. Ignored files (node_modules, build output) are not saved.
+	saved="refs/recycle/$(date -u +%Y%m%dT%H%M%SZ)-$LEASE"
+	if g add -A && g -c user.name=recycle -c user.email=recycle@localhost commit --quiet --no-verify \
+		-m "recycle: $dirty changed paths before the reset for lease $LEASE" && g update-ref "$saved" HEAD; then
+		echo "saved $dirty changed paths to $saved" >&2
+	else
+		echo "could not save $dirty changed paths; resetting anyway" >&2
+		saved=""
+	fi
+fi
 g checkout --quiet --force -B main origin/main || fail "git reset to origin/main failed"
 g clean -ffdxq -e node_modules || fail "git clean -ffdx failed"
 if [ ${#as[@]} -gt 0 ]; then
@@ -49,5 +66,6 @@ free=$(df -BG --output=avail / | tail -n 1 | tr -dc '0-9')
 [ -n "$free" ] || fail "cannot read free disk on /"
 [ "$free" -ge "$MIN_FREE" ] || fail "only ${free} GiB free on /, under ${MIN_FREE} GiB"
 up=$(cut -d. -f1 /proc/uptime 2>/dev/null) || up=""
-printf '{"freeGiB": %s, "sshAlias": "%s"%s}\n' "$free" "$ALIAS" "${up:+, \"uptimeS\": $up}"
+printf '{"freeGiB": %s, "sshAlias": "%s"%s%s}\n' "$free" "$ALIAS" "${up:+, \"uptimeS\": $up}" \
+	"${saved:+, \"savedDirty\": $dirty, \"savedRef\": \"$saved\"}"
 REMOTE

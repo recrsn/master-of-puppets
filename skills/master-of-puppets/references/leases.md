@@ -78,7 +78,12 @@ At a grant, the lease is dropped with a `release ... result=fail` line and
 the entry is queued again at the front, up to 3 destroyed resources per
 `await-grant`. Any other failure (no JSON line, ssh exit 255, the
 15-minute timeout) counts as unreachable: the resource is kept, never
-destroyed for a missing key or a network fault. The events log records
+destroyed for a missing key or a network fault. At a grant, an unreachable
+resource is not granted either: it is marked failed (files untouched; `resource
+mark ... --state free` returns it), the coordinator gets `RECYCLE-UNREACHABLE`,
+and the entry is queued again at the front, so no holder gets a resource that
+was not reset. Recycle is off until `config set-class ... --pool-recycle` sets
+the command; installing the helpers does not turn it on. The events log records
 `resource recycled CLS NAME free=N GiB`, `resource recycle-unreachable`,
 `resource destroyed CLS NAME reason="..."` and `resource destroy-failed`.
 When a grant has to create a resource and another one comes free while the
@@ -92,7 +97,11 @@ to `origin/main`, runs `git clean -ffdx -e node_modules` in
 `/workspaces/mono`, gives the checkout to the ssh login user, and checks
 that `git status --porcelain` is empty and `/` has at least 10 GiB free.
 `node_modules` stays, so the next holder's install is fast; build output,
-`.env*` files and nested repositories go.
+`.env*` files and nested repositories go. Before the reset, a dirty checkout is
+committed to `refs/recycle/<time>-<lease>` on the VM, so it stays recoverable
+there until the VM is destroyed; the reset goes ahead regardless (the user's
+rule, 5 Nov: "hutch is temporary, we recycle to save on startup time. always
+git reset them and destory them if not possible").
 
 Picking: a request may carry `puppet.py request ... --prefer KEY=VALUE`
 (repeatable; for example `--prefer slotType=native`) or `--resource <name>`.

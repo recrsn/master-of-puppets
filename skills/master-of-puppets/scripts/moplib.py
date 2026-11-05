@@ -929,9 +929,11 @@ def recycle_note(cls, name, outcome, detail, tail):
     if outcome == "none":
         return f"{name} not recycled: {cls} has no recycle command"
     if outcome == "recycled":
-        free = (detail or {}).get("freeGiB")
-        log(f"resource recycled {cls} {name}" + (f" free={free} GiB" if free is not None else "") + f" {tail}")
-        return f"recycled {name}" + (f": {free} GiB free" if free is not None else "")
+        free, saved = (detail or {}).get("freeGiB"), (detail or {}).get("savedRef")
+        log(f"resource recycled {cls} {name}" + (f" free={free} GiB" if free is not None else "")
+            + (f" saved={saved} paths={(detail or {}).get('savedDirty')}" if saved else "") + f" {tail}")
+        return f"recycled {name}" + (f": {free} GiB free" if free is not None else "") + (
+            f"; the {(detail or {}).get('savedDirty')} changed paths found there are saved on it as {saved}" if saved else "")
     log(f"resource recycle-unreachable {cls} {name} kept error={json.dumps(detail)} {tail}")
     return f"could not reach {name} to recycle it ({detail}); kept unrecycled: check your ssh key (ssh-add)"
 
