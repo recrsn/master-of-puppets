@@ -236,6 +236,11 @@ Shared records (read-only; puppet.py has them too)
   sizes --worktree P [--class CLASS]
        the project's recorded run minutes, GiB and core samples per class, the peaks
        acquire charges and the observed peaks it checks requests against
+  pr N|owner/repo#N [...] [--repo owner/repo] [--json]
+       one line per PR from one GraphQL request per 10 PRs: state, full head, merge state, review,
+       automerge on|off|queued(pos,state)|merged, unresolved threads, the latest CodeRabbit review
+       and whether it is on the head, and only the required checks that do not pass. A merged PR
+       shows its full merge SHA. A bare N takes --repo, else the one watched repo that has it
   prs --path GLOB [--path ...] [--repo owner/repo]
        open PRs of members and prs-<C>.txt watch lists whose changed files match (a glob
        or a directory prefix), with their owners; --repo also covers coordinator PRs
@@ -315,7 +320,7 @@ from moplib import (
     class_names, project_key, load_project, save_project, class_peak, typical_minutes,
     suggested_minutes, over_limit, undersized, extend_lease, now, lock, unlock, log, note,
     load_roster, save_roster, live, asleep, load, save, budget, order, queue_entry,
-    say, deliver, notify, READS, memory_path, add_read_commands,
+    say, deliver, notify, READS, memory_path, add_read_commands, pr_refs, gh_http, http_error,
     read_cmd, run, worktree_pids, drain, pool_spec, pool_env, pool_run, pool_info, find_resource, RESOURCE_NAME, parse_prefer, prefer_matches,
     set_state, stop_resource, begin_op, end_op, op_current, op_live, BUSY_STATES, POOL_STUCK_MINUTES,
 )
@@ -2011,6 +2016,179 @@ def prs_cmd(args):
     return 0 if found else 3
 
 
+PR_DIGEST_GQL = """number state url headRefOid baseRefName isDraft mergeStateStatus reviewDecision mergedAt
+  isInMergeQueue mergeQueueEntry {{ state position }} autoMergeRequest {{ enabledAt }} mergeCommit {{ oid }}
+  reviewThreads(first: 100) {{ totalCount nodes {{ isResolved }} }}
+  reviews(last: 30) {{ nodes {{ author {{ login }} state commit {{ oid }} }} }}
+  commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ {contexts} }} }} }} }}"""
+PR_CONTEXTS_GQL = """contexts(first: 100{after}) {{ pageInfo {{ hasNextPage endCursor }} nodes {{
+    __typename ... on CheckRun {{ name status conclusion startedAt isRequired(pullRequestNumber: {n}) }}
+    ... on StatusContext {{ context state createdAt isRequired(pullRequestNumber: {n}) }} }} }}"""
+PR_CONTEXT_PAGES = 10  # at most 1,000 check contexts per PR
+CHECK_PASS = ("SUCCESS", "NEUTRAL", "SKIPPED")
+
+
+def gql(query, owner, name):
+    """(repository data, error) for one GraphQL query over $o/$n."""
+    status, _, body = gh_http("https://api.github.com/graphql", {"query": query, "variables": {"o": owner, "n": name}})
+    if status != 200:
+        return None, http_error(status, body)
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return None, "bad GraphQL response"
+    repo_data = (data.get("data") or {}).get("repository")
+    if not repo_data and data.get("errors"):
+        return None, " ".join(str(data["errors"][0].get("message", "GraphQL error")).split())[:200]
+    return repo_data or {}, None
+
+
+def more_contexts(owner, name, n, ctx):
+    """The rest of a PR's check contexts after the first page, or an error text."""
+    nodes, page = list(ctx.get("nodes") or []), ctx.get("pageInfo") or {}
+    for _ in range(PR_CONTEXT_PAGES - 1):
+        if not page.get("hasNextPage"):
+            return nodes, None
+        query = ("query($o: String!, $n: String!) { repository(owner: $o, name: $n) { pullRequest(number: %d) "
+                 "{ commits(last: 1) { nodes { commit { statusCheckRollup { %s } } } } } } }"
+                 % (n, PR_CONTEXTS_GQL.format(n=n, after=f', after: "{page["endCursor"]}"')))
+        data, err = gql(query, owner, name)
+        if err:
+            return nodes, err
+        c = (((((data.get("pullRequest") or {}).get("commits") or {}).get("nodes") or [{}])[0].get("commit") or {})
+             .get("statusCheckRollup") or {}).get("contexts") or {}
+        nodes += c.get("nodes") or []
+        page = c.get("pageInfo") or {}
+    return nodes, None if not page.get("hasNextPage") else f"over {PR_CONTEXT_PAGES * 100} checks"
+
+
+def pr_refs_for(words, repo):
+    """[(owner/repo, n)] for PR words: owner/repo#n, or a bare n with --repo or with one repo among the watched PRs."""
+    known = {}
+    for ref in pr_refs():
+        r, _, n = ref.rpartition("#")
+        known.setdefault(n, set()).add(r)
+    out = []
+    for w in words:
+        r, _, n = w.lstrip("#").rpartition("#") if "/" in w else ("", "", w.lstrip("#"))
+        if not n.isdigit():
+            raise ValueError(f"{w} is not a PR number or owner/repo#N")
+        r = r or repo or (next(iter(known[n])) if len(known.get(n, ())) == 1 else "")
+        if not r:
+            raise ValueError(f"#{n}: give --repo owner/repo or owner/repo#{n} (no single watched repo has it)")
+        out.append((r, int(n)))
+    return out
+
+
+def pr_digest(repo, nums):
+    """One GraphQL request for up to 10 PRs of a repo: ({n: digest}, error). The digest says what a coordinator
+    checks each round: state, head, merge state, review decision, the merge queue, auto-merge, the merge commit,
+    unresolved threads, the latest CodeRabbit review and the required checks that do not pass."""
+    owner, name = repo.split("/", 1)
+    query = "query($o: String!, $n: String!) { repository(owner: $o, name: $n) { " + " ".join(
+        f"p{n}: pullRequest(number: {n}) {{ {PR_DIGEST_GQL.format(contexts=PR_CONTEXTS_GQL.format(n=n, after=''))} }}"
+        for n in nums) + " } }"
+    repo_data, err = gql(query, owner, name)
+    if err:
+        return {}, err
+    if any((repo_data.get(f"p{n}") or {}).get("state") == "OPEN" and repo_data[f"p{n}"]["mergeStateStatus"] == "UNKNOWN"
+           for n in nums):
+        time.sleep(3)  # GitHub computes the merge state on the first read; read once more
+        repo_data = gql(query, owner, name)[0] or repo_data
+    out = {}
+    for n in nums:
+        p = repo_data.get(f"p{n}")
+        if not p:
+            continue
+        roll = ((((p.get("commits") or {}).get("nodes") or [{}])[0].get("commit") or {}).get("statusCheckRollup") or {})
+        nodes, ctx_err = more_contexts(owner, name, n, roll.get("contexts") or {})
+        latest = {}  # a rerun keeps the old run in the rollup; the newest run of a name counts, as in gh pr checks
+        for c in nodes:
+            if not c.get("isRequired"):
+                continue
+            label = c.get("name") or c.get("context") or "?"
+            at = c.get("startedAt") or c.get("createdAt") or ""
+            if c["__typename"] == "CheckRun":
+                verdict = (c.get("conclusion") or "") if c.get("status") == "COMPLETED" else (c.get("status") or "PENDING")
+            else:
+                verdict = c.get("state") or "PENDING"
+            if label not in latest or at >= latest[label][0]:
+                latest[label] = (at, verdict)
+        failing = {k: v for k, (_, v) in latest.items() if v not in CHECK_PASS}
+        cr = [r for r in (p.get("reviews") or {}).get("nodes") or []
+              if ((r.get("author") or {}).get("login") or "").startswith("coderabbit")]
+        cr = cr[-1] if cr else None
+        threads = p.get("reviewThreads") or {}
+        if p["state"] == "MERGED":
+            auto = "merged"
+        elif p.get("isInMergeQueue"):
+            q = p.get("mergeQueueEntry") or {}
+            auto = f"queued(pos={q.get('position')},{q.get('state')})"
+        else:
+            auto = "on" if p.get("autoMergeRequest") else "off"
+        out[n] = {
+            "ref": f"{repo}#{n}", "state": p["state"], "head": p["headRefOid"], "base": p["baseRefName"],
+            "draft": p["isDraft"], "merge": p["mergeStateStatus"], "review": p.get("reviewDecision") or "none",
+            "automerge": auto, "mergeCommit": (p.get("mergeCommit") or {}).get("oid"), "mergedAt": p.get("mergedAt"),
+            "threads": threads.get("totalCount", 0),
+            "unresolved": sum(not t.get("isResolved") for t in threads.get("nodes") or []),
+            "coderabbit": {"state": cr["state"], "commit": (cr.get("commit") or {}).get("oid")} if cr else None,
+            "requiredFailing": failing, "checksError": ctx_err,
+            "url": p["url"],
+        }
+    return out, None
+
+
+def digest_line(d):
+    """One line per PR: the facts a round acts on, full SHAs where a later command compares them."""
+    if d["state"] == "MERGED":
+        return f"{d['ref']} MERGED sha={d['mergeCommit']} at={d['mergedAt']} base={d['base']}"
+    cr = d["coderabbit"]
+    cr_text = "none" if not cr else (
+        f"{cr['state']}@{(cr['commit'] or '?')[:12]}" + ("(head)" if cr["commit"] == d["head"] else "(old)"))
+    req = ", ".join(f"{k}={v}" for k, v in sorted(d["requiredFailing"].items())) or "ok"
+    return (f"{d['ref']} {d['state']}{' draft' if d['draft'] else ''} head={d['head'][:12]} base={d['base']} "
+            f"merge={d['merge']} review={d['review']} automerge={d['automerge']} "
+            f"threads={d['unresolved']}/{d['threads']} unresolved coderabbit={cr_text} required={req}"
+            + (f" (checks incomplete: {d['checksError']})" if d["checksError"] else ""))
+
+
+def pr_digests(refs):
+    """{(repo, n): digest or {"error": text}} for the refs, 10 PRs per request."""
+    by_repo = {}
+    for r, n in refs:
+        by_repo.setdefault(r, []).append(n)
+    out = {}
+    for r, nums in by_repo.items():
+        for i in range(0, len(nums), 10):
+            got, err = pr_digest(r, nums[i:i + 10])
+            for n in nums[i:i + 10]:
+                out[(r, n)] = got.get(n) or {"ref": f"{r}#{n}", "error": err or "PR not found"}
+    return out
+
+
+def pr_cmd(args):
+    """The digest of each PR: one GraphQL request per 10 PRs of a repo. Exit 1 when any PR failed."""
+    try:
+        refs = pr_refs_for(args.refs, args.repo)
+    except ValueError as e:
+        print(e)
+        return 2
+    got = pr_digests(refs)
+    cache = (read_json(PRS_STATE) or {}).get("prs") or {}
+    for d in got.values():
+        last = (cache.get(d["ref"]) or {}).get("merge")
+        if d.get("merge") == "UNKNOWN" and d.get("state") == "OPEN" and last and last != "UNKNOWN":
+            d["merge"] = f"UNKNOWN(last={last})"  # GitHub is still computing it; the poller's last answer
+    if args.json:
+        print(json.dumps([got[r] for r in refs], indent=1))
+    else:
+        for r in refs:
+            d = got[r]
+            print(f"{d['ref']} error {d['error']}" if "error" in d else digest_line(d))
+    return 1 if any("error" in got[r] for r in refs) else 0
+
+
 # ---------------------------------------------------------------- watchers and install
 
 
@@ -2447,6 +2625,10 @@ def main(argv=None):
     acl.add_argument("cls", metavar="CLASS")
     acl.set_defaults(_self=("by",))
     acl.add_argument("--reason", help="for example what was cleaned up")
+    pd = sub.add_parser("pr", help="the digest of PRs: state, head, merge, review, queue, auto-merge, threads, CodeRabbit, required checks")
+    pd.add_argument("refs", nargs="+", metavar="PR", help="N, #N or owner/repo#N")
+    pd.add_argument("--repo", help="owner/repo for bare numbers; default: the one watched repo that has the PR")
+    pd.add_argument("--json", action="store_true")
     pp = sub.add_parser("prs")
     pp.add_argument("--path", action="append", required=True, help="a glob or a directory prefix; repeat for more")
     pp.add_argument("--repo", help="only this owner/repo; also the repo for coordinator PRs that no member lists")
@@ -2676,7 +2858,8 @@ def main(argv=None):
     if args.cmd == "memory":
         return memory_cmd(args)
     unlocked = {"host-check": host_check_cmd, "calm-wait": calm_wait_cmd, "measure-peak": measure_peak_cmd,
-                "drain-check": drain_check_cmd, "watch": watch_cmd, "install": install_cmd, "prs": prs_cmd}
+                "drain-check": drain_check_cmd, "watch": watch_cmd, "install": install_cmd, "prs": prs_cmd,
+                "pr": pr_cmd}
     if args.cmd in unlocked:
         return unlocked[args.cmd](args)
     if args.cmd == "decision":
