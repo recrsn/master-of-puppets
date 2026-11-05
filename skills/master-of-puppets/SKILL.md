@@ -297,8 +297,11 @@ PR another coordinator owns; message it.
 
 Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
 
-1. `coordinator.py heartbeat` (add `--focus`/`--pr` when they change);
-   read `roster`, `coordinator.py status --brief` and new ledger entries.
+1. `coordinator.py round` (add `--focus`/`--pr` when they change, and
+   `--release-repo`/`--release-workflow` while a release is open). It runs the
+   heartbeat and prints your leases, silent members, new inbox lines, open
+   votes, the `pr` digest of your PRs and the release runs, each under a
+   timeout. Read new ledger entries.
 2. Re-arm `watch` if it ended; on Codex, consume new watcher output and
    recover unread inbox/ledger entries (`references/agents.md`). Disregard
    already-handled messages using `references/protocol.md`, "Duplicate receipt

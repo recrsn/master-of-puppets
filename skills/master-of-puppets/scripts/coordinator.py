@@ -252,6 +252,18 @@ Shared records (read-only; puppet.py has them too)
        automerge on|off|queued(pos,state)|merged, unresolved threads, the latest CodeRabbit review
        and whether it is on the head, and only the required checks that do not pass. A merged PR
        shows its full merge SHA. A bare N takes --repo, else the one watched repo that has it
+  release carries --pr N [...] [--tag latest|TAG] [--repo owner/repo]
+       resolves the tag (latest: the latest release) to its full commit SHA and says for each
+       PR whether that tag carries its full merge SHA (compare API). Exit 1 when one is not
+       carried. release state --repo R [--workflow FILE] [--runs N]: the latest release and the
+       newest runs of the release workflow, and whether one is still going. Both only read;
+       neither dispatches a release, a deploy or a gate approval. Whether a checkpoint is still
+       pending in prod is not on GitHub: check it where your release process records it
+  round [--focus] [--pr N ...] [--status] [--stale-minutes 30] [--release-repo R [--release-workflow FILE]] [--timeout 60]
+       one call per heartbeat round: heartbeat, C's leases (held, expired, queued with position,
+       the head of each class), members silent for --stale-minutes, inbox lines to C since its
+       last round, vote list, the pr digest of C's PRs and, with --release-repo, release state.
+       Each section has its own timeout; one that hangs prints "timed out" and the round goes on
   prs --path GLOB [--path ...] [--repo owner/repo]
        open PRs of members and prs-<C>.txt watch lists whose changed files match (a glob
        or a directory prefix), with their owners; --repo also covers coordinator PRs
@@ -317,6 +329,7 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.parse
 import uuid
 import os
 import sys
@@ -325,7 +338,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import (
-    caller, captured, coordinator_prs, cenv, forward, in_run, mark, nap, restart_server, session_identity,
+    RUN, caller, captured, coordinator_prs, cenv, forward, in_run, mark, nap, restart_server, session_identity,
     DIR, CONFIG, MEMBER_TOOLS, SLUG, FILES, OBSOLETE, SOURCE, version_warning, PEAKS,
     INBOX, PRS_STATE, PRS_EVENTS, PRS_POLL_S, CLASS_NAME, read_json, write_json, load_machine, registry,
     class_names, project_key, load_project, save_project, class_peak, typical_minutes,
@@ -2054,6 +2067,225 @@ def prs_cmd(args):
     return 0 if found else 3
 
 
+def gh_get(path):
+    """(JSON body, error) of a REST GET on api.github.com."""
+    status, _, body = gh_http(f"https://api.github.com/{path}")
+    if status != 200:
+        return None, http_error(status, body)
+    try:
+        return json.loads(body), None
+    except ValueError:
+        return None, "bad JSON from GitHub"
+
+
+def resolve_tag(repo, tag):
+    """(tag name, full commit SHA, error) for a tag, or for the latest release with tag "latest". An annotated
+    tag resolves to its commit."""
+    if tag == "latest":
+        rel, err = gh_get(f"repos/{repo}/releases/latest")
+        if err:
+            return None, None, f"latest release: {err}"
+        tag = rel["tag_name"]
+    c, err = gh_get(f"repos/{repo}/commits/{urllib.parse.quote(tag, safe='')}")
+    if err:
+        return tag, None, f"tag {tag}: {err}"
+    return tag, c["sha"], None
+
+
+def release_carries_cmd(args):
+    """Whether the tag (default: the latest release) carries each PR's merge commit, by full-SHA ancestry
+    (one compare per PR). Read-only. Exit 0 when every PR is carried, 1 when one is not, 2 on an error."""
+    try:
+        refs = pr_refs_for(args.pr, args.repo)
+    except ValueError as e:
+        print(e)
+        return 2
+    repos = {r for r, _ in refs}
+    if len(repos) != 1:
+        print("release carries takes the PRs of one repo; give --repo or owner/repo#N")
+        return 2
+    repo = repos.pop()
+    tag, sha, err = resolve_tag(repo, args.tag)
+    if err:
+        print(err)
+        return 2
+    print(f"{repo} {tag} = {sha}")
+    worst = 0
+    for (r, n), d in pr_digests(refs).items():
+        if "error" in d:
+            print(f"#{n} error {d['error']}")
+            worst = 2
+            continue
+        if d["state"] != "MERGED" or not d["mergeCommit"]:
+            print(f"#{n} carried=no ({d['state']}, not merged)")
+            worst = max(worst, 1)
+            continue
+        cmp, err = gh_get(f"repos/{repo}/compare/{d['mergeCommit']}...{sha}")
+        if err:
+            print(f"#{n} merge={d['mergeCommit']} error {err}")
+            worst = 2
+            continue
+        carried = cmp.get("status") in ("ahead", "identical")
+        print(f"#{n} carried={'yes' if carried else 'no'} merge={d['mergeCommit']} ({cmp.get('status')}"
+              + (f", tag is {cmp.get('ahead_by')} ahead" if carried else f", {cmp.get('behind_by')} commits missing") + ")")
+        if not carried:
+            worst = max(worst, 1)
+    return worst
+
+
+def release_state(repo, workflow, runs=3):
+    """The latest release and the newest runs of the release workflow, with any run still going. Read-only;
+    whether a checkpoint is still pending in prod is not visible on GitHub, so this does not say it."""
+    lines, failed = [], False
+    rel, err = gh_get(f"repos/{repo}/releases/latest")
+    if err:
+        lines.append(f"latest release: {err}")
+        failed = True
+    else:
+        tag, sha, err = resolve_tag(repo, rel["tag_name"])
+        lines.append(f"latest release {tag} = {sha or err} published {rel.get('published_at')}")
+    if workflow:
+        data, err = gh_get(f"repos/{repo}/actions/workflows/{urllib.parse.quote(workflow, safe='')}/runs?per_page={runs}")
+        if err:
+            lines.append(f"workflow {workflow}: {err}")
+            failed = True
+        else:
+            going = [r for r in data.get("workflow_runs") or [] if r.get("status") != "completed"]
+            for r in data.get("workflow_runs") or []:
+                lines.append(f"run {r['id']} {r.get('status')}{'/' + r['conclusion'] if r.get('conclusion') else ''} "
+                             f"sha={r.get('head_sha')} created={r.get('created_at')} — {(r.get('display_title') or '')[:90]}")
+            lines.append(f"{len(going)} run(s) still going" if going else "no run going")
+    print("\n".join(lines))
+    return 1 if failed else 0
+
+
+def release_cmd(args):
+    if args.rcmd == "carries":
+        return release_carries_cmd(args)
+    return release_state(args.repo, args.workflow, args.runs)
+
+
+ROUND_TIMEOUT_S = 60  # per section of round; gh and the state lock have hung under host load
+
+
+def timed(fn, timeout):
+    """(output, code) of fn() run in a thread for at most timeout seconds; output is what it printed.
+    A section that does not finish is left to run out on its own and reported as timed out."""
+    box, ctx = {}, dict(RUN.__dict__)
+
+    def work():
+        RUN.__dict__.update(ctx)
+        try:
+            with captured() as buf:
+                try:
+                    box["code"] = fn()
+                except SystemExit as e:
+                    box["code"] = e.code if isinstance(e.code, int) else 1
+                    if isinstance(e.code, str):
+                        print(e.code)
+            box["out"] = buf.getvalue()
+        except BaseException as e:  # the round reports it and goes on
+            box["out"], box["code"] = f"failed: {e!r}", 1
+    t = threading.Thread(target=work, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        return f"timed out after {timeout} s", 124
+    return box.get("out", "").rstrip(), box.get("code") or 0
+
+
+def round_leases(me):
+    """C's leases: held (with minutes left or EXPIRED), queued (ready or on hold, with position), the head
+    of each class and the budget."""
+    state, machine = load(), load_machine()
+    state["budget"] = budget(state, machine)
+    t, lines = now(), []
+    for c in class_names(machine):
+        for h in state[c]:
+            if h["coordinator"] != me:
+                continue
+            left = int((dt.datetime.fromisoformat(h["expiresAt"]) - t).total_seconds() // 60)
+            lines.append(f"{c} held {h['id']} " + (f"EXPIRED {-left} min ago" if left < 0 else f"{left} min left")
+                         + (f" resource={h['resource']}" if h.get("resource") else "") + f" — {h['holder'][:60]}")
+        ready = [q for q in state["queue"][c] if not q.get("hold")]
+        for q in state["queue"][c]:
+            if q["coordinator"] != me:
+                continue
+            where = f"ready #{ready.index(q) + 1}" if q in ready else ("review" if q.get("review") else "on hold")
+            lines.append(f"{c} queued {q['id']} {where}{' HEAD' if ready and ready[0] is q else ''} — {q['holder'][:60]}")
+        if ready and ready[0]["coordinator"] != me:
+            lines.append(f"{c} head {ready[0]['id']} ({ready[0]['coordinator']})")
+    b = state["budget"]
+    lines.append(f"budget {b['freeGiB']} of {b['limitGiB']} GiB free · {b['freeCpus']} of {b['limitCpus']} cores free")
+    print("\n".join(lines))
+    return 0
+
+
+def round_inbox(me, since):
+    """Messages to me or to all since the last round, oldest first; at most 30."""
+    rows = []
+    try:
+        lines = open(INBOX).read().splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if rec.get("to") not in (me, None, "all") or rec.get("from") == me or (since and rec.get("at", "") <= since):
+            continue
+        rows.append(f"{rec['at'][:19]}Z {rec.get('from')}: {' '.join(str(rec.get('message', '')).split())[:300]}")
+    if len(rows) > 30:
+        print(f"... {len(rows) - 30} older lines; coordinator.py inbox --to {me} --since {since or '1d'}")
+    print("\n".join(rows[-30:]) if rows else "no new messages")
+    return 0
+
+
+def round_prs(me):
+    """The digest of C's PRs (its own, its watch list and its members'), open ones first."""
+    refs = []
+    for ref in sorted(coordinator_prs(me)):
+        r, _, n = ref.rpartition("#")
+        refs.append((r, int(n)))
+    if not refs:
+        print("no PRs")
+        return 0
+    got = pr_digests(refs)
+    rows = sorted(got.values(), key=lambda d: (d.get("state") != "OPEN", d["ref"]))
+    print("\n".join(f"{d['ref']} error {d['error']}" if "error" in d else digest_line(d) for d in rows))
+    return 0
+
+
+def round_cmd(args):
+    """One call per heartbeat round: heartbeat, C's leases, silent members, new inbox lines since the last
+    round, open votes, the digest of C's PRs and the latest release run. Each section has its own timeout;
+    one that hangs is reported and the round goes on. Exit 1 when a section failed or timed out."""
+    me = args.coordinator
+    path = os.path.join(DIR, "rounds", f"{me}.json")
+    since = (read_json(path) or {}).get("at")
+    started = now().isoformat()
+    hb = ["heartbeat"] + (["--focus", args.focus] if args.focus else []) + (["--pr", *map(str, args.pr)] if args.pr else []) \
+        + (["--status", args.status] if args.status else [])
+    sections = [("heartbeat", lambda: main(hb)), ("leases", lambda: round_leases(me)),
+                (f"members silent {args.stale_minutes} min", lambda: main(["member", "stale", "--minutes", str(args.stale_minutes)])),
+                (f"inbox since {since[:19] + 'Z' if since else 'ever'}", lambda: round_inbox(me, since)),
+                ("votes", lambda: main(["vote", "list"])), ("prs", lambda: round_prs(me))]
+    if args.release_repo:
+        sections.append(("release", lambda: release_state(args.release_repo, args.release_workflow)))
+    worst = 0
+    for label, fn in sections:
+        out, code = timed(fn, args.timeout)
+        print(f"== {label}{'' if not code else f' (exit {code})'}")
+        if out:
+            print(out)
+        if code in (124,) or (code and label in ("heartbeat", "prs", "release")):
+            worst = 1
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    write_json(path, {"at": started})
+    return worst
+
+
 JOIN_SEP = re.compile(r"\s+[—–]\s+|\s+--\s+")
 
 
@@ -2772,6 +3004,25 @@ def main(argv=None):
     acl.add_argument("cls", metavar="CLASS")
     acl.set_defaults(_self=("by",))
     acl.add_argument("--reason", help="for example what was cleaned up")
+    rl = sub.add_parser("release", help="read-only release checks: carries, state; never dispatches")
+    rlsub = rl.add_subparsers(dest="rcmd", required=True)
+    rlc = rlsub.add_parser("carries", help="whether a tag carries each PR's merge commit, by full-SHA ancestry")
+    rlc.add_argument("--pr", nargs="+", action="extend", required=True, metavar="PR", help="N, #N or owner/repo#N")
+    rlc.add_argument("--tag", default="latest", help="a tag, or latest (the latest release); default latest")
+    rlc.add_argument("--repo", help="owner/repo for bare numbers")
+    rls = rlsub.add_parser("state", help="the latest release and the newest runs of the release workflow")
+    rls.add_argument("--repo", required=True)
+    rls.add_argument("--workflow", help="the release workflow file, e.g. scheduled-release.yml")
+    rls.add_argument("--runs", type=int, default=3)
+    rd = sub.add_parser("round", help="one call per heartbeat round: heartbeat, leases, silent members, inbox, votes, PRs, release")
+    rd.set_defaults(_self=("coordinator",))
+    rd.add_argument("--focus")
+    rd.add_argument("--pr", type=int, nargs="+", action="extend")
+    rd.add_argument("--status", choices=("active", "idle"))
+    rd.add_argument("--stale-minutes", type=int, default=30)
+    rd.add_argument("--release-repo", help="also show release state for this owner/repo")
+    rd.add_argument("--release-workflow", help="with --release-repo: the release workflow file")
+    rd.add_argument("--timeout", type=int, default=ROUND_TIMEOUT_S, help="seconds per section")
     jn = sub.add_parser("join", help="member add from a member's JOIN line, then print its WELCOME")
     jn.set_defaults(_self=("coordinator",))
     jn.add_argument("--text", required=True, help="the JOIN line as the member sent it")
@@ -3017,7 +3268,8 @@ def main(argv=None):
         return memory_cmd(args)
     unlocked = {"host-check": host_check_cmd, "calm-wait": calm_wait_cmd, "measure-peak": measure_peak_cmd,
                 "drain-check": drain_check_cmd, "watch": watch_cmd, "install": install_cmd, "prs": prs_cmd,
-                "pr": pr_cmd, "join": join_cmd, "welcome": welcome_cmd}
+                "pr": pr_cmd, "join": join_cmd, "welcome": welcome_cmd,
+                "release": release_cmd, "round": round_cmd}
     if args.cmd in unlocked:
         return unlocked[args.cmd](args)
     if args.cmd == "decision":
