@@ -176,6 +176,13 @@ Roster and members (coordinators write; members send messages, and request and r
   child --parent MEMBER --task TEXT --tool T --session-id ID [--pr N ...] [--stream SLUG]
        records a child task that MEMBER started (CHILD TASK STARTED) as pending under its
        parent, until the child's JOIN (member add --parent) takes the entry over
+  join --text "JOIN — ..." [--local local_ID] [--repo owner/repo] [--project-root P] [--dry-run]
+       parses a member's JOIN line (name, tool and id, worktree, task, PRs, phase, commands,
+       parent), runs member add --status active, then prints its WELCOME. --local: the Claude
+       desktop id that the dashboard links to (the JOIN carries the inner Claude Code id)
+  welcome --name NAME [--project-root P]
+       the WELCOME text (references/protocol.md): focus, task, PRs, pr-rules.md, the machine and
+       project rules from memory, and with leases on the class lines and sizing rules
   member add|update --name NAME [--tool] [--session-id] [--worktree] [--task]
        [--pr N ...] [--repo owner/repo] [--status] [--phase] [--kind] [--latest] [--session URL]
        [--stream SLUG] [--priority N] [--parent MEMBER]   (--stream "" clears it)
@@ -209,7 +216,11 @@ Roster and members (coordinators write; members send messages, and request and r
   decision answer --id ID --choice N [--notify]
        the user's answer, option N (from 1), from the dashboard's option buttons (--notify):
        clears the decision, notes it in the ledger and tells its coordinator
-  decision clear (--task ID | --all) [--scope machine]
+  decision clear (--id ID | --task TASK [--all] | --all) [--scope machine]
+       --task refuses when the task has more than one decision and lists their ids; add --all
+       to clear all of them. --all alone clears every decision
+  decision list [--scope machine [--all]] [--json]
+       id, task and text of each open decision, with its options
   note --text TEXT [--pr N]   shared ledger
 
 Memory (the skill's own memory; coordinators write it, everyone reads it)
@@ -1305,12 +1316,27 @@ def decision_cmd(args):
         if len(args.option) > MAX_OPTIONS or any(len(o) > MAX_OPTION_CHARS or not o.strip() for o in args.option):
             print(f"at most {MAX_OPTIONS} options, each 1 to {MAX_OPTION_CHARS} characters")
             return 2
-    if args.dcmd == "clear" and not (args.task or args.all):
-        print("decision clear needs --task ID or --all")
+    if args.dcmd == "clear" and not (args.id or args.task or args.all):
+        print("decision clear needs --id ID, --task TASK or --all")
         return 2
     scope = getattr(args, "scope", None)
     machine_scope = scope == MACHINE or args.by == MACHINE
     path = state_path(MACHINE if machine_scope else args.by)
+    if args.dcmd == "list":
+        items = [d for d in (read_json(path) or {}).get("decisions") or []
+                 if not (machine_scope and isinstance(d, dict) and d.get("by") != args.by) or args.all]
+        if args.json:
+            print(json.dumps(items, indent=1))
+            return 0
+        for d in items:
+            if not isinstance(d, dict):
+                print(f"(legacy) {d}")
+                continue
+            opts = " | ".join(f"{i}. {o}" for i, o in enumerate(d.get("options") or [], 1))
+            print(f"{d['id']} task={d.get('task') or '-'}{' by=' + d['by'] if d.get('by') else ''}: {d.get('text', '')}"
+                  + (f"  [{opts}]" if opts else ""))
+        print(f"{len(items)} decisions for {MACHINE if machine_scope else args.by}")
+        return 0
     lock()
     try:
         if args.dcmd == "add":
@@ -1337,16 +1363,28 @@ def decision_cmd(args):
             message = (f"The user answered the decision{' for ' + task if task else ''}{whom} on the dashboard: \"{answer}\" "
                        f"(question: \"{item.get('text', '')}\"). This is the user's answer; act on it.")
         else:
-            def keep(d):
+            def mine(d):
                 """Machine scope clears only your own items. A legacy string decision has no
-                task or author: only a coordinator-scope --all clears it."""
+                id, task or author: only a coordinator-scope --all without --task clears it."""
                 if not isinstance(d, dict):
-                    return machine_scope or not args.all
+                    return not machine_scope and args.all and not args.task and not args.id
                 if machine_scope and d.get("by") != args.by:
-                    return True
-                return not args.all and d.get("task") != args.task
-            data["decisions"] = [d for d in items if keep(d)]
-            done = "cleared"
+                    return False
+                if args.id:
+                    return d.get("id") == args.id
+                return not args.task or d.get("task") == args.task
+            hit = [d for d in items if mine(d)]
+            if args.id and not hit:
+                print(f"no decision {args.id} for {MACHINE if machine_scope else args.by}; see decision list")
+                return 3
+            if args.task and not args.all and len(hit) > 1:
+                print(f"{len(hit)} decisions have task {args.task!r}; clear one with --id, or all of them with "
+                      f"--task {args.task!r} --all:")
+                for d in hit:
+                    print(f"  {d['id']}: {d.get('text', '')[:100]}")
+                return 2
+            data["decisions"] = [d for d in items if d not in hit]
+            done = f"cleared {len(hit)}"
         data["updated"] = now().strftime("%H:%MZ")
         write_json(path, data)
         if args.dcmd == "answer":
@@ -2016,6 +2054,109 @@ def prs_cmd(args):
     return 0 if found else 3
 
 
+JOIN_SEP = re.compile(r"\s+[—–]\s+|\s+--\s+")
+
+
+def parse_join(text):
+    """The fields of a JOIN line (puppet skill, section 2): name, tool, sessionId, worktree, task, prs, base,
+    phase, commands, parent. Fields are split on " — "; a task with a dash in it keeps it, because the
+    fields after the task are counted from the end. Raises ValueError on a line that is not a JOIN."""
+    parts = [p.strip() for p in JOIN_SEP.split(text.strip())]
+    if len(parts) < 9 or parts[0].upper() != "JOIN":
+        raise ValueError("not a JOIN line: JOIN — name — tool id — worktree — task — PRs ... — phase — commands — parent P")
+    tool, _, sid = parts[2].partition(" ")
+    if tool not in MEMBER_TOOLS:
+        raise ValueError(f"unknown tool {tool!r}; known: {', '.join(MEMBER_TOOLS)}")
+    prs_field, parent = parts[-4], parts[-1]
+    if not re.match(r"(?i)prs?\b", prs_field) or not parent.lower().startswith("parent"):
+        raise ValueError("the fourth field from the end must be PRs ... and the last parent <name|none>")
+    base = re.search(r"\(base ([^)\s]+)\)", prs_field)
+    prs = [] if re.match(r"(?i)prs?\s+none\b", prs_field) else [int(n) for n in re.findall(r"#?\b(\d+)\b", re.sub(r"\(base [^)]*\)", "", prs_field))]
+    parent = parent.split(None, 1)[1].strip() if len(parent.split()) > 1 else "none"
+    return {"name": parts[1], "tool": tool, "sessionId": sid.strip(), "worktree": parts[3].split()[0],
+            "task": " — ".join(parts[4:-4]), "prs": prs, "base": base.group(1) if base else None,
+            "phase": parts[-3], "commands": parts[-2], "parent": None if parent.lower() == "none" else parent}
+
+
+def join_cmd(args):
+    """member add from a JOIN line, then the WELCOME text. --local is the Claude desktop session id (local_...)
+    that the dashboard links to and SendMessage reaches; the JOIN carries the inner Claude Code id."""
+    try:
+        j = parse_join(args.text)
+    except ValueError as e:
+        print(e)
+        return 2
+    argv = ["member", "add", "--name", j["name"], "--tool", j["tool"], "--session-id", j["sessionId"],
+            "--worktree", j["worktree"], "--task", j["task"], "--phase", j["phase"][:60], "--status", "active"]
+    if j["prs"]:
+        argv += ["--pr", *map(str, j["prs"])]
+    if j["parent"]:
+        argv += ["--parent", j["parent"]]
+    if args.local:
+        argv += ["--session", session_link("claude", args.local)]
+    if args.repo:
+        argv += ["--repo", args.repo]
+    if args.dry_run:
+        print(json.dumps(j, indent=1))
+        print("would run: coordinator.py " + " ".join(json.dumps(a) if " " in a else a for a in argv))
+        return 0
+    code = main(argv)
+    if code:
+        return code
+    if j["commands"].strip().lower() not in ("", "none", "none planned", "-"):
+        print(f"heavy commands planned: {j['commands']}")
+    return welcome_text(args.coordinator, j["name"], args.project_root)
+
+
+def welcome_text(me, name, project_root=None):
+    """Print the WELCOME for member name (references/protocol.md, "Welcome"): focus, task, PRs, the PR rules
+    file, the machine and project rules from memory, and with leases on the lease addendum."""
+    roster = load_roster()
+    m = next((x for x in roster["members"].get(me, []) if x["name"] == name), None)
+    if not m:
+        print(f"{name} is not a member of {me}; member add it (or join --text) first")
+        return 3
+    c = roster["coordinators"].get(me) or {}
+    root = project_root or (m.get("worktree") if m.get("worktree") and os.path.isdir(m["worktree"]) else None)
+    prs = " ".join(f"#{n}" for n in m.get("prs") or []) or "none"
+    lines = [f"WELCOME {name} — {me} coordinates {c.get('focus') or 'its stack'}. "
+             f"You are a member for {m.get('task') or 'your task'} (PRs {prs}).", "Follow the puppet skill."]
+    if os.path.exists(os.path.join(DIR, "pr-rules.md")):
+        lines.append(f"Shared PR rules: {os.path.join(DIR, 'pr-rules.md')}")
+    rules = []
+    for scope in [None] + ([root] if root else []):
+        entries = (read_json(memory_path(scope)[0]) or {}).get("entries") or []
+        rules += [e["text"] for e in entries if e.get("kind", "rule") == "rule"]
+    if rules:
+        lines.append("Rules from my memory" + ("" if root else " (machine only; give --project-root for project rules)") + ":")
+        lines += [f"- {r}" for r in rules]
+    leases = roster.get("leases") == "on"
+    lines.append(f"Leases are {'on' if leases else 'off'}.")
+    if leases:
+        machine = load_machine()
+        proj = load_project(project_key(root)[0]) if root else None
+        lines.append(f"LEASES ON — {me} grants these classes (puppet skill, section 5):")
+        for cls in class_names(machine):
+            spec = registry(machine)[cls]
+            row = f"{cls} — {spec.get('description', '')}"
+            if proj:
+                pc = proj["classes"][cls]
+                sug = suggested_minutes(proj, cls)
+                row += (f" — max {pc['maxMinutes'] or 'no limit'} min" + (f" (suggested {sug})" if sug else "")
+                        + f" — peak {class_peak(proj, cls)} GiB, {class_peak(proj, cls, 'cpus')} cores")
+            lines.append(row)
+        lines.append("You size each run: --minutes, and --gib and --cpus when you know them (puppet skill, section 5). "
+                     "Choose the smallest time that finishes the whole current unit of work; do not cut a unit to fit "
+                     "the suggested time. Split only runs longer than the limit. I charge what you ask and refuse a size "
+                     "below my observed peak unless you tell me why the run is smaller.")
+    print("\n".join(lines))
+    return 0
+
+
+def welcome_cmd(args):
+    return welcome_text(args.coordinator, args.name, args.project_root)
+
+
 PR_DIGEST_GQL = """number state url headRefOid baseRefName isDraft mergeStateStatus reviewDecision mergedAt
   isInMergeQueue mergeQueueEntry {{ state position }} autoMergeRequest {{ enabledAt }} mergeCommit {{ oid }}
   reviewThreads(first: 100) {{ totalCount nodes {{ isResolved }} }}
@@ -2540,9 +2681,15 @@ def main(argv=None):
     dn.add_argument("--notify", action="store_true", help="tell the coordinator (sender: dashboard)")
     dl = dsub.add_parser("clear")
     dl.set_defaults(_self=("by",))
-    dl.add_argument("--task")
-    dl.add_argument("--all", action="store_true")
+    dl.add_argument("--id", help="one decision, from decision list")
+    dl.add_argument("--task", help="the decisions of a task; refused when it has several, unless --all")
+    dl.add_argument("--all", action="store_true", help="every decision, or with --task every one of that task")
     dl.add_argument("--scope", choices=(MACHINE,), help="clear your machine-scope decisions")
+    dli = dsub.add_parser("list")
+    dli.set_defaults(_self=("by",))
+    dli.add_argument("--scope", choices=(MACHINE,), help="your machine-scope decisions")
+    dli.add_argument("--all", action="store_true", help="with --scope machine: every coordinator's")
+    dli.add_argument("--json", action="store_true")
     sub.add_parser("capacity")
     a = sub.add_parser("acquire")
     a.add_argument("cls", metavar="CLASS")
@@ -2625,6 +2772,17 @@ def main(argv=None):
     acl.add_argument("cls", metavar="CLASS")
     acl.set_defaults(_self=("by",))
     acl.add_argument("--reason", help="for example what was cleaned up")
+    jn = sub.add_parser("join", help="member add from a member's JOIN line, then print its WELCOME")
+    jn.set_defaults(_self=("coordinator",))
+    jn.add_argument("--text", required=True, help="the JOIN line as the member sent it")
+    jn.add_argument("--local", help="the Claude desktop session id (local_...) for the dashboard link")
+    jn.add_argument("--repo", help="owner/repo for PR links; default: the worktree's GitHub origin")
+    jn.add_argument("--project-root", help="for the project rules and lease sizes; default: the member's worktree")
+    jn.add_argument("--dry-run", action="store_true", help="print the parsed fields and the member add, change nothing")
+    wl = sub.add_parser("welcome", help="print the WELCOME text for a member")
+    wl.set_defaults(_self=("coordinator",))
+    wl.add_argument("--name", required=True)
+    wl.add_argument("--project-root", help="for the project rules and lease sizes; default: the member's worktree")
     pd = sub.add_parser("pr", help="the digest of PRs: state, head, merge, review, queue, auto-merge, threads, CodeRabbit, required checks")
     pd.add_argument("refs", nargs="+", metavar="PR", help="N, #N or owner/repo#N")
     pd.add_argument("--repo", help="owner/repo for bare numbers; default: the one watched repo that has the PR")
@@ -2859,7 +3017,7 @@ def main(argv=None):
         return memory_cmd(args)
     unlocked = {"host-check": host_check_cmd, "calm-wait": calm_wait_cmd, "measure-peak": measure_peak_cmd,
                 "drain-check": drain_check_cmd, "watch": watch_cmd, "install": install_cmd, "prs": prs_cmd,
-                "pr": pr_cmd}
+                "pr": pr_cmd, "join": join_cmd, "welcome": welcome_cmd}
     if args.cmd in unlocked:
         return unlocked[args.cmd](args)
     if args.cmd == "decision":
