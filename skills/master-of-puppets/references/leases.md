@@ -39,7 +39,7 @@ The holder gets exclusive use of one resource until it releases it; nothing
 about the resource is built in. Make a class a pool by giving it shell commands
 (each optional; `--pool-create ""` removes one):
 
-`coordinator.py config set-class <NAME> --pool-create CMD --pool-start CMD --pool-stop CMD --pool-delete CMD --pool-max N`
+`coordinator.py config set-class <NAME> --pool-create CMD --pool-start CMD --pool-stop CMD --pool-delete CMD --pool-recycle CMD --pool-max N`
 
 Each command reads `MOP_CLASS`, `MOP_RESOURCE`, `MOP_RESOURCE_INFO` (JSON),
 `MOP_LEASE_ID` and `MOP_WORKTREE` from its environment. When the request set
@@ -63,6 +63,30 @@ create leaves none). Manage the pool with
 `coordinator.py resource list|add|mark|remove <NAME> [--name R] [--state free|stopped|failed] [--info JSON] [--delete]`:
 `add` registers an existing resource, `mark` repairs a state, `remove --delete`
 runs the delete command. Free or held is derived from the leases.
+
+**Recycle.** With `--pool-recycle CMD`, a resource is reset at each grant
+and each release, so every holder starts clean. `puppet.py await-grant`
+runs it on the granted resource before it prints `GRANTED`; `puppet.py
+release` runs it after the release, while the resource is `recycling`
+(busy, so no grant takes it). The command ends with one JSON line:
+`{"freeGiB": N}` and exit 0 when the resource is clean, or
+`{"failed": "<reason>"}` and a non-zero exit when it reached the resource
+and the reset or a check failed. A failed recycle destroys the resource
+with the delete command and removes it from the pool (a failed delete marks
+it failed); the lease's coordinator gets `RECYCLE-DESTROYED` in its inbox.
+At a grant, the lease is dropped with a `release ... result=fail` line and
+the entry is queued again at the front, up to 3 destroyed resources per
+`await-grant`. Any other failure (no JSON line, ssh exit 255, the
+15-minute timeout) counts as unreachable: the resource is kept, never
+destroyed for a missing key or a network fault. The events log records
+`resource recycled CLS NAME free=N GiB`, `resource recycle-unreachable`,
+`resource destroyed CLS NAME reason="..."` and `resource destroy-failed`.
+`scripts/examples/hutch-pool-recycle` is the command for a Hutch pool:
+over `hutch env ssh-config` and ssh it fetches `origin main`, forces `main`
+to `origin/main`, runs `git clean -fdx` in `/workspaces/mono`, and checks
+that `git status --porcelain` is empty and `/` has at least 10 GiB free.
+`git clean -fdx` also removes `node_modules`, build output and `.env*`
+files, so the next holder installs again.
 
 Picking: a request may carry `puppet.py request ... --prefer KEY=VALUE`
 (repeatable; for example `--prefer slotType=native`) or `--resource <name>`.

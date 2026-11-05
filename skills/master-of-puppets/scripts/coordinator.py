@@ -129,7 +129,7 @@ show who, why and each changed key with its old and new value)
                 --max-slots CLASS=N (N=0 removes the cap)
   config set-class NAME [--description T] [--default-gib N] [--default-cpus N] [--max-minutes N]
                 [--settle OTHER=S ...] [--auto-acquire on|off]
-                [--pool-create CMD] [--pool-start CMD] [--pool-stop CMD] [--pool-delete CMD] [--pool-max N] [--pool-idle-delete-hours H] [--pool-stop-after-minutes M]
+                [--pool-create CMD] [--pool-start CMD] [--pool-stop CMD] [--pool-delete CMD] [--pool-recycle CMD] [--pool-max N] [--pool-idle-delete-hours H] [--pool-stop-after-minutes M]
        a class with pool commands leases one named resource at a time (references/leases.md)
   resource list|add|mark|remove CLASS [--name R] [--state free|stopped|failed] [--info JSON] [--delete]
        the resources of a pool class
@@ -317,7 +317,7 @@ from moplib import (
     load_roster, save_roster, live, asleep, load, save, budget, order, queue_entry,
     say, deliver, notify, READS, memory_path, add_read_commands,
     read_cmd, run, worktree_pids, drain, pool_spec, pool_env, pool_run, pool_info, find_resource, RESOURCE_NAME, parse_prefer, prefer_matches,
-    set_state, stop_resource, begin_op, end_op, op_current, op_live, BUSY_STATES, POOL_STUCK_MINUTES,
+    set_state, stop_resource, begin_op, end_op, op_current, op_live, BUSY_STATES, POOL_STUCK_MINUTES, delete_claimed,
 )
 
 
@@ -565,7 +565,7 @@ def config_cmd(args):
             if args.auto_acquire is not None:
                 c["autoAcquire"] = args.auto_acquire == "on"
             for flag, field in (("pool_create", "create"), ("pool_start", "start"), ("pool_stop", "stop"),
-                                ("pool_delete", "delete"), ("pool_max", "max"),
+                                ("pool_delete", "delete"), ("pool_recycle", "recycle"), ("pool_max", "max"),
                                 ("pool_idle_delete_hours", "idleDeleteHours"), ("pool_stop_after_minutes", "stopAfterMinutes")):
                 value = getattr(args, flag)
                 if value is not None:
@@ -1843,21 +1843,18 @@ def resource_cmd(args):
             save(state, machine)
             unlock()
             try:
-                ok, _, err = pool_run(spec["delete"], pool_env(args.cls, args.name, info))
+                outcome, err = delete_claimed(args.cls, args.name, token, info)
             finally:
                 lock()
-            state, machine = load(), load_machine()
-            res = op_current(state, args.cls, args.name, token)
-            if res is None:
+            if outcome == "reset":
                 print(f"{args.name} was reset while delete ran; check the VM, then add or remove it")
                 return 8
-            if not ok:
-                end_op(res, "failed")
-                save(state, machine)
+            if outcome == "failed":
                 print(f"delete failed: {err}")
                 log(f"resource delete-failed {args.cls} {args.name} by={args.by}")
                 return 8
-            state["resources"][args.cls].remove(res)
+            log(f"resource {args.rcmd} {args.cls} {args.name} by={args.by}")  # delete_claimed saved the removal
+            return 0
         else:
             pool.remove(res)
         save(state, machine)
@@ -2496,6 +2493,8 @@ def main(argv=None):
     sc.add_argument("--pool-start", help="shell command that starts a stopped resource (reads MOP_RESOURCE); \"\" removes it")
     sc.add_argument("--pool-stop", help="shell command that stops a released resource; \"\" removes it")
     sc.add_argument("--pool-delete", help="shell command that deletes a resource (resource remove --delete); \"\" removes it")
+    sc.add_argument("--pool-recycle", help="shell command that resets a resource to a clean state at each grant and release; "
+                    'a failed reset destroys it with the delete command (references/leases.md); "" removes it')
     sc.add_argument("--pool-idle-delete-hours", type=float, help="the server's pool upkeep deletes an unheld resource idle this long (needs a delete command); 0 = never")
     sc.add_argument("--pool-stop-after-minutes", type=float, help="the server's pool upkeep runs the stop command on an unheld running resource idle this long; 0 = never stop")
     sc.add_argument("--pool-max", type=int, help="most resources the pool may hold; 0 = no cap")
