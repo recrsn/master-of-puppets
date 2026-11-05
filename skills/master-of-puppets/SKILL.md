@@ -288,7 +288,11 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
    leave; drop the PRs with `heartbeat --pr ...`.
 
 Your own hands: `gh pr ready`, `gh pr edit --base`, `gh pr merge --auto` (and
-`--disable-auto`), and reading PR state. Owners do every commit, push, merge
+`--disable-auto`), and reading PR state. Record each diff you read with
+`coordinator.py pr read <n>`; `pr delta <n>` shows what changed since, and
+`pr auto <n>` enables auto-merge only at a head you read. Record the user's
+words that you relay with `relay --quote ... --via ...`, and a waiver with
+`waiver --pr <n> --quote ...`; `relay list` and `waiver list` find them. Owners do every commit, push, merge
 of main into a branch, conflict fix and review reply. Do not bind members' PRs
 with Auto-fix in your session: that makes you write the fixes. Never act on a
 PR another coordinator owns; message it.
