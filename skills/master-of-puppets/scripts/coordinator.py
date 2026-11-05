@@ -1814,7 +1814,21 @@ def pool_acquire_cmd(args):
         unlock()
     ok, out, err = True, "", ""
     if action == "create":
-        ok, out, err = pool_run(spec["create"], pool_env(cls, "", None, args.id, args.worktree, prefer))
+        box, env = {}, pool_env(cls, "", None, args.id, args.worktree, prefer)  # here: it reads the client's environment
+        maker = threading.Thread(target=lambda: box.update(r=pool_run(spec["create"], env)), daemon=True)
+        maker.start()
+        switched = None
+        while maker.is_alive() and not switched:
+            maker.join(10)
+            if maker.is_alive():
+                switched = claim_free_midcreate(args, cls, spec, queued)
+        if switched:
+            # A resource came free while the create ran: take it, and let the create finish into the pool.
+            threading.Thread(target=finish_create, args=(maker, box, cls, placeholder, token, args.id), daemon=True).start()
+            log(f"resource create {cls} {placeholder} for={args.id} continues in the background; assign {switched[0]} instead")
+            action, (placeholder, token, info) = "assign", switched
+        else:
+            ok, out, err = box["r"]
     elif action == "start" and spec.get("start"):
         ok, out, err = pool_run(spec["start"], pool_env(cls, placeholder, info, args.id, args.worktree, prefer))
     name, new_info = pool_info(out) if action == "create" and ok else (placeholder, info)
@@ -1871,6 +1885,56 @@ def pool_acquire_cmd(args):
         save(state, machine)
         log(f"acquire {cls} {args.coordinator} {args.id} {args.holder} until {state[cls][-1]['expiresAt']} resource={name}")
         return 0
+    finally:
+        unlock()
+
+
+def claim_free_midcreate(args, cls, spec, queued):
+    """While a create runs for args.id: claim a resource that came free (not one to start: that also takes
+    time), as pool_pick would for the entry. Returns (name, token, info), or None."""
+    lock()
+    try:
+        state, machine = load(), load_machine()
+        entry = next((q for q in state["queue"][cls] if q["id"] == args.id), None)
+        if queued and entry is None:
+            return None
+        res, why = pool_pick(state, cls, spec, entry or queued)
+        if res is None or why or res["state"] != "free":
+            return None
+        res["prior"] = res["state"]
+        token = begin_op(res, "assign", "assigning", args.id)
+        if entry:
+            entry["assigning"] = f"assigning {res['name']}"
+        save(state, machine)
+        return res["name"], token, res.get("info")
+    finally:
+        unlock()
+
+
+def finish_create(maker, box, cls, placeholder, token, lease_id):
+    """Wait for a create that a grant left for a free resource, then put the new resource in the pool, free
+    (or drop the placeholder when the create failed). Writes only the state and the events log."""
+    maker.join()
+    ok, out, err = box.get("r") or (False, "", "no result")
+    name, info = pool_info(out) if ok else (None, None)
+    lock()
+    try:
+        state, machine = load(), load_machine()
+        pool = state["resources"][cls]
+        res = op_current(state, cls, placeholder, token)
+        if ok and name and not any(r["name"] == name and r is not res for r in pool):
+            if res is None:
+                pool.append({"name": name, "info": info})
+                res = pool[-1]
+            else:
+                res.update(name=name, info=info)
+            end_op(res, "free")
+            log(f"resource created {cls} {name} for={lease_id} (background; free)")
+        else:
+            if res is not None:
+                pool.remove(res)
+            log(f"resource create-failed {cls} {placeholder} for={lease_id} (background) error={json.dumps(err or 'no valid name')}")
+        save(state, machine)
     finally:
         unlock()
 

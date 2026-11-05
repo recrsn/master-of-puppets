@@ -868,7 +868,7 @@ def recycle_run(cls, name, info, lease_id=None, worktree=None):
     """Run the class's recycle command on resource name, without the lock. The command resets the resource
     and checks it, then prints one JSON line: {"freeGiB": N} with exit 0 when it is clean, or
     {"failed": "<reason>"} with a non-zero exit when it reached the resource and the reset or the check failed.
-    Returns (outcome, detail): recycled (the free GiB, or None), failed (the reason; the caller destroys the
+    Returns (outcome, detail): recycled (the JSON line, a dict: freeGiB and any facts for the holder), failed (the reason; the caller destroys the
     resource), unreachable (any other failure, such as a missing ssh key or a network fault: the resource is
     kept, never destroyed for it) or none (the class has no recycle command)."""
     spec = pool_spec(cls) or {}
@@ -877,7 +877,7 @@ def recycle_run(cls, name, info, lease_id=None, worktree=None):
     ok, out, err = pool_run(spec["recycle"], pool_env(cls, name, info, lease_id, worktree), RECYCLE_TIMEOUT)
     tail = json_tail(out)
     if ok:
-        return "recycled", tail.get("freeGiB")
+        return "recycled", tail
     if tail.get("failed"):
         return "failed", str(tail["failed"])
     return "unreachable", err or "no output"
@@ -929,8 +929,9 @@ def recycle_note(cls, name, outcome, detail, tail):
     if outcome == "none":
         return f"{name} not recycled: {cls} has no recycle command"
     if outcome == "recycled":
-        log(f"resource recycled {cls} {name}" + (f" free={detail} GiB" if detail is not None else "") + f" {tail}")
-        return f"recycled {name}" + (f": {detail} GiB free" if detail is not None else "")
+        free = (detail or {}).get("freeGiB")
+        log(f"resource recycled {cls} {name}" + (f" free={free} GiB" if free is not None else "") + f" {tail}")
+        return f"recycled {name}" + (f": {free} GiB free" if free is not None else "")
     log(f"resource recycle-unreachable {cls} {name} kept error={json.dumps(detail)} {tail}")
     return f"could not reach {name} to recycle it ({detail}); kept unrecycled: check your ssh key (ssh-add)"
 
