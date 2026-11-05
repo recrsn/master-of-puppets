@@ -1068,14 +1068,32 @@ def session_pids():
     return skip
 
 
-def drain(worktree, ports=(), patterns=()):
+def elapsed_s(text):
+    """Seconds from ps etime ([[dd-]hh:]mm:ss), or None."""
+    try:
+        days, _, rest = text.strip().rpartition("-")
+        parts = [int(x) for x in rest.split(":")]
+        while len(parts) < 3:
+            parts.insert(0, 0)
+        return int(days or 0) * 86400 + parts[0] * 3600 + parts[1] * 60 + parts[2]
+    except ValueError:
+        return None
+
+
+def drain(worktree, ports=(), patterns=(), since=None, ignore=()):
     """What a run left behind: processes working in the worktree (except session
     processes), listeners on the given ports, processes matching each pattern.
-    Returns a list of report lines, one per process left. It only reports; it never kills."""
-    lines, skip = [], session_pids()
+    since (a datetime, the grant): a worktree process that started before it is not the run's.
+    ignore: pids the member names as not the run's. Returns a list of report lines, one per
+    process left. It only reports; it never kills."""
+    lines, skip = [], session_pids() | {str(p) for p in ignore}
     for pid in worktree_pids(worktree):
         if pid in skip:
             continue
+        if since is not None:
+            age = elapsed_s(run(["ps", "-o", "etime=", "-p", pid]))
+            if age is not None and (now() - since).total_seconds() < age - 5:
+                continue  # it was running before the grant, so the run did not start it
         cmd = run(["ps", "-o", "command=", "-p", pid]).strip()[:100]
         if not cmd:
             continue

@@ -132,9 +132,11 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
 
 ## 5. Leases (only when WELCOME says leases are on)
 
-1. Finish all edits first. Pick an id, `<coord>-q-<name>-<n>` (n counts your
-   requests), and queue it yourself; no message is needed:
-   `puppet.py request <CLASS> --coordinator <coord> --name <name> --id <id> --minutes <estimate> --commands "<exact commands>" --worktree <worktree> [--gib <n>] [--cpus <n>] [--what "<short label>"]`.
+1. Finish all edits first. Queue the request yourself; no message is needed:
+   `puppet.py request <CLASS> --coordinator <coord> --name <name> --minutes <estimate> --commands "<exact commands>" --worktree <worktree> [--gib <n>] [--cpus <n>] [--what "<short label>"]`.
+   It picks the next id, `<coord>-q-<name>-<n>`, and prints it first as
+   `ID <id>`; use that id in every later command. Give `--id <id>` only to
+   change a request you already queued.
    The classes and their scope are in WELCOME (BUILD and E2E by default).
    **Size.** You observe and decide the size of your run. Look first:
    `puppet.py sizes --worktree <worktree> --class <CLASS>` shows the
@@ -204,6 +206,10 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
    `LEASE RELEASED <id> — pass|fail|partial — <raw summary>`. When the command
    prints `not drained`, stop what it lists that your run started, and say so
    in the message, so the coordinator can keep the next E2E grant blocked.
+   A process that started before the grant does not count. For one your run
+   did not start (for example your own wait loop on a remote run), add
+   `--ignore-pid <pid>` and say why in `--note`. `await-grant`, `extend` and
+   `release` find the class from `--id`, so `<CLASS>` is optional there.
 5. Project rules in WELCOME (from the coordinator's memory) can widen what
    needs a lease, for example a commit whose hooks run lint. Follow them.
 6. What needs no lease: `leases.md`, "Classes", in the coordinator skill.

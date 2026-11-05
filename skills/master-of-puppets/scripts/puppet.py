@@ -18,19 +18,20 @@ Usage: python3 -I puppet.py <command> ...
   sizes --worktree P [--class CLASS]
        the project's recorded run minutes, peak GiB and peak cores per class, the figures
        your coordinator charges and checks against, and the size margin: size from these
-  request CLASS --coordinator C --name NAME --id ID --minutes N --commands TEXT --worktree P
+  request CLASS --coordinator C --name NAME [--id ID] --minutes N --commands TEXT --worktree P
           [--prefer KEY=VALUE ...] [--resource NAME]   (pool classes)
           [--gib N] [--cpus N] [--what TEXT]
        queue your own lease request; prints its position. You size the run: --minutes always,
        --gib and --cpus (peak memory and cores) when you know them; your coordinator charges
-       its own figure for a size you leave out. The ID must start with C-q-NAME-,
-       and NAME must be a member of C. The entry takes your task's priority; only your
+       its own figure for a size you leave out. The ID must start with C-q-NAME-;
+       without --id, the next free C-q-NAME-<n> is used and printed first as ID <id>.
+       NAME must be a member of C. The entry takes your task's priority; only your
        coordinator or the user changes it. A repeat with the same ID changes the given fields.
        Prints a warning when --gib or --cpus is below the observed peak by more than the
        size margin: your coordinator then refuses the grant unless you tell it why.
        exit 0 queued, 2 over the class limit or the whole budget (split the run), 3 refused: leases off, not a
        member of C, a foreign ID, or the ID is already held
-  await-grant CLASS --id ID [--timeout-min N] [--appear-timeout S]
+  await-grant [CLASS] --id ID [--timeout-min N] [--appear-timeout S]   (CLASS: default the one with ID)
        prints HELD <reason> while your coordinator holds or reviews the entry (keep waiting),
        ASSIGNING <what> while a pool class creates or starts your resource (can take minutes),
        and after GRANTED of a pool class, RESOURCE <name> <info JSON>: the resource you hold
@@ -42,7 +43,7 @@ Usage: python3 -I puppet.py <command> ...
        (REQUEUED; keep waiting), up to 3 times, then NOT-GRANTED. Exit 0 granted (the only grant);
        4 denied by your coordinator (do not retry; ask why); 3 left the queue without a grant; 5 timeout while still queued; 6 never queued
        within --appear-timeout (default 600 s)
-  extend CLASS --coordinator C --name NAME --id ID --minutes N --reason TEXT
+  extend [CLASS] --coordinator C --name NAME --id ID --minutes N --reason TEXT
        ask your coordinator to extend your own granted lease to expire N minutes from now.
        It does not change the expiry: the coordinator decides. Writes one event line,
          extend-request CLASS ID N min by=NAME coordinator=C reason="TEXT"
@@ -50,11 +51,12 @@ Usage: python3 -I puppet.py <command> ...
        replies LEASE EXTENDED or tells you to release.
        exit 0 asked, 2 the lease would run longer than the class limit (release it and
        request the rest), 3 refused: not a member of C, not your lease, or not held
-  release CLASS --id ID --result pass|fail|partial [--note TEXT] [--peak-gib N] [--peak-cpus N]
-          [--port N ...] [--process PATTERN ...]
+  release [CLASS] --id ID --result pass|fail|partial [--note TEXT] [--peak-gib N] [--peak-cpus N]
+          [--port N ...] [--process PATTERN ...] [--ignore-pid PID ...]
        release your own lease, never another's; records its run minutes and peaks, then
-       counts what the run left in the lease's worktree (agent session processes and bare
-       shells do not count) and writes one event line:
+       counts what the run left in the lease's worktree (agent session processes, bare
+       shells, processes that started before the grant and each --ignore-pid do not count;
+       name why in --note) and writes one event line:
          release CLASS ID ran N min peak N GiB N cores result=R drained=N coordinator=C note="TEXT"
        That line is the record of the release: coordinators read it with `events`.
        When the class has a recycle command, release then resets the resource (it stays busy until
@@ -64,6 +66,7 @@ Usage: python3 -I puppet.py <command> ...
 import argparse
 import datetime as dt
 import json
+import re
 import time
 import os
 import sys
@@ -73,7 +76,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import (
     forward, nap,
-    PEAKS, SAMPLES_KEPT, MINUTES_KEPT, load_machine, registry, class_names,
+    LOG, PEAKS, SAMPLES_KEPT, MINUTES_KEPT, load_machine, registry, class_names,
     load_project, save_project, project_key, undersized, now, lock, unlock, log, say,
     load, save, load_roster, queue_entry, extension_refusal, READS, add_read_commands, read_cmd, version_warning, drain,
     find_resource, set_state, parse_prefer, RESOURCE_NAME, pool_spec,
@@ -86,6 +89,26 @@ MAX_RECYCLE_DESTROYS = 3  # resources one await-grant may destroy for failed rec
 # ---------------------------------------------------------------- leases
 
 
+def class_of(lease_id):
+    """The class whose queue or holders have lease_id, else None."""
+    state = load()
+    return next((c for c in class_names() if any(x["id"] == lease_id for x in state[c] + state["queue"][c])), None)
+
+
+def next_id(prefix, state):
+    """prefix + the next n: one more than every n of prefix in the state and the events log."""
+    pat = re.compile(re.escape(prefix) + r"(\d+)\b")
+    seen = [0]
+    for c in class_names():
+        seen += [int(m.group(1)) for x in state[c] + state["queue"][c] for m in [pat.fullmatch(x["id"])] if m]
+    try:
+        with open(LOG) as f:
+            seen += [int(n) for n in pat.findall(f.read())]
+    except OSError:
+        pass
+    return f"{prefix}{max(seen) + 1}"
+
+
 def request(args):
     """Queue the member's own entry. The member cannot grant, set a priority or jump the
     queue; its coordinator gets a REQUEST message in its inbox and grants."""
@@ -96,9 +119,14 @@ def request(args):
             print("leases are off; run the commands without a lease")
             return 3
         if not any(m["name"] == args.name for m in roster["members"].get(args.coordinator, [])):
-            print(f"{args.name} is not a member of {args.coordinator}; send JOIN first")
+            print(f"{args.name} is not a member of {args.coordinator}. Send it your JOIN line by its direct route "
+                  "(puppet skill, section 2: JOIN — name — tool id — worktree — task — PRs — phase — commands — parent), "
+                  "wait for WELCOME, then request again")
             return 3
         prefix = f"{args.coordinator}-q-{args.name}-"
+        if not args.id:
+            args.id = next_id(prefix, state)
+            print(f"ID {args.id}")
         if not args.id.startswith(prefix):
             print(f"{args.id} is not yours; use an ID that starts with {prefix}")
             return 3
@@ -322,7 +350,9 @@ def release(args):
     finally:
         unlock()
     try:
-        left = drain(held["worktree"], args.port or [], args.process or []) if held.get("worktree") else []
+        since = dt.datetime.fromisoformat(held["grantedAt"]) if held.get("grantedAt") else None
+        left = drain(held["worktree"], args.port or [], args.process or [], since, args.ignore_pid or []) \
+            if held.get("worktree") else []
         for line in left:
             print(f"  {line}")
         peaks = [f"{round(v, 1)} {unit}" for v, unit in ((peak, "GiB"), (cores, "cores")) if v]
@@ -348,7 +378,8 @@ def main(argv=None):
     rq.add_argument("cls", metavar="CLASS")
     rq.add_argument("--coordinator", required=True)
     rq.add_argument("--name", required=True, help="your member name")
-    rq.add_argument("--id", required=True, help="<coordinator>-q-<name>-<n>")
+    rq.add_argument("--id", help="<coordinator>-q-<name>-<n>; default: the next free n, printed as ID <id>. "
+                    "Pass the same id again to change a queued request")
     rq.add_argument("--minutes", type=int, required=True, help="your estimate")
     rq.add_argument("--commands", required=True, help="the exact commands the lease would cover")
     rq.add_argument("--worktree", required=True, help="sets the project whose class peak applies")
@@ -359,20 +390,20 @@ def main(argv=None):
     rq.add_argument("--resource", help="pool class: exactly this resource; exit 3 at acquire if it is held, busy or failed; never another one, never a new one")
     rq.add_argument("--what", help="short label for the dashboard; default: the commands")
     ag = sub.add_parser("await-grant")
-    ag.add_argument("cls", metavar="CLASS")
+    ag.add_argument("cls", metavar="CLASS", nargs="?", help="default: the class that queues or holds --id")
     ag.add_argument("--id", required=True)
     ag.add_argument("--timeout-min", type=float, default=30)
     ag.add_argument("--appear-timeout", type=float, default=600, help="seconds the ID may take to be queued")
     ag.add_argument("--interval", type=float, default=10)
     x = sub.add_parser("extend")
-    x.add_argument("cls", metavar="CLASS")
+    x.add_argument("cls", metavar="CLASS", nargs="?", help="default: the class that queues or holds --id")
     x.add_argument("--coordinator", required=True)
     x.add_argument("--name", required=True, help="your member name")
     x.add_argument("--id", required=True)
     x.add_argument("--minutes", type=int, required=True, help="ask for the lease to expire this many minutes from now")
     x.add_argument("--reason", required=True, help="one short line: what is still running")
     r = sub.add_parser("release")
-    r.add_argument("cls", metavar="CLASS")
+    r.add_argument("cls", metavar="CLASS", nargs="?", help="default: the class that queues or holds --id")
     r.add_argument("--id", required=True)
     r.add_argument("--peak-gib", type=float, help="measured peak; default: peaks/<id>.gib from measure-peak")
     r.add_argument("--peak-cpus", type=float, help="measured peak cores; default: peaks/<id>.cpus from measure-peak")
@@ -380,7 +411,13 @@ def main(argv=None):
     r.add_argument("--note", help="one short line, for example 'pushed #123' or the first failure")
     r.add_argument("--port", type=int, action="append", help="also check for listeners on this port (E2E)")
     r.add_argument("--process", action="append", help="also count processes matching this pattern (pgrep -f)")
+    r.add_argument("--ignore-pid", type=int, action="append", help="a process in the worktree that the run did not start "
+                   "(for example your own wait loop); name the reason in --note")
     args = p.parse_args(argv)
+    if args.cmd in ("await-grant", "extend", "release") and not args.cls:
+        args.cls = class_of(args.id)
+        if not args.cls:
+            p.error(f"{args.id} is not queued or held in any class; give CLASS")
     name = getattr(args, "cls", None)
     if name and name not in registry():
         p.error(f"unknown lease class {name}; known: {', '.join(class_names())}")
