@@ -181,6 +181,9 @@ def recycle_granted(cls, lease_id, requeue):
         if outcome != "failed":
             if outcome != "unreachable":
                 held["recycled"] = True
+                if outcome == "recycled":  # facts the recycle found (an ssh alias, uptime) go on the RESOURCE line
+                    held["resourceInfo"] = {**(held.get("resourceInfo") or {}),
+                                            **{k: v for k, v in detail.items() if k != "failed"}}
                 save(state, machine)
             return outcome, recycle_note(cls, name, outcome, detail, tail)
         state[cls] = [h for h in state[cls] if h is not held]

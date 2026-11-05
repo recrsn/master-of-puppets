@@ -81,6 +81,11 @@ the entry is queued again at the front, up to 3 destroyed resources per
 destroyed for a missing key or a network fault. The events log records
 `resource recycled CLS NAME free=N GiB`, `resource recycle-unreachable`,
 `resource destroyed CLS NAME reason="..."` and `resource destroy-failed`.
+When a grant has to create a resource and another one comes free while the
+create runs, the grant takes the free one (checked every 10 s) and the create
+finishes in the background into the pool, free. A recycle at grant may print
+more facts in its JSON line (the Hutch command prints `sshAlias` and
+`uptimeS`); they go on the holder's `RESOURCE` line.
 `scripts/examples/hutch-pool-recycle` is the command for a Hutch pool:
 over `hutch env ssh-config` and ssh it fetches `origin main`, forces `main`
 to `origin/main`, runs `git clean -ffdx -e node_modules` in
