@@ -253,6 +253,12 @@ Shared records (read-only; puppet.py has them too)
   sizes --worktree P [--class CLASS]
        the project's recorded run minutes, GiB and core samples per class, the peaks
        acquire charges and the observed peaks it checks requests against
+  leave --name NAME [--validated TEXT] [--no-release-check] | leave --name NAME --reject --reason TEXT
+       the reply to every LEAVE, in the same turn. Accept checks the done rules: each PR of the
+       member MERGED and, unless --no-release-check, carried by the latest release of its repo,
+       with --validated naming the production check; then member remove, a ledger record (kind
+       leave) and the reply, delivered directly where the helper can and printed for SendMessage.
+       Exit 1 when a rule fails (nothing changes): then reply with --reject
   grant --id ID [--accept-size]
        acquire for a queued request, from its id: class, holder, worktree, minutes, size and
        commands come from the request. Only the request's coordinator grants it
@@ -2820,6 +2826,69 @@ def auto_entry(entry, machine, roster, cls):
     return bool(m and (roster["streams"].get(m.get("stream")) or {}).get("autoAcquire"))
 
 
+def leave_cmd(args):
+    """The reply to a member's LEAVE, always. --reject (with --reason) keeps the member and tells it why.
+    Accept checks the done rules first: every PR of the member MERGED and, unless --no-release-check, carried
+    by the latest release of its repo by full-SHA ancestry, with --validated naming the production check.
+    Then member remove, a ledger record (kind leave) and the reply: delivered directly where the helper
+    can, and printed with the session id for SendMessage. Exit 1 when the done rules fail (nothing changes)."""
+    me, roster = args.coordinator, load_roster()
+    m = next((x for x in roster["members"].get(me, []) if x["name"] == args.name), None)
+    if not m:
+        print(f"{args.name} is not a member of {me}")
+        return 3
+    prs = m.get("prs") or []
+    if args.reject:
+        if not args.reason:
+            print("leave --reject needs --reason: what is left before the member may leave")
+            return 2
+        reply = f"LEAVE NOT ACCEPTED — {args.name} — {args.reason}. Stay enrolled; do not archive."
+        record(me, "leave", f"LEAVE of {args.name} not accepted: {args.reason}", name=args.name, accepted=False)
+    else:
+        problems, facts = [], []
+        if prs and not m.get("repo"):
+            problems.append("the member has PRs but no repo; member update --repo owner/repo")
+        refs = [(m["repo"], n) for n in prs] if m.get("repo") else []
+        got = pr_digests(refs) if refs else {}
+        for ref in refs:
+            d = got[ref]
+            if "error" in d:
+                problems.append(f"#{ref[1]}: {d['error']}")
+            elif d["state"] != "MERGED":
+                problems.append(f"#{ref[1]} is {d['state']}, not MERGED")
+            else:
+                facts.append(f"#{ref[1]} merged {d['mergeCommit']}")
+        if refs and not problems and not args.no_release_check:
+            tag, sha, err = resolve_tag(m["repo"], "latest")
+            if err:
+                problems.append(err)
+            for ref in refs if not err else []:
+                cmp, cerr = gh_get(f"repos/{m['repo']}/compare/{got[ref]['mergeCommit']}...{sha}")
+                if cerr or cmp.get("status") not in ("ahead", "identical"):
+                    problems.append(f"#{ref[1]} is not in the latest release {tag}" + (f" ({cerr})" if cerr else ""))
+            if not problems:
+                facts.append(f"carried by {tag}")
+                if not args.validated:
+                    problems.append("give --validated with the production check that passed (no LEAVE before validated in prod)")
+                else:
+                    facts.append(f"validated: {args.validated}")
+        if problems:
+            print("LEAVE not accepted yet; nothing changed:")
+            print("\n".join(f"  {x}" for x in problems))
+            print(f"Reply now anyway: leave --name {args.name} --reject --reason \"<what is left>\"")
+            return 1
+        code = main(["member", "remove", "--name", args.name])
+        if code:
+            return code
+        reply = f"LEAVE ACCEPTED — {args.name}" + (f" — {'; '.join(facts)}" if facts else "") + ". You may archive your session."
+        record(me, "leave", f"LEAVE of {args.name} accepted" + (f": {'; '.join(facts)}" if facts else ""), name=args.name, accepted=True)
+    print(reply)
+    if m.get("sessionId") and m.get("tool") in ("claude", "codex"):
+        print(deliver(args.name, m["tool"], m["sessionId"], reply))
+    print(f"send it yourself if the line above does not say delivered: SendMessage to {m.get('session') or m.get('sessionId') or 'the member'}")
+    return 0
+
+
 def grant_cmd(args):
     """acquire for a queued request, from its id alone: class, holder, worktree, minutes, size and commands
     come from the entry. Only the entry's coordinator grants it."""
@@ -3289,6 +3358,13 @@ def main(argv=None):
             rx.add_argument("--about", help="what the words decide")
         rx.add_argument("action", nargs="?", choices=("list",), help="list the records")
         rx.add_argument("-n", type=int, help="list: the last N")
+    lv = sub.add_parser("leave", help="reply to a member's LEAVE: accept (checks the done rules, then member remove) or --reject")
+    lv.set_defaults(_self=("coordinator",))
+    lv.add_argument("--name", required=True)
+    lv.add_argument("--reject", action="store_true", help="keep the member; --reason says what is left")
+    lv.add_argument("--reason")
+    lv.add_argument("--validated", help="accept: the production check that passed, e.g. 'error rate flat 30 min in Datadog'")
+    lv.add_argument("--no-release-check", action="store_true", help="accept: skip the release ancestry check (docs, CI-only)")
     gr = sub.add_parser("grant", help="acquire a queued request from its id; the rest comes from the request")
     gr.set_defaults(_self=("coordinator",))
     gr.add_argument("--id", required=True)
@@ -3576,6 +3652,8 @@ def main(argv=None):
         return acquire_cmd(args)
     if args.cmd == "grant":
         return grant_cmd(args)
+    if args.cmd == "leave":
+        return leave_cmd(args)
     if args.cmd == "resource":
         if args.rcmd != "list" and not args.name:
             p.error("resource add|mark|remove needs --name")

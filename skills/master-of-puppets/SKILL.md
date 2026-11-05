@@ -222,11 +222,19 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
   commit, add a decision (`<id>: commit and open the PR?`) so the user sees it
   under Needs you. Never mark a member done, or tell it LEAVE is fine, while it
   has uncommitted changes or an open PR.
-- **LEAVE**: confirm the task is done (above), then
-  `coordinator.py member remove --name <name>`. A LEAVE with
-  uncommitted work or an open PR: ask why first, and ask the user when unsure.
-  A LEAVE after your HANDOFF COMPLETE, or after a cloud handoff that you
-  recorded, is expected (`references/handoff.md`, `references/coderabbit-cloud.md`).
+- **LEAVE**: reply to every LEAVE in the same turn, with an acceptance or a
+  reason. Silence leaves the member idle, and it may archive before you
+  answer. Run `coordinator.py leave --name <name> --validated "<the production
+  check that passed>"`: it checks that each PR is MERGED and in the latest
+  release, removes the member, records it and sends `LEAVE ACCEPTED`. When a
+  rule fails it changes nothing; reply at once with `leave --name <name>
+  --reject --reason "<what is left>"`. Use `--no-release-check` for work
+  with no production behaviour (docs, CI-only). Send the printed reply
+  yourself when the command does not say it was delivered. A LEAVE with
+  uncommitted work or an open PR: reject it with the reason, and ask the user
+  when unsure. A LEAVE after your HANDOFF COMPLETE, or after a cloud handoff
+  that you recorded, is expected (`references/handoff.md`,
+  `references/coderabbit-cloud.md`): `leave --name <name> --no-release-check`.
 - **Decisions for the user**: `coordinator.py decision add --task <id> --text "..." [--href <link>] [--option "..." ...]`;
   `decision clear --id <decision id>` once answered (`decision list` shows the
   ids; `--task` refuses when the task has several, unless `--all`). Give 2 to 4
