@@ -61,8 +61,10 @@ An expired lease (past expiresAt) still holds its memory: its holder releases it
 
 Identity: the server knows the calling coordinator by its session: $CLAUDE_CODE_SESSION_ID
 (Claude) or $CODEX_THREAD_ID (Codex; run CODEX_THREAD_ID=<thread id> coordinator.py ... when
-the thread does not export it). Register once with `register C`; no command takes your own
-name. Below, C is the caller.
+the thread does not export it). Register once with `register C`; no command needs your own
+name. Every command accepts --coordinator, --by, --from, --me, --name or --sender C when C is
+the caller, and changes nothing for it; naming another coordinator is an error. Below, C is
+the caller.
 
 State lives in $MACHINE_LEASE_DIR (default ~/.local/state/machine-leases), not beside
 this file, so every coordinator that runs any copy shares one state.
@@ -2892,6 +2894,35 @@ def install_files(here):
     return 0
 
 
+IDENTITY_FLAGS = ("--coordinator", "--by", "--from", "--me", "--name", "--sender")
+
+
+def identity_flags(extra, args, p):
+    """Accept an identity flag (--coordinator, --by, --from, --me, --name, --sender) that a command does
+    not take, when it names the caller: the session decides who acts, so the flag changes nothing. One
+    that names someone else is an error. Returns the other unknown arguments."""
+    me = next((getattr(args, a, None) for a in getattr(args, "_self", None) or ()), None)
+    left, i = [], 0
+    while i < len(extra):
+        flag, _, value = extra[i].partition("=")
+        if flag in IDENTITY_FLAGS:
+            if not value:
+                if i + 1 >= len(extra) or extra[i + 1].startswith("--"):
+                    p.error(f"{flag} needs a name")
+                value, i = extra[i + 1], i + 1
+            if me is None:
+                try:
+                    me = caller()
+                except SystemExit:
+                    p.error(f"{args.cmd} does not take {flag}, and this session is not a registered coordinator")
+            if value != me:
+                p.error(f"{flag} {value}: this session acts as {me}; the caller's session sets who acts, not a flag")
+        else:
+            left.append(extra[i])
+        i += 1
+    return left
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="coordinator.py")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -3245,11 +3276,15 @@ def main(argv=None):
     wa.set_defaults(_self=("me",))
     wa.add_argument("--interval", type=int, default=180, help="seconds between cloud task polls")
     sub.add_parser("install")
-    args = p.parse_args(argv)
+    args, extra = p.parse_known_args(argv)
     if getattr(args, "_self", None):
         me = caller()
         for attr in args._self:
             setattr(args, attr, me)
+    if extra:
+        left = identity_flags(extra, args, p)
+        if left:
+            p.error(f"unrecognized arguments: {' '.join(left)}")
     if args.cmd in ("roster", "whoami", "register", "heartbeat", "status"):
         version_warning()
     for attr in ("cls", "pcls"):
