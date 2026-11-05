@@ -164,7 +164,8 @@ def recycle_granted(cls, lease_id, requeue):
             granted, expires = (dt.datetime.fromisoformat(held[k]) for k in ("grantedAt", "expiresAt"))
             queue_entry(state, load_roster(), cls, lease_id, coord, held["holder"],
                         max(1, round((expires - granted).total_seconds() / 60)),
-                        commands=held.get("commands"), worktree=held.get("worktree"), front=True)
+                        commands=held.get("commands"), worktree=held.get("worktree"), front=True,
+                        prefer=held.get("prefer"))  # not wantResource: that resource is gone
         save(state, machine)
         log(f"release {cls} {lease_id} ran 0 min result=fail drained=0 coordinator={coord} "
             f"note={json.dumps(f'recycle of {name} failed at grant: {detail}')}")

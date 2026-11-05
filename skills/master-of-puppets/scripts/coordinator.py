@@ -320,6 +320,8 @@ Watchers and install
          VOTE PASSED ID | VOTE ID REJECTED   the outcome of a vote
          auto: AUTO-GRANTED|AUTO-REFUSED|AUTO-SKIPPED ...   the server's auto grant
          pool: POOL-EXPIRED ...  your lease expired over an hour ago and still holds a resource
+         pool: RECYCLE-DESTROYED|RECYCLE-DESTROY-FAILED ...  a recycle failed: the resource was deleted,
+               or its delete failed too and it is marked failed
        and, each 2 s:
          HEAD CLASS ID ...      an entry of C became the first ready entry: acquire it
          VOTE-REQUEST ID by X: TEXT ...   each open vote that waits for C's vote (also those opened
@@ -1863,7 +1865,7 @@ def pool_acquire_cmd(args):
         state[cls].append({
             "coordinator": args.coordinator, "holder": args.holder, "id": args.id, "worktree": args.worktree,
             "project": key, "gib": 0, "cpus": 0, "commands": args.commands or (queued or {}).get("commands"),
-            "resource": name, "resourceInfo": new_info,
+            "resource": name, "resourceInfo": new_info, **({"prefer": prefer} if prefer else {}),  # a re-queue after a failed recycle keeps it
             "grantedAt": t.isoformat(), "expiresAt": (t + dt.timedelta(minutes=args.minutes)).isoformat(),
         })
         save(state, machine)
