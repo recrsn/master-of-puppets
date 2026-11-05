@@ -170,6 +170,12 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
    - `NOT-GRANTED ... left the queue` (exit 3), `... never queued` (exit 6):
      do not run; ask your coordinator.
    - `NOT-GRANTED ... timeout` (exit 5): still queued; run `await-grant` again.
+   - Pool class with a recycle command (for example HUTCH): before `GRANTED`
+     it resets the resource (`RECYCLING`, then `RECYCLED`). `NOT-RECYCLED`
+     means it could not reach the resource: load your ssh key and run
+     `await-grant` again before you use it. `RECYCLE-FAILED` means the
+     resource was destroyed and your entry queued again at the front
+     (`REQUEUED`): keep waiting. `release` resets the resource again.
    Never write polling loops. Your position can change: the queue goes by
    priority, then FIFO, and your coordinator sets the priority. Keep
    waiting; `await-grant` follows the queue.

@@ -708,7 +708,7 @@ RESOURCE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
 
 def pool_spec(cls, machine=None):
     """The pool of a class that leases named resources (a VM, a device, a seat), else None.
-    Fields: create, start, stop, delete (shell commands, each optional) and max (resources
+    Fields: create, start, stop, delete, recycle (shell commands, each optional) and max (resources
     that may exist, 0 = no cap). A command reads MOP_CLASS, MOP_RESOURCE, MOP_RESOURCE_INFO
     (JSON), MOP_LEASE_ID and MOP_WORKTREE from its environment. When the request named
     preferences, it also reads MOP_PREFER (JSON) and MOP_PREFER_<KEY> for each."""
@@ -766,7 +766,8 @@ def pool_info(out):
 
 
 POOL_STUCK_MINUTES = 90  # longer than a pool command's one-hour timeout
-BUSY_STATES = ("creating", "assigning", "stopping", "deleting")
+BUSY_STATES = ("creating", "assigning", "stopping", "deleting", "recycling")
+RECYCLE_TIMEOUT = 900  # seconds; a recycle that runs longer counts as unreachable, never as failed
 
 
 def set_state(res, state):
@@ -849,6 +850,114 @@ def stop_resource(cls, name):
     finally:
         unlock()
     return True
+
+
+def json_tail(out):
+    """The last line of a command's output that is a JSON object, else {}."""
+    for line in reversed((out or "").strip().splitlines()):
+        try:
+            data = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return {}
+
+
+def recycle_run(cls, name, info, lease_id=None, worktree=None):
+    """Run the class's recycle command on resource name, without the lock. The command resets the resource
+    and checks it, then prints one JSON line: {"freeGiB": N} with exit 0 when it is clean, or
+    {"failed": "<reason>"} with a non-zero exit when it reached the resource and the reset or the check failed.
+    Returns (outcome, detail): recycled (the free GiB, or None), failed (the reason; the caller destroys the
+    resource), unreachable (any other failure, such as a missing ssh key or a network fault: the resource is
+    kept, never destroyed for it) or none (the class has no recycle command)."""
+    spec = pool_spec(cls) or {}
+    if not spec.get("recycle"):
+        return "none", None
+    ok, out, err = pool_run(spec["recycle"], pool_env(cls, name, info, lease_id, worktree), RECYCLE_TIMEOUT)
+    tail = json_tail(out)
+    if ok:
+        return "recycled", tail.get("freeGiB")
+    if tail.get("failed"):
+        return "failed", str(tail["failed"])
+    return "unreachable", err or "no output"
+
+
+def delete_claimed(cls, name, token, info):
+    """Delete a resource this caller claimed (begin_op delete, saved), without the lock held: run the class's
+    delete command, then remove the resource from the pool, or mark it failed when delete failed or the class
+    has none. Returns (outcome, error): deleted, failed, or reset (it was reset or removed while delete ran;
+    nothing is written)."""
+    spec = pool_spec(cls) or {}
+    ok, err = False, "the class has no delete command"
+    if spec.get("delete"):
+        ok, _, err = pool_run(spec["delete"], pool_env(cls, name, info))
+    lock()
+    try:
+        state, machine = load(), load_machine()
+        res = op_current(state, cls, name, token)
+        if res is None:
+            return "reset", err
+        if ok:
+            state["resources"][cls].remove(res)
+        else:
+            end_op(res, "failed")
+        save(state, machine)
+        return ("deleted" if ok else "failed"), err
+    finally:
+        unlock()
+
+
+def destroy_recycled(cls, name, token, info, reason, lease_id, coordinator):
+    """Destroy a resource whose recycle failed (claimed with op delete, saved), log it and tell the lease's
+    coordinator. Returns a line for the member."""
+    tail = f"for={lease_id} coordinator={coordinator}"
+    outcome, err = delete_claimed(cls, name, token, info)
+    if outcome == "deleted":
+        log(f"resource destroyed {cls} {name} reason={json.dumps(reason)} {tail}")
+        say("pool", f"RECYCLE-DESTROYED {cls} {name} for {lease_id}: {reason}; deleted and removed from the pool", coordinator)
+        return f"destroyed {name}: {reason}; removed from the {cls} pool"
+    log(f"resource destroy-failed {cls} {name} reason={json.dumps(reason)} error={json.dumps(err)} {tail}")
+    say("pool", f"RECYCLE-DESTROY-FAILED {cls} {name} for {lease_id}: recycle failed ({reason}), delete failed ({err}); "
+                f"it is marked failed: check it, then resource remove {cls} --name {name} --delete", coordinator)
+    return f"recycle of {name} failed ({reason}) and delete " + (
+        f"failed ({err}); marked failed, ask your coordinator" if outcome == "failed" else "ran while it was reset; ask your coordinator")
+
+
+def recycle_note(cls, name, outcome, detail, tail):
+    """Log a recycle that kept the resource (recycled or unreachable). Returns a line for the member."""
+    if outcome == "none":
+        return f"{name} not recycled: {cls} has no recycle command"
+    if outcome == "recycled":
+        log(f"resource recycled {cls} {name}" + (f" free={detail} GiB" if detail is not None else "") + f" {tail}")
+        return f"recycled {name}" + (f": {detail} GiB free" if detail is not None else "")
+    log(f"resource recycle-unreachable {cls} {name} kept error={json.dumps(detail)} {tail}")
+    return f"could not reach {name} to recycle it ({detail}); kept unrecycled: check your ssh key (ssh-add)"
+
+
+def recycle_released(cls, name, token, info, lease_id, coordinator, worktree=None):
+    """After a release, recycle the resource this caller claimed (begin_op recycle, saved), without the lock
+    held. A clean or unreachable recycle frees it; a failed one destroys it (delete, then out of the pool).
+    Logs the outcome and returns a line for the member."""
+    tail = f"for={lease_id} coordinator={coordinator}"
+    outcome, detail = recycle_run(cls, name, info, lease_id, worktree)
+    lock()
+    try:
+        state, machine = load(), load_machine()
+        res = op_current(state, cls, name, token)
+        if res is None:
+            log(f"resource recycle-reset {cls} {name} {tail}")
+            return f"{name} was reset while it was recycled; ask your coordinator"
+        if outcome == "failed":
+            token, info = begin_op(res, "delete", "deleting", lease_id), res.get("info")
+        else:
+            end_op(res, "free")  # also stamps the idle clock for the server's pool upkeep
+        save(state, machine)
+    finally:
+        unlock()
+    if outcome == "failed":
+        return destroy_recycled(cls, name, token, info, detail, lease_id, coordinator)
+    return recycle_note(cls, name, outcome, detail, tail)
 
 
 def total_gib():

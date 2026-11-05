@@ -35,7 +35,11 @@ Usage: python3 -I puppet.py <command> ...
        ASSIGNING <what> while a pool class creates or starts your resource (can take minutes),
        and after GRANTED of a pool class, RESOURCE <name> <info JSON>: the resource you hold
        until you release it (release never stops it: the server's pool upkeep does, when idle),
-       then GRANTED, DENIED <reason> or NOT-GRANTED <reason>. Exit 0 granted (the only grant);
+       then GRANTED, DENIED <reason> or NOT-GRANTED <reason>. When the class has a recycle command,
+       a granted resource is reset first: RECYCLING <name>, then RECYCLED or NOT-RECYCLED <why> (it
+       could not reach the resource: check your ssh key; you still hold it). A failed reset prints
+       RECYCLE-FAILED: the resource is destroyed and the entry is queued again at the front
+       (REQUEUED; keep waiting), up to 3 times, then NOT-GRANTED. Exit 0 granted (the only grant);
        4 denied by your coordinator (do not retry; ask why); 3 left the queue without a grant; 5 timeout while still queued; 6 never queued
        within --appear-timeout (default 600 s)
   extend CLASS --coordinator C --name NAME --id ID --minutes N --reason TEXT
@@ -53,6 +57,9 @@ Usage: python3 -I puppet.py <command> ...
        shells do not count) and writes one event line:
          release CLASS ID ran N min peak N GiB N cores result=R drained=N coordinator=C note="TEXT"
        That line is the record of the release: coordinators read it with `events`.
+       When the class has a recycle command, release then resets the resource (it stays busy until
+       done) and logs `resource recycled ... free=N GiB`; a failed reset destroys it with the class's
+       delete command and logs `resource destroyed ... reason="..."`.
 """
 import argparse
 import datetime as dt
@@ -70,7 +77,10 @@ from moplib import (
     load_project, save_project, project_key, undersized, now, lock, unlock, log, say,
     load, save, load_roster, queue_entry, extension_refusal, READS, add_read_commands, read_cmd, version_warning, drain,
     find_resource, set_state, parse_prefer, RESOURCE_NAME, pool_spec,
+    begin_op, recycle_run, recycle_note, destroy_recycled, recycle_released,
 )
+
+MAX_RECYCLE_DESTROYS = 3  # resources one await-grant may destroy for failed recycles before it stops re-queueing
 
 
 # ---------------------------------------------------------------- leases
@@ -122,16 +132,79 @@ def request(args):
         unlock()
 
 
+def recycle_granted(cls, lease_id, requeue):
+    """Recycle the resource that granted lease lease_id holds, without the lock. Returns (outcome, line):
+    recycled, none or unreachable keep the grant (recycled and none mark the lease, so a rerun of
+    await-grant does not recycle again); destroyed: the reset failed, so the lease is dropped with a
+    release line, the resource destroyed and, when requeue, the entry queued again at the front for
+    another resource; gone: the lease no longer holds the resource."""
+    held = next((h for h in load()[cls] if h["id"] == lease_id), None)
+    if held is None or not held.get("resource"):
+        return "gone", f"{lease_id} holds no resource"
+    name, coord = held["resource"], held["coordinator"]
+    tail = f"for={lease_id} coordinator={coord}"
+    outcome, detail = recycle_run(cls, name, held.get("resourceInfo"), lease_id, held.get("worktree"))
+    lock()
+    try:
+        state, machine = load(), load_machine()
+        held = next((h for h in state[cls] if h["id"] == lease_id and h.get("resource") == name), None)
+        if held is None:
+            return "gone", f"{lease_id} no longer holds {name}"
+        if outcome != "failed":
+            if outcome != "unreachable":
+                held["recycled"] = True
+                save(state, machine)
+            return outcome, recycle_note(cls, name, outcome, detail, tail)
+        state[cls] = [h for h in state[cls] if h is not held]
+        res = find_resource(state, cls, name)
+        token = info = None
+        if res is not None and not res.get("op"):
+            token, info = begin_op(res, "delete", "deleting", lease_id), res.get("info")
+        if requeue:
+            granted, expires = (dt.datetime.fromisoformat(held[k]) for k in ("grantedAt", "expiresAt"))
+            queue_entry(state, load_roster(), cls, lease_id, coord, held["holder"],
+                        max(1, round((expires - granted).total_seconds() / 60)),
+                        commands=held.get("commands"), worktree=held.get("worktree"), front=True)
+        save(state, machine)
+        log(f"release {cls} {lease_id} ran 0 min result=fail drained=0 coordinator={coord} "
+            f"note={json.dumps(f'recycle of {name} failed at grant: {detail}')}")
+    finally:
+        unlock()
+    if token is None:
+        log(f"resource destroy-skipped {cls} {name} reason={json.dumps(detail)} {tail} (busy or gone)")
+        return "destroyed", f"recycle of {name} failed ({detail}); it is busy or gone, so it was not deleted"
+    return "destroyed", destroy_recycled(cls, name, token, info, detail, lease_id, coord)
+
+
 def await_grant(args):
     """Poll without the lock. The coordinator may queue the ID for the member, so the
     ID gets --appear-timeout to show up before it is judged. Prints HELD <reason> when
     the coordinator holds or reviews the entry, then one final line: GRANTED,
-    DENIED <reason> or NOT-GRANTED <reason>; only exit 0 means granted."""
+    DENIED <reason> or NOT-GRANTED <reason>; only exit 0 means granted. A pool class with a
+    recycle command resets the granted resource first (recycle_granted)."""
     start = time.time()
-    seen, held, assigning = False, None, None
+    seen, held, assigning, destroyed = False, None, None, 0
     while True:
         state = load()
         held_lease = next((h for h in state[args.cls] if h["id"] == args.id), None)
+        if held_lease and held_lease.get("resource") and not held_lease.get("recycled") \
+                and (pool_spec(args.cls) or {}).get("recycle"):
+            print(f"RECYCLING {args.cls} {args.id}: {held_lease['resource']}; keep waiting", flush=True)
+            outcome, line = recycle_granted(args.cls, args.id, requeue=destroyed + 1 < MAX_RECYCLE_DESTROYS)
+            if outcome == "gone":
+                seen = True
+                continue
+            if outcome == "destroyed":
+                destroyed += 1
+                print(f"RECYCLE-FAILED {args.cls} {args.id}: {line}", flush=True)
+                if not any(q["id"] == args.id for q in load()["queue"][args.cls]):
+                    print(f"NOT-GRANTED {args.cls} {args.id}: {destroyed} resource(s) destroyed for failed recycles; ask your coordinator")
+                    return 3
+                print(f"REQUEUED {args.cls} {args.id}: at the front of the queue for another resource; keep waiting", flush=True)
+                seen = True
+                continue
+            print(f"{'RECYCLED' if outcome == 'recycled' else 'NOT-RECYCLED'} {args.cls} {args.id}: {line}", flush=True)
+            held_lease = next((h for h in load()[args.cls] if h["id"] == args.id), None)
         if held_lease:
             print(f"GRANTED {args.cls} {args.id}")
             if held_lease.get("resource"):
@@ -239,19 +312,30 @@ def release(args):
                 os.remove(path)
         state[args.cls] = [h for h in holders if h["id"] != args.id]
         res = find_resource(state, args.cls, held.get("resource")) if held.get("resource") else None
-        if res and res["state"] == "free":
+        token = info = None
+        if res and res["state"] == "free" and not res.get("op") and (pool_spec(args.cls) or {}).get("recycle"):
+            token, info = begin_op(res, "recycle", "recycling", args.id), res.get("info")  # no grant takes it mid-reset
+        elif res and res["state"] == "free":
             set_state(res, "free")  # stamps the idle clock; the server's pool upkeep stops it later, if the class asks
         save(state, machine)
     finally:
         unlock()
-    left = drain(held["worktree"], args.port or [], args.process or []) if held.get("worktree") else []
-    for line in left:
-        print(f"  {line}")
-    peaks = [f"{round(v, 1)} {unit}" for v, unit in ((peak, "GiB"), (cores, "cores")) if v]
-    log(f"release {args.cls} {args.id} ran {ran} min" + (f" peak {' '.join(peaks)}" if peaks else "")
-        + f" result={args.result} drained={len(left)} coordinator={held['coordinator']}"
-        + (f" note={json.dumps(args.note)}" if args.note else ""))
-    print(f"released {args.cls} {args.id} ({args.result}); {'drained' if not left else 'not drained'}: {len(left)} left in {held.get('worktree')}")
+    try:
+        left = drain(held["worktree"], args.port or [], args.process or []) if held.get("worktree") else []
+        for line in left:
+            print(f"  {line}")
+        peaks = [f"{round(v, 1)} {unit}" for v, unit in ((peak, "GiB"), (cores, "cores")) if v]
+        log(f"release {args.cls} {args.id} ran {ran} min" + (f" peak {' '.join(peaks)}" if peaks else "")
+            + f" result={args.result} drained={len(left)} coordinator={held['coordinator']}"
+            + (f" note={json.dumps(args.note)}" if args.note else ""))
+        print(f"released {args.cls} {args.id} ({args.result}); {'drained' if not left else 'not drained'}: {len(left)} left in {held.get('worktree')}")
+        if token:
+            print(f"recycling {held['resource']}; this can take a few minutes", flush=True)
+    finally:
+        # A print raises ClientGone when the client has gone; the claimed resource still gets its recycle.
+        outcome = token and recycle_released(args.cls, held["resource"], token, info, args.id, held["coordinator"], held.get("worktree"))
+    if outcome:
+        print(outcome)
     return 0
 
 

@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Recycle command for a HUTCH pool class (config set-class HUTCH --pool-recycle <this file>).
+# Over ssh to the Hutch env $MOP_RESOURCE: fetch origin main (a failed fetch falls back to the
+# VM's own origin/main), force main to origin/main, git clean -fdx, then check that
+# git status --porcelain is empty and that / has at least HUTCH_RECYCLE_MIN_FREE_GIB free.
+# The last stdout line is the result for moplib.recycle_run:
+#   {"freeGiB": N}             exit 0: clean
+#   {"failed": "<reason>"}     exit 3: the VM was reached and the reset or a check failed (destroy it)
+#   anything else (ssh exit 255, no alias, a timeout): unreachable, the VM is kept
+# Git runs as root when sudo -n works, then the checkout goes back to its owner, so a
+# root-owned file inside a user's checkout cannot block the reset.
+set -uo pipefail
+hutch="${HUTCH_BIN:-$HOME/.local/bin/hutch-latest}"
+min_free="${HUTCH_RECYCLE_MIN_FREE_GIB:-10}"
+repo="${HUTCH_RECYCLE_REPO:-/workspaces/mono}"
+alias=$("$hutch" env ssh-config "$MOP_RESOURCE" 2>/dev/null | tail -n 1) || alias=""
+if [ -z "$alias" ]; then
+	echo "no ssh alias for $MOP_RESOURCE (hutch env ssh-config failed)" >&2
+	exit 1
+fi
+exec ssh -o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 \
+	"$alias" "MIN_FREE='$min_free' REPO='$repo' bash -s" <<'REMOTE'
+set -uo pipefail
+free=""
+fail() {
+	printf '{"failed": "%s"%s}\n' "$1" "${free:+, \"freeGiB\": $free}"
+	exit 3
+}
+[ -d "$REPO/.git" ] || fail "no git checkout at $REPO"
+owner=$(stat -c %U "$REPO") || fail "cannot stat $REPO"
+as=()
+if sudo -n true 2>/dev/null; then as=(sudo -n); fi
+g() { ${as[@]+"${as[@]}"} git -c safe.directory="$REPO" -C "$REPO" "$@"; }
+timeout 300 ${as[@]+"${as[@]}"} git -c safe.directory="$REPO" -C "$REPO" fetch --quiet origin main \
+	|| echo "fetch failed; using the VM's own origin/main" >&2
+g rev-parse --verify --quiet origin/main >/dev/null || fail "no origin/main"
+g checkout --quiet --force -B main origin/main || fail "git reset to origin/main failed"
+g clean -fdxq || fail "git clean -fdx failed"
+if [ ${#as[@]} -gt 0 ]; then
+	sudo -n chown -R "$owner": "$REPO" || fail "chown back to $owner failed"
+fi
+left=$(g status --porcelain) || fail "git status failed"
+[ -z "$left" ] || fail "git status shows $(printf '%s\n' "$left" | wc -l | tr -d ' ') entries after the reset"
+free=$(df -BG --output=avail / | tail -n 1 | tr -dc '0-9')
+[ -n "$free" ] || fail "cannot read free disk on /"
+[ "$free" -ge "$MIN_FREE" ] || fail "only ${free} GiB free on /, under ${MIN_FREE} GiB"
+printf '{"freeGiB": %s}\n' "$free"
+REMOTE
