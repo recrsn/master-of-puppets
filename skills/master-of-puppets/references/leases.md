@@ -83,10 +83,11 @@ destroyed for a missing key or a network fault. The events log records
 `resource destroyed CLS NAME reason="..."` and `resource destroy-failed`.
 `scripts/examples/hutch-pool-recycle` is the command for a Hutch pool:
 over `hutch env ssh-config` and ssh it fetches `origin main`, forces `main`
-to `origin/main`, runs `git clean -fdx` in `/workspaces/mono`, and checks
+to `origin/main`, runs `git clean -ffdx -e node_modules` in
+`/workspaces/mono`, gives the checkout to the ssh login user, and checks
 that `git status --porcelain` is empty and `/` has at least 10 GiB free.
-`git clean -fdx` also removes `node_modules`, build output and `.env*`
-files, so the next holder installs again.
+`node_modules` stays, so the next holder's install is fast; build output,
+`.env*` files and nested repositories go.
 
 Picking: a request may carry `puppet.py request ... --prefer KEY=VALUE`
 (repeatable; for example `--prefer slotType=native`) or `--resource <name>`.

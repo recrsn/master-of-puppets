@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # Recycle command for a HUTCH pool class (config set-class HUTCH --pool-recycle <this file>).
 # Over ssh to the Hutch env $MOP_RESOURCE: fetch origin main (a failed fetch falls back to the
-# VM's own origin/main), force main to origin/main, git clean -fdx, then check that
-# git status --porcelain is empty and that / has at least HUTCH_RECYCLE_MIN_FREE_GIB free.
+# VM's own origin/main), force main to origin/main, git clean -ffdx -e node_modules (node_modules
+# stays, so the next holder's install is fast; build output, .env files and nested repos go), then
+# check that git status --porcelain is empty and that / has at least HUTCH_RECYCLE_MIN_FREE_GIB free.
 # The last stdout line is the result for moplib.recycle_run:
 #   {"freeGiB": N}             exit 0: clean
 #   {"failed": "<reason>"}     exit 3: the VM was reached and the reset or a check failed (destroy it)
 #   anything else (ssh exit 255, no alias, a timeout): unreachable, the VM is kept
-# Git runs as root when sudo -n works, then the checkout goes back to its owner, so a
-# root-owned file inside a user's checkout cannot block the reset.
+# Git runs as root when sudo -n works, then the checkout goes to the ssh login user, so a
+# root-owned file cannot block the reset and the holder can run git without sudo (a fresh VM's
+# checkout is root-owned).
 set -uo pipefail
 hutch="${HUTCH_BIN:-$HOME/.local/bin/hutch-latest}"
 min_free="${HUTCH_RECYCLE_MIN_FREE_GIB:-10}"
@@ -23,11 +25,12 @@ exec ssh -o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=30 -o Serv
 set -uo pipefail
 free=""
 fail() {
-	printf '{"failed": "%s"%s}\n' "$1" "${free:+, \"freeGiB\": $free}"
+	reason=$(printf '%s' "$1" | tr '\n\t' '  ' | sed 's/\\/\\\\/g; s/"/\\"/g')  # one JSON string
+	printf '{"failed": "%s"%s}\n' "$reason" "${free:+, \"freeGiB\": $free}"
 	exit 3
 }
 [ -d "$REPO/.git" ] || fail "no git checkout at $REPO"
-owner=$(stat -c %U "$REPO") || fail "cannot stat $REPO"
+owner=$(id -un) || fail "cannot read the login user"
 as=()
 if sudo -n true 2>/dev/null; then as=(sudo -n); fi
 g() { ${as[@]+"${as[@]}"} git -c safe.directory="$REPO" -C "$REPO" "$@"; }
@@ -35,7 +38,7 @@ timeout 300 ${as[@]+"${as[@]}"} git -c safe.directory="$REPO" -C "$REPO" fetch -
 	|| echo "fetch failed; using the VM's own origin/main" >&2
 g rev-parse --verify --quiet origin/main >/dev/null || fail "no origin/main"
 g checkout --quiet --force -B main origin/main || fail "git reset to origin/main failed"
-g clean -fdxq || fail "git clean -fdx failed"
+g clean -ffdxq -e node_modules || fail "git clean -ffdx failed"
 if [ ${#as[@]} -gt 0 ]; then
 	sudo -n chown -R "$owner": "$REPO" || fail "chown back to $owner failed"
 fi
