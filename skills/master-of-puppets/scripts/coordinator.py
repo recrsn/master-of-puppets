@@ -66,6 +66,10 @@ name. Every command accepts --coordinator, --by, --from, --me, --name or --sende
 the caller, and changes nothing for it; naming another coordinator is an error. Below, C is
 the caller.
 
+Before an install, MOP_TRY=1 python3 -I <skill copy>/coordinator.py <command> runs a read-only command
+(pr, pr delta, release, welcome, decision|relay|waiver list, inbox, ledger, ...) in-process from that
+copy; every other command goes to the server, which runs the installed helpers.
+
 State lives in $MACHINE_LEASE_DIR (default ~/.local/state/machine-leases), not beside
 this file, so every coordinator that runs any copy shares one state.
 
@@ -3609,7 +3613,23 @@ def main(argv=None):
         unlock()
 
 
+def try_allowed(argv):
+    """The read-only commands MOP_TRY=1 runs in this process from this copy, before an install: they write
+    nothing, so they cannot race the server's lock."""
+    cmd, rest = (argv[:1] or [""])[0], argv[1:]
+    if cmd == "pr":
+        return (rest[:1] or [""])[0] not in ("read", "auto")
+    if cmd in ("decision", "relay", "waiver"):
+        return "list" in rest[:1]
+    return cmd in ("release", "welcome", "prs", "sizes", "who", "roster", "whoami", "inbox", "ledger", "events")
+
+
 if __name__ == "__main__":
     if sys.argv[1:2] == ["install"]:
         sys.exit(main())  # install copies this skill copy's own files, so it runs here
+    if os.environ.get("MOP_TRY") == "1":
+        if not try_allowed(sys.argv[1:]):
+            sys.exit("MOP_TRY=1 runs only read-only commands (pr, pr delta, release, welcome, decision|relay|waiver list, "
+                     "and the shared-record reads); others need the installed helpers")
+        sys.exit(main())  # try this copy's read-only commands before an install
     sys.exit(forward("coordinator", sys.argv[1:]))
