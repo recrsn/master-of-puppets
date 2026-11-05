@@ -266,6 +266,16 @@ Shared records (read-only; puppet.py has them too)
        the head of each class), members silent for --stale-minutes, inbox lines to C since its
        last round, vote list, the pr digest of C's PRs and, with --release-repo, release state.
        Each section has its own timeout; one that hangs prints "timed out" and the round goes on
+  pr read N [--head SHA] [--text WHAT] | pr delta N | pr auto N [--method squash|merge|rebase]
+       read records the full head SHA whose diff C read (a ledger line, kind read). delta shows
+       the commits and files from C's last read head to the current head. auto enables
+       auto-merge (gh pr merge --auto --match-head-commit) only when the current head is the
+       read head; otherwise it prints the delta and exits 3. After a push drops auto-merge,
+       read the delta, pr read, then pr auto again
+  relay --quote "USER WORDS" [--via SESSION] [--pr N] [--about TEXT] | relay list [--pr N] [-n N]
+  waiver --pr N --quote "USER WORDS" [--via SESSION] [--waives E2E] | waiver list [--pr N] [-n N]
+       one ledger record type (kind relay or waiver) for the user's words that C relays, with
+       the exact quote and the session that heard them. They record; they approve nothing new
   prs --path GLOB [--path ...] [--repo owner/repo]
        open PRs of members and prs-<C>.txt watch lists whose changed files match (a glob
        or a directory prefix), with their owners; --repo also covers coordinator PRs
@@ -342,7 +352,7 @@ sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import (
     RUN, caller, captured, coordinator_prs, cenv, forward, in_run, mark, nap, restart_server, session_identity,
     DIR, CONFIG, MEMBER_TOOLS, SLUG, FILES, OBSOLETE, SOURCE, version_warning, PEAKS,
-    INBOX, PRS_STATE, PRS_EVENTS, PRS_POLL_S, CLASS_NAME, read_json, write_json, load_machine, registry,
+    INBOX, LEDGER, PRS_STATE, PRS_EVENTS, PRS_POLL_S, CLASS_NAME, read_json, write_json, load_machine, registry,
     class_names, project_key, load_project, save_project, class_peak, typical_minutes,
     suggested_minutes, over_limit, undersized, extend_lease, now, lock, unlock, log, note,
     load_roster, save_roster, live, asleep, load, save, budget, order, queue_entry,
@@ -2542,8 +2552,131 @@ def pr_digests(refs):
     return out
 
 
+def record(by, kind, text, pr=None, **fields):
+    """A ledger line with a kind (relay, waiver, read) and its fields, so ledger --grep and the kind
+    commands find it; text is what ledger prints."""
+    rec = {"at": now().isoformat(), "by": by, "kind": kind, "text": text, **{k: v for k, v in fields.items() if v is not None}}
+    if pr:
+        rec["pr"] = pr
+    with open(LEDGER, "a") as f:
+        f.write(json.dumps(rec) + "\n")
+
+
+def records(kind, pr=None, by=None):
+    """The ledger records of a kind, oldest first."""
+    out = []
+    try:
+        lines = open(LEDGER).read().splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if rec.get("kind") == kind and (pr is None or rec.get("pr") == pr) and (by is None or rec.get("by") == by):
+            out.append(rec)
+    return out
+
+
+def relay_cmd(args):
+    """relay and waiver: the user's own words that a coordinator relays, as one ledger record type. A
+    waiver names the PR and what it waives. list prints them. These record words; they approve nothing."""
+    if args.action == "list":
+        rows = records(args.cmd, args.pr)
+        for r in rows[-(args.n or len(rows) or 1):]:
+            print(f"{r['at'][:19]}Z {r['by']}: {r['text']}")
+        if not rows:
+            print(f"no {args.cmd} records" + (f" for #{args.pr}" if args.pr else ""))
+        return 0
+    if not args.quote:
+        print(f"{args.cmd} needs --quote with the user's own words")
+        return 2
+    if args.cmd == "waiver" and not args.pr:
+        print("waiver needs --pr")
+        return 2
+    via = f" via {args.via}" if args.via else ""
+    if args.cmd == "waiver":
+        text = f"WAIVER #{args.pr}{via} — {args.waives}: user said \"{args.quote}\""
+        record(args.by, "waiver", text, args.pr, quote=args.quote, via=args.via, waives=args.waives)
+    else:
+        text = f"RELAY{via}{' #' + str(args.pr) if args.pr else ''}: user said \"{args.quote}\"" + (f" — {args.about}" if args.about else "")
+        record(args.by, "relay", text, args.pr, quote=args.quote, via=args.via, about=args.about)
+    print(text)
+    return 0
+
+
+def pr_read_cmd(args, action, refs):
+    """read: record the head SHA C read. delta: the commits and files from the last read head to the current
+    head. auto: enable auto-merge only when the current head was read; else print the delta and refuse."""
+    if len(refs) != 1:
+        print(f"pr {action} takes one PR")
+        return 2
+    (repo, n), = refs
+    args.by = caller()
+    d = pr_digests(refs)[(repo, n)]
+    if "error" in d:
+        print(f"{repo}#{n} error {d['error']}")
+        return 1
+    reads = [r for r in records("read", n, args.by) if r.get("repo") == repo]
+    last = reads[-1]["head"] if reads else None
+    if action == "read":
+        sha = args.head or d["head"]
+        if len(sha) != 40:
+            print(f"--head needs a full 40-character SHA, not {sha}")
+            return 2
+        record(args.by, "read", f"#{n} diff read at head {sha}" + (f": {args.text}" if args.text else ""), n,
+               repo=repo, head=sha)
+        print(f"{repo}#{n} read at {sha}" + (" (not the current head " + d["head"] + ")" if sha != d["head"] else ""))
+        return 0
+    if last != d["head"]:
+        if not last:
+            print(f"{repo}#{n} head {d['head']}: no read recorded; read the diff, then pr read {n}")
+        else:
+            cmp, err = gh_get(f"repos/{repo}/compare/{last}...{d['head']}")
+            if err:
+                print(f"{repo}#{n} compare {last[:12]}...{d['head'][:12]}: {err}")
+                return 1
+            print(f"{repo}#{n} read {last} -> head {d['head']}: {cmp.get('status')}, {cmp.get('ahead_by')} new commits")
+            for c in cmp.get("commits") or []:
+                print(f"  {c['sha'][:12]} {c['commit']['message'].splitlines()[0][:90]}")
+            for f in (cmp.get("files") or [])[:40]:
+                print(f"  {f['status']:<9} +{f.get('additions', 0)} -{f.get('deletions', 0)} {f['filename']}")
+            print(f"  compare: https://github.com/{repo}/compare/{last}...{d['head']}")
+        if action == "auto":
+            print("auto-merge not enabled: read the delta, then pr read, then pr auto again")
+            return 3
+        return 0
+    if action == "delta":
+        print(f"{repo}#{n} head {d['head']} is the head you read; nothing new")
+        return 0
+    if d["state"] != "OPEN":
+        print(f"{repo}#{n} is {d['state']}; nothing to enable")
+        return 0
+    if d["automerge"] != "off":
+        print(f"{repo}#{n} automerge={d['automerge']}; nothing to change")
+        return 0
+    r = subprocess.run(["gh", "pr", "merge", str(n), "--repo", repo, "--auto", f"--{args.method}",
+                        "--match-head-commit", d["head"]], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+    if r.returncode != 0:
+        print(f"{repo}#{n} gh pr merge --auto failed: {' '.join(r.stderr.split())[:300]}")
+        return 1
+    note(args.by, f"#{n} auto-merge enabled at read head {d['head']}", n)
+    print(f"{repo}#{n} auto-merge enabled ({args.method}) at read head {d['head']}")
+    return 0
+
+
 def pr_cmd(args):
-    """The digest of each PR: one GraphQL request per 10 PRs of a repo. Exit 1 when any PR failed."""
+    """The digest of each PR: one GraphQL request per 10 PRs of a repo. Exit 1 when any PR failed.
+    pr read|delta|auto N work on the diff-read record."""
+    action = args.refs[0] if args.refs[0] in ("read", "delta", "auto") else None
+    words = args.refs[1:] if action else args.refs
+    if action:
+        try:
+            return pr_read_cmd(args, action, pr_refs_for(words, args.repo))
+        except ValueError as e:
+            print(e)
+            return 2
     try:
         refs = pr_refs_for(args.refs, args.repo)
     except ValueError as e:
@@ -3035,6 +3168,18 @@ def main(argv=None):
     acl.add_argument("cls", metavar="CLASS")
     acl.set_defaults(_self=("by",))
     acl.add_argument("--reason", help="for example what was cleaned up")
+    for kind in ("relay", "waiver"):
+        rx = sub.add_parser(kind, help=f"record the user's words that you relay{' and what they waive' if kind == 'waiver' else ''}; list them")
+        rx.set_defaults(_self=("by",))
+        rx.add_argument("--quote", help="the user's own words, exactly")
+        rx.add_argument("--via", help="the session that heard them, when not you")
+        rx.add_argument("--pr", type=int)
+        if kind == "waiver":
+            rx.add_argument("--waives", default="E2E", help="what the user waived; default E2E")
+        else:
+            rx.add_argument("--about", help="what the words decide")
+        rx.add_argument("action", nargs="?", choices=("list",), help="list the records")
+        rx.add_argument("-n", type=int, help="list: the last N")
     rl = sub.add_parser("release", help="read-only release checks: carries, state; never dispatches")
     rlsub = rl.add_subparsers(dest="rcmd", required=True)
     rlc = rlsub.add_parser("carries", help="whether a tag carries each PR's merge commit, by full-SHA ancestry")
@@ -3065,8 +3210,11 @@ def main(argv=None):
     wl.set_defaults(_self=("coordinator",))
     wl.add_argument("--name", required=True)
     wl.add_argument("--project-root", help="for the project rules and lease sizes; default: the member's worktree")
-    pd = sub.add_parser("pr", help="the digest of PRs: state, head, merge, review, queue, auto-merge, threads, CodeRabbit, required checks")
-    pd.add_argument("refs", nargs="+", metavar="PR", help="N, #N or owner/repo#N")
+    pd = sub.add_parser("pr", help="the digest of PRs; pr read|delta|auto N for diff reads and auto-merge")
+    pd.add_argument("refs", nargs="+", metavar="PR", help="N, #N or owner/repo#N; or read|delta|auto and one PR")
+    pd.add_argument("--head", help="pr read: the full SHA you read; default: the current head")
+    pd.add_argument("--text", help="pr read: what the diff does, for the ledger")
+    pd.add_argument("--method", choices=("squash", "merge", "rebase"), default="squash", help="pr auto: merge method")
     pd.add_argument("--repo", help="owner/repo for bare numbers; default: the one watched repo that has the PR")
     pd.add_argument("--json", action="store_true")
     pp = sub.add_parser("prs")
@@ -3304,7 +3452,7 @@ def main(argv=None):
     unlocked = {"host-check": host_check_cmd, "calm-wait": calm_wait_cmd, "measure-peak": measure_peak_cmd,
                 "drain-check": drain_check_cmd, "watch": watch_cmd, "install": install_cmd, "prs": prs_cmd,
                 "pr": pr_cmd, "join": join_cmd, "welcome": welcome_cmd,
-                "release": release_cmd, "round": round_cmd}
+                "release": release_cmd, "round": round_cmd, "relay": relay_cmd, "waiver": relay_cmd}
     if args.cmd in unlocked:
         return unlocked[args.cmd](args)
     if args.cmd == "decision":
