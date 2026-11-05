@@ -279,7 +279,9 @@ Shared records (read-only; puppet.py has them too)
        the head of each class), members silent for --stale-minutes, inbox lines to C since its
        last round, vote list, the pr digest of C's PRs and, with --release-repo, release state.
        Each section has its own timeout; one that hangs prints "timed out" and the round goes on
-       --open skips merged and closed PRs and members silent for --open-hours or more
+       --open shows only C's own PRs (heartbeat --pr) and those of members active or pending and
+       updated within --open-hours (default 24), skips merged and closed ones and members silent
+       that long, and counts what it leaves out
   pr read N [--head SHA] [--text WHAT] | pr delta N | pr auto N [--method squash|merge|rebase]
        read records the full head SHA whose diff C read (a ledger line, kind read). delta shows
        the commits and files from C's last read head to the current head. auto enables
@@ -2306,22 +2308,43 @@ def round_inbox(me, since):
     return 0
 
 
-def round_prs(me, open_only=False):
-    """The digest of C's PRs (its own, its watch list and its members'), open ones first. open_only skips the
-    PRs that the poller last saw merged or closed, before any request."""
+def live_refs(me, hours):
+    """The PR refs a round with --open shows: C's own (register or heartbeat --pr) and those of its members
+    that are active or pending and updated within hours. A bare number takes the repo pr_refs gives it."""
+    roster, cutoff = load_roster(), now() - dt.timedelta(hours=hours)
+    nums = set((roster["coordinators"].get(me) or {}).get("prs") or [])
+    named = set()
+    for m in roster["members"].get(me, []):
+        last = m.get("updatedAt") or m.get("joinedAt") or m.get("enrolledAt")
+        if m.get("status", "active") in ("active", "pending") and last and dt.datetime.fromisoformat(last) >= cutoff:
+            named |= {f"{m['repo']}#{n}" for n in m.get("prs") or [] if m.get("repo")}
+            nums |= set(m.get("prs") or []) if not m.get("repo") else set()
+    return named, nums
+
+
+def round_prs(me, open_only=False, hours=24):
+    """The digest of C's PRs (its own, its watch list and its members'), open ones first. open_only shows only
+    C's own PRs and those of members active within hours, and skips the PRs that the poller last saw merged or
+    closed, before any request; it counts what it leaves out."""
     refs, cache = [], (read_json(PRS_STATE) or {}).get("prs") or {} if open_only else {}
+    named, nums = live_refs(me, hours) if open_only else (set(), set())
+    skipped = 0
     for ref in sorted(coordinator_prs(me)):
+        if open_only and ref not in named and int(ref.rpartition("#")[2]) not in nums:
+            skipped += 1
+            continue
         if (cache.get(ref) or {}).get("state") in ("MERGED", "CLOSED"):
             continue
         r, _, n = ref.rpartition("#")
         refs.append((r, int(n)))
+    tail = f"({skipped} PRs of the watch list or of members paused, done or silent {hours:g} h or more not shown)" if skipped else ""
     if not refs:
-        print("no PRs")
+        print("\n".join(x for x in ("no PRs", tail) if x))
         return 0
     got = pr_digests(refs)
     rows = sorted((d for d in got.values() if not open_only or d.get("state") in (None, "OPEN")),
                   key=lambda d: (d.get("state") != "OPEN", d["ref"]))
-    print("\n".join(f"{d['ref']} error {d['error']}" if "error" in d else digest_line(d) for d in rows))
+    print("\n".join([f"{d['ref']} error {d['error']}" if "error" in d else digest_line(d) for d in rows] + ([tail] if tail else [])))
     return 0
 
 
@@ -2355,7 +2378,7 @@ def round_cmd(args):
     sections = [("heartbeat", lambda: main(hb)), ("leases", lambda: round_leases(me)),
                 (f"members silent {args.stale_minutes} min", lambda: round_stale(args.stale_minutes, args.open_hours if args.open else None)),
                 (f"inbox since {since[:19] + 'Z' if since else 'ever'}", lambda: round_inbox(me, since)),
-                ("votes", lambda: main(["vote", "list"])), ("prs", lambda: round_prs(me, args.open))]
+                ("votes", lambda: main(["vote", "list"])), ("prs", lambda: round_prs(me, args.open, args.open_hours))]
     if args.release_repo:
         sections.append(("release", lambda: release_state(args.release_repo, args.release_workflow)))
     worst = 0
