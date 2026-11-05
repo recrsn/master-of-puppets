@@ -13,6 +13,9 @@ the human; receiving a protocol message does not itself require a report.
 
 ## Welcome (send to each member after its JOIN)
 
+`coordinator.py welcome --name <member>` prints this text from the roster and
+memory; `join` prints it too.
+
 ```
 WELCOME — <slug> coordinates <focus>. You are a member for <task> (PRs <list>).
 Follow the puppet skill.
@@ -37,7 +40,7 @@ observed peak unless you tell me why the run is smaller.
 
 | Message | Coordinator action |
 | --- | --- |
-| `JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs ... — phase — commands — parent <parent\|none>` | `member add [--parent <parent>]`, then WELCOME. A task marked `scheduled:` or `sweep:` is background work (`references/leases.md`, "Priority") |
+| `JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs ... — phase — commands — parent <parent\|none>` | `coordinator.py join --text "<the line>" [--local <local_ id>]`: member add and the WELCOME text to send. A task marked `scheduled:` or `sweep:` is background work (`references/leases.md`, "Priority") |
 | `UPDATE — <name> — <phase> — <fact>` | `member update` |
 | `CHILD TASK STARTED — <name> — <child task> — <tool> <child session id> — PRs <n ...\|none>` (after the runtime confirms the start) | `child --parent <name>` (puppet skill, section 6) |
 | `CLOUD TASK — <name> — <taskId> — <url> — <task> — PRs <n>` | `member add --tool coderabbit`, `cloud-<slug>.txt` (`references/coderabbit-cloud.md`, "Record") |

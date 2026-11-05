@@ -229,7 +229,8 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
   A LEAVE after your HANDOFF COMPLETE, or after a cloud handoff that you
   recorded, is expected (`references/handoff.md`, `references/coderabbit-cloud.md`).
 - **Decisions for the user**: `coordinator.py decision add --task <id> --text "..." [--href <link>] [--option "..." ...]`;
-  `decision clear --task <id>` once answered. Give 2 to 4
+  `decision clear --id <decision id>` once answered (`decision list` shows the
+  ids; `--task` refuses when the task has several, unless `--all`). Give 2 to 4
   `--option` suggested answers when the choices are clear ("Yes, merge it",
   "No, run E2E first"); the dashboard shows each as a button. When the user
   clicks one, the decision clears and you get a "[dashboard]" message with the
