@@ -142,8 +142,9 @@ show who, why and each changed key with its old and new value)
        the resources of a pool class
        stream update ... --auto-acquire on|off   same for one stream's members
        The server does pool upkeep once a minute: it stops unheld running pool resources idle past
-       --pool-stop-after-minutes (release never stops), resets a busy resource whose operation's
-       process is gone (at once; 90 min with no operation record), names what a dead create made (CREATE-LOST), deletes unheld failed ones (not those failed as unreachable or
+       --pool-stop-after-minutes (release never stops), acts on a busy resource whose operation's
+       process is gone (at once; 90 min with no operation record): a dead create's placeholder goes and
+       CREATE-LOST names what it made; any other dead op quarantines the resource (dead-<op>), deletes unheld failed ones (not those failed as unreachable or
        after a failed delete), deletes unheld ones idle past --pool-idle-delete-hours, and
        sends the lease's coordinator POOL-EXPIRED for a lease that expired over an hour ago and
        still holds a resource.
@@ -3065,10 +3066,12 @@ def auto_class(c, ctx):
 
 def pool_upkeep():
     """In the server, once a minute, for each pool class: stop an unheld running resource idle for
-    stopAfterMinutes (release never stops: a stop is costly, and the next grant may come soon); reset a
+    stopAfterMinutes (release never stops: a stop is costly, and the next grant may come soon); act on a
     busy resource whose operation's process is gone (a crash or a server restart), at once, or past
-    POOL_STUCK_MINUTES when the busy state has no operation record (a live operation is never reset); a dead
-    create's placeholder goes, its queued request gets a new create, and its coordinator gets CREATE-LOST; delete an unheld failed resource (a
+    POOL_STUCK_MINUTES when the busy state has no operation record (a live operation is never touched): a
+    dead create's placeholder goes, its queued request gets a new create, and its coordinator gets
+    CREATE-LOST; any other dead op quarantines the resource as failed with reason dead-<op> (its remote
+    command may still run), and its coordinator gets RESOURCE-QUARANTINED; delete an unheld failed resource (a
     failed start or health check, a release with --retire-vm, a manual mark) only when its reason is in
     FAIL_DELETE (another reason or none is quarantined);
     delete an unheld resource idle for the class's idleDeleteHours (both need a delete command; a failed
@@ -3107,15 +3110,22 @@ def pool_pass(warned, by="server"):
                         if entry:
                             entry.pop("assigning", None)  # still queued: the next grant creates again
                         owner = entry or next((h for h in state[cls] if h["id"] == lid), None) or {}
-                        lost.append((r["name"], r.get("since"), lid, owner.get("coordinator"), bool(entry),
+                        lost.append((r["name"], r.get("since"), lid, lease_coordinator(state, cls, lid), bool(entry),
                                      owner.get("prefer") or {}))
                     else:
-                        end_op(r, {"assigning": r.get("prior") or "free", "deleting": "failed"}.get(r["state"], "free"))
+                        # The op's ssh session or remote command (a reset, a clean) can outlive its parent process, so
+                        # a dead parent proves nothing on the resource: quarantine it, never grant it, until a
+                        # coordinator checks it and marks it free (or failed, to delete it).
+                        kind = op.get("kind") or r["state"]
                         r.pop("prior", None)
-                        if r["state"] == "failed":
-                            r["failReason"], r["failDetail"] = "stuck-delete", f"delete stuck {age:.0f} min, its process gone"
+                        mark_failed(r, f"dead-{kind}", f"{kind} process gone after {age:.0f} min; check that its "
+                                                        "remote command ended, then mark it free")
+                        say("pool", f"RESOURCE-QUARANTINED {cls} {r['name']}: its {kind} process is gone; check that "
+                                    f"its remote command ended, then resource mark {cls} --name {r['name']} --state free "
+                                    f"(or --state failed to delete it)", lease_coordinator(state, cls, op.get("for")))
                     save(state, machine)
-                    log(f"resource reset {cls} {r['name']} stuck {age:.0f} min by={by}")
+                    log(f"resource reset {cls} {r['name']} stuck {age:.0f} min by={by}"
+                        + ("" if r["state"] == "creating" else f" reason={r.get('failReason')}"))
                 elif op or r["state"] in BUSY_STATES or r["name"] in held:
                     continue
                 elif r["state"] == "failed" and pool.get("delete") and r.get("failReason") in FAIL_DELETE:
@@ -3140,6 +3150,12 @@ def pool_pass(warned, by="server"):
             stop_resource(cls, name)
         for name in failed + idle:
             resource_cmd(argparse.Namespace(rcmd="remove", cls=cls, name=name, by=by, delete=True, state="free", info=None))
+
+
+def lease_coordinator(state, cls, lease_id):
+    """The coordinator of a queued or held lease, else None (the message goes to every coordinator)."""
+    rec = next((x for x in state["queue"][cls] + state[cls] if x["id"] == lease_id), None) if lease_id else None
+    return (rec or {}).get("coordinator")
 
 
 def create_lost(cls, pool, name, since, lease_id, coordinator, queued, prefer):

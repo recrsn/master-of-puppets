@@ -102,7 +102,7 @@ creates new ones without a coordinator step:
   `unreachable` (the health or recycle command could not reach it, so its
   files stay for a check: `resource mark ... --state free` returns it),
   `delete` (its delete failed once; check it, then `resource remove ...
-  --delete`), `stuck-delete` (a delete whose process died), and any failed
+  --delete`), `dead-<op>` (an op whose process died; see below), and any failed
   resource with no reason or an unknown one, for example one that failed
   before reasons existed or one added with `resource add --state failed`.
   `resource list` shows these as `quarantined`; a coordinator marks them
@@ -182,10 +182,16 @@ running resource idle for M minutes; `--pool-idle-delete-hours H` (default 0 =
 never) deletes an unheld resource that has idled for H hours, using the delete
 command. Every lifecycle step (create, start, stop, delete) claims the
 resource with an op token and a busy state; `resource mark` and `remove`
-refuse a busy resource. Upkeep also resets a busy resource whose operation's
-process is gone (a crashed command or a server restart), at once; a busy
-state with no operation record waits 90 min. A live operation is never
-reset. A dead create's placeholder goes, and a request still queued for it
+refuse a busy resource. Upkeep also acts on a busy resource whose
+operation's process is gone (a crashed command or a server restart), at
+once; a busy state with no operation record waits 90 min. A live operation
+is never touched. Any op but a create quarantines the resource: failed with
+reason `dead-<op>` (`dead-recycle`, `dead-health`, `dead-delete`, ...), kept,
+never granted, and the coordinator gets `RESOURCE-QUARANTINED`. The op's ssh
+session or remote command can outlive its parent, so a dead parent does not
+prove that a reset or a clean stopped on the VM. Check that it ended, then
+`resource mark ... --state free` (or `--state failed` to delete it). A dead
+create's placeholder goes, and a request still queued for it
 gets a new create at the next grant. The create may have made a resource
 outside the pool, so with `--pool-find CMD` upkeep lists the resources made
 since the create began (`MOP_SINCE`; one `{"name": ...}` line each) and

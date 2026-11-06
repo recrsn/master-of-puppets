@@ -779,7 +779,7 @@ HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB = 10, 2  # defaults for a pool's minFree
 # Why a resource is failed. The server's pool upkeep deletes a failed resource only for these reasons. Any other
 # reason, or none (a resource failed before reasons existed), is quarantined: kept until a coordinator marks it
 # again. The kept reasons: unreachable (not reset, so its files stay for a check), delete (its delete failed
-# once), stuck-delete (a delete whose process died).
+# once), dead-<op> (an op whose process died: its remote command may still run).
 FAIL_DELETE = ("create", "start", "health", "retire", "manual")
 
 
