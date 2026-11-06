@@ -80,7 +80,7 @@ from moplib import (
     load_project, save_project, project_key, undersized, now, lock, unlock, log, say,
     load, save, load_roster, queue_entry, extension_refusal, READS, add_read_commands, read_cmd, version_warning, drain,
     find_resource, set_state, mark_failed, parse_prefer, RESOURCE_NAME, pool_spec,
-    begin_op, recycle_run, recycle_note, destroy_recycled, recycle_released,
+    begin_op, recycle_run, recycle_note, destroy_recycled, recycle_released, health_released,
 )
 
 MAX_RECYCLE_DESTROYS = 3  # resources one await-grant may destroy for failed recycles before it stops re-queueing
@@ -352,12 +352,16 @@ def release(args):
                 os.remove(path)
         state[args.cls] = [h for h in holders if h["id"] != args.id]
         res = find_resource(state, args.cls, held.get("resource")) if held.get("resource") else None
-        token = info = None
-        retired = res is not None and args.result == "fail" and res["state"] == "free" and not res.get("op")
+        token = info = check = None
+        spec = pool_spec(args.cls) or {}
+        usable = res is not None and res["state"] == "free" and not res.get("op")
+        retired = usable and bool(args.retire_vm)
         if retired:  # never granted again; the server's pool upkeep deletes it, and the next grant gets another
-            mark_failed(res, "release", args.note or "released with fail")
-        elif res and res["state"] == "free" and not res.get("op") and (pool_spec(args.cls) or {}).get("recycle"):
+            mark_failed(res, "release", args.retire_vm)
+        elif usable and spec.get("recycle"):  # the recycle checks free disk too
             token, info = begin_op(res, "recycle", "recycling", args.id), res.get("info")  # no grant takes it mid-reset
+        elif usable and spec.get("health"):  # a VM left under the floors is retired now, not at the next grant
+            check, info = begin_op(res, "health", "checking", args.id), res.get("info")
         elif res and res["state"] == "free":
             set_state(res, "free")  # stamps the idle clock; the server's pool upkeep stops it later, if the class asks
         save(state, machine)
@@ -375,12 +379,16 @@ def release(args):
             + (f" note={json.dumps(args.note)}" if args.note else ""))
         print(f"released {args.cls} {args.id} ({args.result}); {'drained' if not left else 'not drained'}: {len(left)} left in {held.get('worktree')}")
         if retired:
-            print(f"{held['resource']} is retired (released with fail): marked failed, never granted again, and deleted by the pool upkeep")
+            print(f"{held['resource']} is retired ({args.retire_vm}): marked failed, never granted again, and deleted by the pool upkeep")
         if token:
             print(f"recycling {held['resource']}; this can take a few minutes", flush=True)
+        if check:
+            print(f"checking the health of {held['resource']}", flush=True)
     finally:
-        # A print raises ClientGone when the client has gone; the claimed resource still gets its recycle.
+        # A print raises ClientGone when the client has gone; the claimed resource still gets its recycle or check.
         outcome = token and recycle_released(args.cls, held["resource"], token, info, args.id, held["coordinator"], held.get("worktree"))
+        outcome = outcome or (check and health_released(args.cls, held["resource"], check, info, args.id,
+                                                         held["coordinator"], held.get("worktree")))
     if outcome:
         print(outcome)
     return 0
@@ -421,6 +429,8 @@ def main(argv=None):
     r = sub.add_parser("release")
     r.add_argument("cls", metavar="CLASS", nargs="?", help="default: the class that queues or holds --id")
     r.add_argument("--id", required=True)
+    r.add_argument("--retire-vm", metavar="REASON", help="pool class: the resource is dirty or unusable; never grant it "
+                   "again, and the pool deletes it. A plain --result fail keeps it when its health check passes")
     r.add_argument("--peak-gib", type=float, help="measured peak; default: peaks/<id>.gib from measure-peak")
     r.add_argument("--peak-cpus", type=float, help="measured peak cores; default: peaks/<id>.cpus from measure-peak")
     r.add_argument("--result", required=True, choices=("pass", "fail", "partial"), help="the outcome of the granted commands")
