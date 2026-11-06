@@ -81,10 +81,12 @@ creates new ones without a coordinator step:
   holder's `RESOURCE` line. `scripts/examples/hutch-pool-health` is the
   command for a Hutch pool; it changes nothing on the VM. It first reads
   `hutch env status`. Only a known unhealthy state fails the check (reason
-  `health`, so the upkeep deletes it): progressStatus `FAILED` or `BUILDING`
-  (a failed rebuild, a rebuild still running), codespaceState `Shutdown`, a
-  deletion request, or an env Hutch no longer has. `READY` with `Available`
-  passes. An error from Hutch, a malformed response or an unknown state
+  `health`, so the upkeep deletes it): progressStatus `FAILED`, codespaceState
+  `Shutdown`, a deletion request, or an env Hutch no longer has. `READY` or
+  `BUILDING` with `Available` goes on to the disk, memory and SSH checks:
+  Hutch shows `BUILDING` when the app services are down (a member stopped
+  them, or the clean removed the build output), and checks do not need the
+  app services. An error from Hutch, a malformed response or an unknown state
   counts as unreachable: kept, never deleted for it.
 - **Health at every release.** `puppet.py release` (pass, fail or partial)
   runs the health command while the resource is `checking` (busy, so no grant

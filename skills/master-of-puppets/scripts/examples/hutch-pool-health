@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Health command for a HUTCH pool class (config set-class HUTCH --pool-health <this file>).
 # Before every grant and at every release: first the Hutch env status (hutch env status --json). Only known
-# unhealthy states fail the check (exit 3, deleted): progressStatus FAILED or BUILDING (a failed rebuild, a
-# rebuild in progress), codespaceState Shutdown, a deletion request, or an env Hutch no longer has. READY with
-# Available passes. Any other response (malformed, missing fields, an unknown state) is unreachable. Then, over ssh to the env $MOP_RESOURCE: read free disk on /
-# and available memory.
+# unhealthy states fail the check (exit 3, deleted): progressStatus FAILED, codespaceState Shutdown, a
+# deletion request, or an env Hutch no longer has. READY or BUILDING with Available goes on to the VM checks:
+# BUILDING is what Hutch shows when the app services are down (a member ran crstop, or the clean removed the
+# build output), and checks do not need them. Any other response (malformed, missing fields, an unknown
+# state) is unreachable. Then, over ssh to the env $MOP_RESOURCE: read free disk on / and available memory.
 # The last stdout line is the result for moplib.health_run, which compares it with the pool's
 # minFreeGiB and minMemGiB:
 #   {"freeGiB": N, "memAvailGiB": M, "sshAlias": A, "uptimeS": S}   exit 0: the facts
@@ -30,10 +31,10 @@ if not isinstance(e,dict): print("unknown: no environment object"); sys.exit()
 p,s,gone=e.get("progressStatus"),e.get("codespaceState"),e.get("deletionRequestedAt")
 why=[]
 if gone: why.append("deletion requested")
-if p in ("FAILED","BUILDING"): why.append("progressStatus "+p)
+if p=="FAILED": why.append("progressStatus "+p)
 if s=="Shutdown": why.append("codespaceState Shutdown")
 if why: print(json.dumps({"failed":"hutch env %s: %s" % (", ".join(why),str(e.get("progressMessage") or "")[:150])}))
-elif p=="READY" and s=="Available": print("ok")
+elif p in ("READY","BUILDING") and s=="Available": print("ok" if p=="READY" else "building")
 else: print("unknown: progressStatus %r, codespaceState %r" % (p,s))
 ')
 parsed=$?
@@ -43,6 +44,7 @@ if [ "$parsed" -ne 0 ] || [ -z "$verdict" ]; then
 fi
 case "$verdict" in
 	ok) ;;
+	building) echo "hutch env $MOP_RESOURCE is BUILDING (app services down); checking the VM itself" >&2 ;;
 	'{"failed"'*) printf '%s\n' "$verdict"; exit 3 ;;
 	*) echo "hutch env status $MOP_RESOURCE: $verdict: $(printf '%s' "$status" | tr '\n' ' ' | tail -c 300)" >&2; exit 1 ;;
 esac
