@@ -208,10 +208,10 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
    did not start (for example your own wait loop on a remote run), add
    `--ignore-pid <pid>` and say why in `--note`. `await-grant`, `extend` and
    `release` find the class from `--id`, so `<CLASS>` is optional there.
-   On a pool class (a VM), `--result fail` retires the VM: it is never
-   granted again and the pool deletes it. Use it when the run failed, and put
-   what went wrong in `--note` (a full disk, no ssh, or the first test
-   failure).
+   On a pool class (a VM), each release checks the VM's free disk and
+   memory; a VM under the floors is retired and deleted. `--result fail` alone
+   keeps a healthy VM. When the VM itself is dirty or unusable, add
+   `--retire-vm "<reason>"`: it is never granted again and the pool deletes it.
 5. Project rules in WELCOME (from the coordinator's memory) can widen what
    needs a lease, for example a commit whose hooks run lint. Follow them.
 6. What needs no lease: `leases.md`, "Classes", in the coordinator skill.

@@ -766,7 +766,7 @@ def pool_info(out):
 
 
 POOL_STUCK_MINUTES = 90  # longer than a pool command's one-hour timeout
-BUSY_STATES = ("creating", "assigning", "stopping", "deleting", "recycling")
+BUSY_STATES = ("creating", "assigning", "stopping", "deleting", "recycling", "checking")
 RECYCLE_TIMEOUT = 900  # seconds; a recycle that runs longer counts as unreachable, never as failed
 
 
@@ -1002,6 +1002,39 @@ def recycle_released(cls, name, token, info, lease_id, coordinator, worktree=Non
     if outcome == "failed":
         return destroy_recycled(cls, name, token, info, detail, lease_id, coordinator)
     return recycle_note(cls, name, outcome, detail, tail)
+
+
+def health_released(cls, name, token, info, lease_id, coordinator, worktree=None):
+    """After a release, run the class's health command on the resource this caller claimed (begin_op health,
+    state checking, saved), without the lock held. Healthy: free again. Failed (under the pool's floors, or a
+    failed check): marked failed with reason health, and the server's pool upkeep deletes it. Unreachable:
+    marked failed with reason unreachable, kept. Logs the outcome and returns a line for the member."""
+    tail = f"for={lease_id} coordinator={coordinator}"
+    outcome, detail = health_run(cls, name, info, lease_id, worktree)
+    lock()
+    try:
+        state, machine = load(), load_machine()
+        res = op_current(state, cls, name, token)
+        if res is None:
+            log(f"resource health-reset {cls} {name} {tail}")
+            return f"{name} was reset while its health was checked; ask your coordinator"
+        if outcome in ("ok", "none"):
+            end_op(res, "free")  # also stamps the idle clock for the server's pool upkeep
+        else:
+            mark_failed(res, "unreachable" if outcome == "unreachable" else "health", detail)
+        save(state, machine)
+    finally:
+        unlock()
+    if outcome in ("ok", "none"):
+        facts = detail or {}
+        log(f"resource healthy {cls} {name} free={facts.get('freeGiB')} GiB mem={facts.get('memAvailGiB')} GiB {tail}")
+        return f"{name} is healthy ({facts.get('freeGiB')} GiB disk, {facts.get('memAvailGiB')} GiB memory free); back in the pool"
+    log(f"resource failed {cls} {name} reason={outcome} detail={json.dumps(detail)} {tail}")
+    if outcome == "unreachable":
+        say("pool", f"HEALTH-UNREACHABLE {cls} {name} for {lease_id}: {detail}; marked failed and kept "
+                    f"(check ssh from the server, then resource mark {cls} --name {name} --state free)", coordinator)
+        return f"could not reach {name} to check it ({detail}); marked failed and kept"
+    return f"{name} failed its health check ({detail}); retired, and the pool deletes it"
 
 
 def total_gib():

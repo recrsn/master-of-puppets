@@ -80,9 +80,15 @@ creates new ones without a coordinator step:
   retries at once) picks another one or creates one. The facts go on the
   holder's `RESOURCE` line. `scripts/examples/hutch-pool-health` is the
   command for a Hutch pool; it changes nothing on the VM.
-- **A release with `--result fail` retires the resource.** It is marked failed
-  (reason `release`) and never granted again, also when the run failed for a
-  reason other than the VM.
+- **Health at every release.** `puppet.py release` (pass, fail or partial)
+  runs the health command while the resource is `checking` (busy, so no grant
+  takes it). Healthy: free again, so a test failure keeps a good VM. Under a
+  floor: marked failed (reason `health`) at once, not at the next grant.
+  Unreachable: marked failed and kept, and the coordinator gets
+  `HEALTH-UNREACHABLE`. With a recycle command, the recycle runs instead (it
+  checks free disk too).
+- **`--retire-vm "<reason>"` retires the resource** at release, for a dirty or
+  unusable VM: marked failed (reason `release`), never granted again.
 - **Failed resources are deleted.** Once a minute the server's pool upkeep
   deletes every unheld failed resource with the delete command (reasons
   `start`, `health`, `release`, `manual` from `resource mark --state failed`).
