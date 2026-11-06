@@ -2883,7 +2883,8 @@ def leave_cmd(args):
     """The reply to a member's LEAVE, always. --reject (with --reason) keeps the member and tells it why.
     Accept checks the done rules first: every PR of the member MERGED and, unless --no-release-check, carried
     by the latest release of its repo by full-SHA ancestry, with --validated naming the production check.
-    Then member remove, a ledger record (kind leave) and the reply: delivered directly where the helper
+    A PR the user decided to close unmerged passes as CLOSED when --closed-by-user names it and --quote gives
+    the user's words; the release check skips it. Then member remove, a ledger record (kind leave) and the reply: delivered directly where the helper
     can, and printed with the session id for SendMessage. Exit 1 when the done rules fail (nothing changes)."""
     me, roster = args.coordinator, load_roster()
     m = next((x for x in roster["members"].get(me, []) if x["name"] == args.name), None)
@@ -2891,6 +2892,13 @@ def leave_cmd(args):
         print(f"{args.name} is not a member of {me}")
         return 3
     prs = m.get("prs") or []
+    closed = {int(str(n).lstrip("#")) for n in args.closed_by_user or []}
+    if closed and not (args.quote or "").strip():
+        print("leave --closed-by-user needs --quote with the user's words that decided to close it")
+        return 2
+    if closed - {int(n) for n in prs}:
+        print(f"--closed-by-user names PRs that {args.name} does not have: {sorted(closed - {int(n) for n in prs})}")
+        return 2
     if args.reject:
         if not args.reason:
             print("leave --reject needs --reason: what is left before the member may leave")
@@ -2907,10 +2915,14 @@ def leave_cmd(args):
             d = got[ref]
             if "error" in d:
                 problems.append(f"#{ref[1]}: {d['error']}")
+            elif d["state"] == "CLOSED" and int(ref[1]) in closed:
+                facts.append(f"#{ref[1]} closed unmerged by the user (\"{args.quote.strip()}\")")
             elif d["state"] != "MERGED":
-                problems.append(f"#{ref[1]} is {d['state']}, not MERGED")
+                problems.append(f"#{ref[1]} is {d['state']}, not MERGED"
+                                + (" (closed by the user? --closed-by-user N --quote \"<user words>\")" if d["state"] == "CLOSED" else ""))
             else:
                 facts.append(f"#{ref[1]} merged {d['mergeCommit']}")
+        refs = [ref for ref in refs if "error" not in got[ref] and got[ref]["state"] == "MERGED"]
         if refs and not problems and not args.no_release_check:
             tag, sha, err = resolve_tag(m["repo"], "latest")
             if err:
@@ -3422,6 +3434,9 @@ def main(argv=None):
     lv.add_argument("--reason")
     lv.add_argument("--validated", help="accept: the production check that passed, e.g. 'error rate flat 30 min in Datadog'")
     lv.add_argument("--no-release-check", action="store_true", help="accept: skip the release ancestry check (docs, CI-only)")
+    lv.add_argument("--closed-by-user", nargs="+", action="extend", metavar="PR",
+                    help="accept: these PRs may be CLOSED unmerged, by the user's decision (needs --quote)")
+    lv.add_argument("--quote", help="the user's words that decided to close the --closed-by-user PRs")
     gr = sub.add_parser("grant", help="acquire a queued request from its id; the rest comes from the request")
     gr.set_defaults(_self=("coordinator",))
     gr.add_argument("--id", required=True)
