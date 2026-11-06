@@ -79,7 +79,7 @@ from moplib import (
     LOG, PEAKS, SAMPLES_KEPT, MINUTES_KEPT, load_machine, registry, class_names,
     load_project, save_project, project_key, undersized, now, lock, unlock, log, say,
     load, save, load_roster, queue_entry, extension_refusal, READS, add_read_commands, read_cmd, version_warning, drain,
-    find_resource, set_state, parse_prefer, RESOURCE_NAME, pool_spec,
+    find_resource, set_state, mark_failed, parse_prefer, RESOURCE_NAME, pool_spec,
     begin_op, recycle_run, recycle_note, destroy_recycled, recycle_released,
 )
 
@@ -191,7 +191,7 @@ def recycle_granted(cls, lease_id, requeue):
         token = info = None
         if outcome == "unreachable":
             if res is not None and not res.get("op"):
-                set_state(res, "failed")  # out of rotation, kept: resource mark ... --state free returns it
+                mark_failed(res, "unreachable", detail)  # out of rotation, kept: resource mark ... --state free returns it
         elif res is not None and not res.get("op"):
             token, info = begin_op(res, "delete", "deleting", lease_id), res.get("info")
         if requeue:
@@ -353,7 +353,10 @@ def release(args):
         state[args.cls] = [h for h in holders if h["id"] != args.id]
         res = find_resource(state, args.cls, held.get("resource")) if held.get("resource") else None
         token = info = None
-        if res and res["state"] == "free" and not res.get("op") and (pool_spec(args.cls) or {}).get("recycle"):
+        retired = res is not None and args.result == "fail" and res["state"] == "free" and not res.get("op")
+        if retired:  # never granted again; the server's pool upkeep deletes it, and the next grant gets another
+            mark_failed(res, "release", args.note or "released with fail")
+        elif res and res["state"] == "free" and not res.get("op") and (pool_spec(args.cls) or {}).get("recycle"):
             token, info = begin_op(res, "recycle", "recycling", args.id), res.get("info")  # no grant takes it mid-reset
         elif res and res["state"] == "free":
             set_state(res, "free")  # stamps the idle clock; the server's pool upkeep stops it later, if the class asks
@@ -371,6 +374,8 @@ def release(args):
             + f" result={args.result} drained={len(left)} coordinator={held['coordinator']}"
             + (f" note={json.dumps(args.note)}" if args.note else ""))
         print(f"released {args.cls} {args.id} ({args.result}); {'drained' if not left else 'not drained'}: {len(left)} left in {held.get('worktree')}")
+        if retired:
+            print(f"{held['resource']} is retired (released with fail): marked failed, never granted again, and deleted by the pool upkeep")
         if token:
             print(f"recycling {held['resource']}; this can take a few minutes", flush=True)
     finally:

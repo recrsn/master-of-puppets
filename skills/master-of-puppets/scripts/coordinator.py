@@ -136,13 +136,15 @@ show who, why and each changed key with its old and new value)
   config set-class NAME [--description T] [--default-gib N] [--default-cpus N] [--max-minutes N]
                 [--settle OTHER=S ...] [--auto-acquire on|off]
                 [--pool-create CMD] [--pool-start CMD] [--pool-stop CMD] [--pool-delete CMD] [--pool-recycle CMD] [--pool-max N] [--pool-idle-delete-hours H] [--pool-stop-after-minutes M]
+                [--pool-health CMD] [--pool-min-free-gib N] [--pool-min-mem-gib N]
        a class with pool commands leases one named resource at a time (references/leases.md)
   resource list|add|mark|remove CLASS [--name R] [--state free|stopped|failed] [--info JSON] [--delete]
        the resources of a pool class
        stream update ... --auto-acquire on|off   same for one stream's members
        The server does pool upkeep once a minute: it stops unheld running pool resources idle past
        --pool-stop-after-minutes (release never stops), resets resources stuck in a busy state for
-       90 min with no live operation, deletes unheld ones idle past --pool-idle-delete-hours, and
+       90 min with no live operation, deletes unheld failed ones (not those failed as unreachable or
+       after a failed delete), deletes unheld ones idle past --pool-idle-delete-hours, and
        sends the lease's coordinator POOL-EXPIRED for a lease that expired over an hour ago and
        still holds a resource.
        The server also grants the head entry of each auto class or stream (any registered
@@ -377,6 +379,7 @@ from moplib import (
     say, deliver, notify, READS, memory_path, add_read_commands, pr_refs, gh_http, http_error,
     read_cmd, run, worktree_pids, drain, pool_spec, pool_env, pool_run, pool_info, find_resource, RESOURCE_NAME, parse_prefer, prefer_matches,
     set_state, stop_resource, begin_op, end_op, op_current, op_live, BUSY_STATES, POOL_STUCK_MINUTES, delete_claimed,
+    mark_failed, health_run, FAIL_KEPT, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
 )
 
 
@@ -625,7 +628,8 @@ def config_cmd(args):
                 c["autoAcquire"] = args.auto_acquire == "on"
             for flag, field in (("pool_create", "create"), ("pool_start", "start"), ("pool_stop", "stop"),
                                 ("pool_delete", "delete"), ("pool_recycle", "recycle"), ("pool_max", "max"),
-                                ("pool_idle_delete_hours", "idleDeleteHours"), ("pool_stop_after_minutes", "stopAfterMinutes")):
+                                ("pool_idle_delete_hours", "idleDeleteHours"), ("pool_stop_after_minutes", "stopAfterMinutes"),
+                                ("pool_health", "health"), ("pool_min_free_gib", "minFreeGiB"), ("pool_min_mem_gib", "minMemGiB")):
                 value = getattr(args, flag)
                 if value is not None:
                     pool = c.setdefault("pool", {})
@@ -1707,8 +1711,10 @@ def acquire_cmd(args):
 def pool_pick(state, cls, spec, entry=None):
     """The resource to assign: a free running one, else a stopped one; never one that is held or
     busy with an operation. Returns (resource, None), or (None, why): settling (one is busy;
-    retry), exhausted (the pool is at max), none_free (no create command), create, or
-    unavailable (the entry names one exact resource that cannot be assigned now).
+    retry), exhausted (the pool is at max), none_free (no create command), create, blocked
+    (UNREACHABLE_BLOCK resources failed as unreachable: the server's ssh is likely broken, and a
+    new resource would fail the same way), or unavailable (the entry names one exact resource
+    that cannot be assigned now).
     An entry that names a resource (wantResource) gets exactly that one, or unavailable: no other
     resource, no create. An entry with prefer takes a matching resource first (free, then
     stopped), then waits for a busy one, then creates one (it gets the preference), and only
@@ -1732,6 +1738,7 @@ def pool_pick(state, cls, spec, entry=None):
         if r and r["state"] in ("free", "stopped") and free(r):
             return r, None
         return None, "unavailable"
+    blocked = sum(r["state"] == "failed" and r.get("failReason") == "unreachable" for r in pool) >= UNREACHABLE_BLOCK
     prefer = entry.get("prefer") or {}
     if prefer:
         r = first(("free", "stopped"), lambda r: prefer_matches(r.get("info"), prefer))
@@ -1739,7 +1746,7 @@ def pool_pick(state, cls, spec, entry=None):
             return r, None
         if any(r.get("op") or r["state"] in BUSY_STATES for r in pool):
             return None, "settling"
-        if spec.get("create") and not (spec.get("max") and len(pool) >= spec["max"]):
+        if spec.get("create") and not blocked and not (spec.get("max") and len(pool) >= spec["max"]):
             return None, "create"
     r = first(("free", "stopped"))
     if r:
@@ -1748,7 +1755,12 @@ def pool_pick(state, cls, spec, entry=None):
         return None, "settling"
     if spec.get("max") and len(pool) >= spec["max"]:
         return None, "exhausted"
+    if blocked and spec.get("create"):
+        return None, "blocked"
     return None, "create" if spec.get("create") else "none_free"
+
+
+UNREACHABLE_BLOCK = 2  # resources failed as unreachable that stop the pool from creating more
 
 
 def pool_acquire_cmd(args):
@@ -1756,8 +1768,9 @@ def pool_acquire_cmd(args):
     none exists. The start or create command runs without the lock (it can take minutes);
     the entry keeps its queue place and the resource holds an op token meanwhile, so no other
     command touches it. After the command the token is checked again under the lock: a resource
-    that was reset or removed meanwhile is not written. The holder record names the resource;
-    the member's await-grant prints it."""
+    that was reset or removed meanwhile is not written. With a health command, every grant checks
+    the resource first; an unhealthy one is marked failed, not granted (exit 8; the pool upkeep
+    deletes it). The holder record names the resource; the member's await-grant prints it."""
     cls, spec, machine = args.cls, pool_spec(args.cls), load_machine()
     lock()
     try:
@@ -1774,7 +1787,7 @@ def pool_acquire_cmd(args):
             print(json.dumps({"auto_stale": args.id}))
             return 7
         res, why = pool_pick(state, cls, spec, queued)
-        if why in ("settling", "exhausted", "none_free", "unavailable"):
+        if why in ("settling", "exhausted", "none_free", "unavailable", "blocked"):
             listing = [{"name": r["name"], "state": r["state"]} for r in state["resources"][cls]]
             if why == "unavailable":
                 print(json.dumps({"resource_unavailable": entry["wantResource"], "resources": listing}))
@@ -1818,6 +1831,11 @@ def pool_acquire_cmd(args):
     name, new_info = pool_info(out) if action == "create" and ok else (placeholder, info)
     if action == "create" and ok and name is None:
         ok, err = False, "create printed no JSON object with a valid name"
+    # Every grant checks free disk and memory first, an assign too: a free resource can be full from its last holder.
+    health, facts = health_run(cls, name, new_info, args.id, args.worktree) if ok else ("none", None)
+    unhealthy = health in ("failed", "unreachable")
+    if unhealthy:
+        ok, err = False, f"health check {health}: {facts}"
     lock()
     try:
         state, machine = load(), load_machine()
@@ -1829,9 +1847,11 @@ def pool_acquire_cmd(args):
         problem = None if ok else f"{action} failed: {err}"
         if res is None:
             problem = f"{placeholder} was reset or removed while {action} ran"
-            if action == "create" and ok and not find_resource(state, cls, name):
-                pool.append({"name": name, "info": new_info})  # the VM exists: keep it, free
+            if action == "create" and (ok or unhealthy) and not find_resource(state, cls, name):
+                pool.append({"name": name, "info": new_info})  # the VM exists: keep it, free (failed when unhealthy)
                 set_state(pool[-1], "free")
+                if unhealthy:
+                    mark_failed(pool[-1], "unreachable" if health == "unreachable" else "health", facts)
         elif ok and action == "create" and any(r["name"] == name and r is not res for r in pool):
             problem = f"create returned {name}, which the pool already has"
         if not problem and queued and entry is None:
@@ -1841,10 +1861,15 @@ def pool_acquire_cmd(args):
             problem = refused and refused[1]
         if problem:
             if res is not None:
-                if action == "create" and not ok:
+                if unhealthy:  # never granted; the pool upkeep deletes it, unless unreachable (FAIL_KEPT)
+                    res.update(name=name, info=new_info)
+                    res.pop("prior", None)
+                    mark_failed(res, "unreachable" if health == "unreachable" else "health", facts)
+                    log(f"resource failed {cls} {name} for={args.id} reason={health} detail={json.dumps(facts)}")
+                elif action == "create" and not ok:
                     pool.remove(res)
                 elif not ok:
-                    end_op(res, "failed")
+                    mark_failed(res, action, err)  # a failed start: the pool upkeep deletes it, and the next grant creates one
                 else:
                     if action == "create":
                         res.update(name=name, info=new_info)
@@ -1863,7 +1888,8 @@ def pool_acquire_cmd(args):
         state[cls].append({
             "coordinator": args.coordinator, "holder": args.holder, "id": args.id, "worktree": args.worktree,
             "project": key, "gib": 0, "cpus": 0, "commands": args.commands or (queued or {}).get("commands"),
-            "resource": name, "resourceInfo": new_info, **({"prefer": prefer} if prefer else {}),  # a re-queue after a failed recycle keeps it
+            "resource": name, "resourceInfo": {**(new_info or {}), **(facts if health == "ok" else {})},
+            **({"prefer": prefer} if prefer else {}),  # a re-queue after a failed recycle keeps it
             "grantedAt": t.isoformat(), "expiresAt": (t + dt.timedelta(minutes=args.minutes)).isoformat(),
         })
         save(state, machine)
@@ -1939,7 +1965,9 @@ def resource_cmd(args):
         held = {h.get("resource"): h["id"] for h in state[args.cls]}
         if args.rcmd == "list":
             for r in pool:
-                print(f"{r['name']} {r['state']}" + (f" held by {held[r['name']]}" if r["name"] in held else "") + f" {json.dumps(r.get('info', {}))}")
+                why = f"({r['failReason']}: {r.get('failDetail', '')})" if r.get("failReason") else ""
+                print(f"{r['name']} {r['state']}{why}" + (f" held by {held[r['name']]}" if r["name"] in held else "")
+                      + f" {json.dumps(r.get('info', {}))}")
             return 0
         res = find_resource(state, args.cls, args.name)
         if args.rcmd == "add":
@@ -1963,6 +1991,8 @@ def resource_cmd(args):
             return 3
         elif args.rcmd == "mark":
             set_state(res, args.state)
+            if args.state == "failed":
+                res["failReason"], res["failDetail"] = "manual", f"by {args.by}"  # the pool upkeep deletes it
         elif args.delete and spec.get("delete"):
             token, info = begin_op(res, "delete", "deleting"), res.get("info")
             save(state, machine)
@@ -3003,8 +3033,10 @@ def pool_upkeep():
     """In the server, once a minute, for each pool class: stop an unheld running resource idle for
     stopAfterMinutes (release never stops: a stop is costly, and the next grant may come soon); reset a
     resource stuck in a busy state past POOL_STUCK_MINUTES whose operation's process is gone (a crashed
-    create, start, stop or delete; a live operation is never reset); delete an unheld resource idle for the
-    class's idleDeleteHours (needs a delete command). The lease's coordinator gets POOL-EXPIRED in its inbox
+    create, start, stop or delete; a live operation is never reset); delete an unheld failed resource (a
+    failed start or health check, a release with fail, a manual mark) unless its reason is in FAIL_KEPT;
+    delete an unheld resource idle for the class's idleDeleteHours (both need a delete command; a failed
+    delete marks it failed with reason delete, so it is tried once). The lease's coordinator gets POOL-EXPIRED in its inbox
     once per lease that expired over an hour ago while still holding a resource (never taken back). Each step
     claims the resource with an op token first, so it never runs the same step as a manual command."""
     warned = set()
@@ -3022,7 +3054,7 @@ def pool_pass(warned, by="server"):
         pool = spec.get("pool")
         if not pool:
             continue
-        idle, to_stop = [], []
+        idle, to_stop, failed = [], [], []
         lock()
         try:
             state = load()
@@ -3040,6 +3072,8 @@ def pool_pass(warned, by="server"):
                     log(f"resource reset {cls} {r['name']} stuck {age:.0f} min by={by}")
                 elif op or r["state"] in BUSY_STATES or r["name"] in held:
                     continue
+                elif r["state"] == "failed" and pool.get("delete") and r.get("failReason") not in FAIL_KEPT:
+                    failed.append(r["name"])  # user rule: "you manage vms, deleting and creating should be automatic"
                 elif r["state"] in ("free", "stopped") and pool.get("idleDeleteHours") and pool.get("delete") \
                         and age > pool["idleDeleteHours"] * 60:
                     idle.append(r["name"])
@@ -3056,7 +3090,7 @@ def pool_pass(warned, by="server"):
             unlock()
         for name in to_stop:
             stop_resource(cls, name)
-        for name in idle:
+        for name in failed + idle:
             resource_cmd(argparse.Namespace(rcmd="remove", cls=cls, name=name, by=by, delete=True, state="free", info=None))
 
 
@@ -3482,6 +3516,10 @@ def main(argv=None):
     sc.add_argument("--pool-delete", help="shell command that deletes a resource (resource remove --delete); \"\" removes it")
     sc.add_argument("--pool-recycle", help="shell command that resets a resource to a clean state at each grant and release; "
                     'a failed reset destroys it with the delete command (references/leases.md); "" removes it')
+    sc.add_argument("--pool-health", help="shell command run before every grant that prints a JSON line with freeGiB and memAvailGiB; "
+                    'an unhealthy resource is marked failed, not granted, and the pool upkeep deletes it; "" removes it')
+    sc.add_argument("--pool-min-free-gib", type=float, help=f"health: least free disk on / (default {HEALTH_MIN_FREE_GIB}); 0 = the default")
+    sc.add_argument("--pool-min-mem-gib", type=float, help=f"health: least available memory (default {HEALTH_MIN_MEM_GIB}); 0 = the default")
     sc.add_argument("--pool-idle-delete-hours", type=float, help="the server's pool upkeep deletes an unheld resource idle this long (needs a delete command); 0 = never")
     sc.add_argument("--pool-stop-after-minutes", type=float, help="the server's pool upkeep runs the stop command on an unheld running resource idle this long; 0 = never stop")
     sc.add_argument("--pool-max", type=int, help="most resources the pool may hold; 0 = no cap")
