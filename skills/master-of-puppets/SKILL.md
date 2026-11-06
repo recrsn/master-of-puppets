@@ -229,7 +229,9 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
   release, removes the member, records it and sends `LEAVE ACCEPTED`. When a
   rule fails it changes nothing; reply at once with `leave --name <name>
   --reject --reason "<what is left>"`. Use `--no-release-check` for work
-  with no production behaviour (docs, CI-only). Send the printed reply
+  with no production behaviour (docs, CI-only). A PR the user decided to close
+  unmerged passes with `--closed-by-user <n> --quote "<the user's words>"`;
+  the quote goes in the record and the reply. Send the printed reply
   yourself when the command does not say it was delivered. A LEAVE with
   uncommitted work or an open PR: reject it with the reason, and ask the user
   when unsure. A LEAVE after your HANDOFF COMPLETE, or after a cloud handoff
