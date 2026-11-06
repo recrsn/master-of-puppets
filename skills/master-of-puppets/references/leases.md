@@ -39,7 +39,7 @@ The holder gets exclusive use of one resource until it releases it; nothing
 about the resource is built in. Make a class a pool by giving it shell commands
 (each optional; `--pool-create ""` removes one):
 
-`coordinator.py config set-class <NAME> --pool-create CMD --pool-start CMD --pool-stop CMD --pool-delete CMD --pool-recycle CMD --pool-max N`
+`coordinator.py config set-class <NAME> --pool-create CMD --pool-start CMD --pool-stop CMD --pool-delete CMD --pool-recycle CMD --pool-health CMD --pool-max N`
 
 Each command reads `MOP_CLASS`, `MOP_RESOURCE`, `MOP_RESOURCE_INFO` (JSON),
 `MOP_LEASE_ID` and `MOP_WORKTREE` from its environment. When the request set
@@ -58,11 +58,46 @@ exits 3 and the server's auto acquire retries. After `GRANTED`, the member sees
 `RESOURCE <name> <info>`. `puppet.py release` returns the resource and never stops it: a stop is
 costly and the next grant may come soon. The server's pool upkeep stops it
 after `--pool-stop-after-minutes M` idle (default 0 = never) and the next grant starts it again.
-A failed `start` or `create` exits 8 and marks the resource failed (a failed
-create leaves none). Manage the pool with
+A failed `start` exits 8 and marks the resource failed (reason `start`); a
+failed `create` exits 8 and leaves none, and its refusal names Hutch's own
+error. Manage the pool with
 `coordinator.py resource list|add|mark|remove <NAME> [--name R] [--state free|stopped|failed] [--info JSON] [--delete]`:
 `add` registers an existing resource, `mark` repairs a state, `remove --delete`
 runs the delete command. Free or held is derived from the leases.
+
+**Automatic VMs.** The user's rule, 6 Nov: "you manage vms, deleting and
+creating should be automatic". So the pool deletes failed resources and
+creates new ones without a coordinator step:
+
+- **Health before every grant.** With `--pool-health CMD`, `acquire` runs the
+  command on the resource it picked (a free one too, not only a started or
+  created one) before it writes the lease. The command prints one JSON line,
+  `{"freeGiB": N, "memAvailGiB": M, ...}` with exit 0; the grant needs at
+  least `--pool-min-free-gib` (default 10) free on `/` and
+  `--pool-min-mem-gib` (default 2) available memory. Under either, or a
+  `{"failed": ...}` line, the resource is marked failed (reason `health`) and
+  not granted; `acquire` exits 8 and the next try (the server's auto acquire
+  retries at once) picks another one or creates one. The facts go on the
+  holder's `RESOURCE` line. `scripts/examples/hutch-pool-health` is the
+  command for a Hutch pool; it changes nothing on the VM.
+- **A release with `--result fail` retires the resource.** It is marked failed
+  (reason `release`) and never granted again, also when the run failed for a
+  reason other than the VM.
+- **Failed resources are deleted.** Once a minute the server's pool upkeep
+  deletes every unheld failed resource with the delete command (reasons
+  `start`, `health`, `release`, `manual` from `resource mark --state failed`).
+  It keeps two reasons: `unreachable` (the health or recycle command could not
+  reach it, so its files stay for a check: `resource mark ... --state free`
+  returns it) and `delete` (its delete failed once; check it, then `resource
+  remove ... --delete`). `resource list` shows each reason.
+- **New resources.** With no free or stopped resource left, `acquire` creates
+  one. Hutch picks the zone; its CLI has no zone flag. A stopped VM keeps its
+  zone, so a start that fails for capacity marks it failed, the upkeep deletes
+  it, and the next grant creates a VM where Hutch has room.
+- **Guard.** With 2 resources failed as `unreachable`, `acquire` creates no
+  more and exits 3 with `resources_blocked`: the server's ssh is likely
+  broken, and every new VM would fail the same way. Fix ssh, then mark them
+  free.
 
 **Recycle.** With `--pool-recycle CMD`, a resource is reset at each grant
 and each release, so every holder starts clean. `puppet.py await-grant`
@@ -79,8 +114,9 @@ the entry is queued again at the front, up to 3 destroyed resources per
 `await-grant`. Any other failure (no JSON line, ssh exit 255, the
 15-minute timeout) counts as unreachable: the resource is kept, never
 destroyed for a missing key or a network fault. At a grant, an unreachable
-resource is not granted either: it is marked failed (files untouched; `resource
-mark ... --state free` returns it), the coordinator gets `RECYCLE-UNREACHABLE`,
+resource is not granted either: it is marked failed with reason `unreachable`
+(files untouched, not deleted by the upkeep; `resource mark ... --state free`
+returns it), the coordinator gets `RECYCLE-UNREACHABLE`,
 and the entry is queued again at the front, so no holder gets a resource that
 was not reset. Recycle is off until `config set-class ... --pool-recycle` sets
 the command; installing the helpers does not turn it on. The events log records

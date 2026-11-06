@@ -708,8 +708,8 @@ RESOURCE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
 
 def pool_spec(cls, machine=None):
     """The pool of a class that leases named resources (a VM, a device, a seat), else None.
-    Fields: create, start, stop, delete, recycle (shell commands, each optional) and max (resources
-    that may exist, 0 = no cap). A command reads MOP_CLASS, MOP_RESOURCE, MOP_RESOURCE_INFO
+    Fields: create, start, stop, delete, recycle, health (shell commands, each optional), max (resources
+    that may exist, 0 = no cap), and minFreeGiB and minMemGiB (the health floors). A command reads MOP_CLASS, MOP_RESOURCE, MOP_RESOURCE_INFO
     (JSON), MOP_LEASE_ID and MOP_WORKTREE from its environment. When the request named
     preferences, it also reads MOP_PREFER (JSON) and MOP_PREFER_<KEY> for each."""
     return registry(machine).get(cls, {}).get("pool")
@@ -770,9 +770,27 @@ BUSY_STATES = ("creating", "assigning", "stopping", "deleting", "recycling")
 RECYCLE_TIMEOUT = 900  # seconds; a recycle that runs longer counts as unreachable, never as failed
 
 
+HEALTH_TIMEOUT = 180  # seconds; a health check that runs longer counts as unreachable
+HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB = 10, 2  # defaults for a pool's minFreeGiB and minMemGiB
+# Why a resource is failed. The server's pool upkeep deletes a failed resource, except for these reasons:
+# unreachable (it was not reset, so its files stay for a check) and delete (its delete failed once).
+FAIL_KEPT = ("unreachable", "delete")
+
+
 def set_state(res, state):
-    """Change a resource's state and stamp when, for the idle and stuck checks."""
+    """Change a resource's state and stamp when, for the idle and stuck checks. A state other than failed
+    clears the failure reason."""
     res["state"], res["since"] = state, now().isoformat()
+    if state != "failed":
+        res.pop("failReason", None)
+        res.pop("failDetail", None)
+
+
+def mark_failed(res, reason, detail=""):
+    """End any operation and mark the resource failed for reason (start, health, release, unreachable, delete,
+    manual): out of rotation, and deleted by the pool upkeep unless reason is in FAIL_KEPT."""
+    end_op(res, "failed")
+    res["failReason"], res["failDetail"] = reason, " ".join(str(detail or "").split())[:200]
 
 
 def begin_op(res, kind, state, lease_id=None):
@@ -883,11 +901,34 @@ def recycle_run(cls, name, info, lease_id=None, worktree=None):
     return "unreachable", err or "no output"
 
 
+def health_run(cls, name, info, lease_id=None, worktree=None):
+    """Run the class's health command on resource name, without the lock, before a grant. The command prints
+    one JSON line with exit 0: {"freeGiB": N, "memAvailGiB": M, ...}, or {"failed": "<reason>"} with a non-zero
+    exit when it reached the resource and found it broken. Returns (outcome, detail): ok (the JSON line, a
+    dict), failed (the reason: a failed check, or free disk or memory under the pool's minFreeGiB or
+    minMemGiB), unreachable (any other failure) or none (the class has no health command)."""
+    spec = pool_spec(cls) or {}
+    if not spec.get("health"):
+        return "none", None
+    ok, out, err = pool_run(spec["health"], pool_env(cls, name, info, lease_id, worktree), HEALTH_TIMEOUT)
+    tail = json_tail(out)
+    if not ok:
+        return ("failed", str(tail["failed"])) if tail.get("failed") else ("unreachable", err or "no output")
+    for key, floor, what in (("freeGiB", spec.get("minFreeGiB", HEALTH_MIN_FREE_GIB), "disk on /"),
+                             ("memAvailGiB", spec.get("minMemGiB", HEALTH_MIN_MEM_GIB), "memory")):
+        value = tail.get(key)
+        if not isinstance(value, (int, float)):
+            return "failed", f"health printed no {key}"
+        if value < floor:
+            return "failed", f"only {value:g} GiB {what} free, under {floor:g} GiB"
+    return "ok", tail
+
+
 def delete_claimed(cls, name, token, info):
     """Delete a resource this caller claimed (begin_op delete, saved), without the lock held: run the class's
-    delete command, then remove the resource from the pool, or mark it failed when delete failed or the class
-    has none. Returns (outcome, error): deleted, failed, or reset (it was reset or removed while delete ran;
-    nothing is written)."""
+    delete command, then remove the resource from the pool, or mark it failed (reason delete, so the pool
+    upkeep does not try again every minute) when delete failed or the class has none. Returns (outcome,
+    error): deleted, failed, or reset (it was reset or removed while delete ran; nothing is written)."""
     spec = pool_spec(cls) or {}
     ok, err = False, "the class has no delete command"
     if spec.get("delete"):
@@ -901,7 +942,7 @@ def delete_claimed(cls, name, token, info):
         if ok:
             state["resources"][cls].remove(res)
         else:
-            end_op(res, "failed")
+            mark_failed(res, "delete", err)
         save(state, machine)
         return ("deleted" if ok else "failed"), err
     finally:

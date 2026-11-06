@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Health command for a HUTCH pool class (config set-class HUTCH --pool-health <this file>).
+# Before every grant, over ssh to the Hutch env $MOP_RESOURCE: read free disk on / and available memory.
+# The last stdout line is the result for moplib.health_run, which compares it with the pool's
+# minFreeGiB and minMemGiB:
+#   {"freeGiB": N, "memAvailGiB": M, "sshAlias": A, "uptimeS": S}   exit 0: the facts
+#   {"failed": "<reason>"}     exit 3: the VM was reached and a check could not run (mark it failed)
+#   anything else (ssh exit 255, no alias, a timeout): unreachable (marked failed and kept)
+# It changes nothing on the VM.
+set -uo pipefail
+hutch="${HUTCH_BIN:-$HOME/.local/bin/hutch-latest}"
+alias=$("$hutch" env ssh-config "$MOP_RESOURCE" 2>/dev/null | tail -n 1) || alias=""
+if [ -z "$alias" ]; then
+	echo "no ssh alias for $MOP_RESOURCE (hutch env ssh-config failed)" >&2
+	exit 1
+fi
+exec ssh -o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 \
+	"$alias" "ALIAS='$alias' bash -s" <<'REMOTE'
+set -uo pipefail
+fail() {
+	reason=$(printf '%s' "$1" | tr '\n\t' '  ' | sed 's/\\/\\\\/g; s/"/\\"/g')  # one JSON string
+	printf '{"failed": "%s"}\n' "$reason"
+	exit 3
+}
+free=$(df -BG --output=avail / | tail -n 1 | tr -dc '0-9')
+[ -n "$free" ] || fail "cannot read free disk on /"
+mem=$(awk '/^MemAvailable:/ {printf "%.1f", $2 / 1048576}' /proc/meminfo)
+[ -n "$mem" ] || fail "cannot read MemAvailable from /proc/meminfo"
+up=$(cut -d. -f1 /proc/uptime 2>/dev/null) || up=""
+printf '{"freeGiB": %s, "memAvailGiB": %s, "sshAlias": "%s"%s}\n' "$free" "$mem" "$ALIAS" "${up:+, \"uptimeS\": $up}"
+REMOTE
