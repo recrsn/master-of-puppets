@@ -357,7 +357,7 @@ def release(args):
         usable = res is not None and res["state"] == "free" and not res.get("op")
         retired = usable and bool(args.retire_vm)
         if retired:  # never granted again; the server's pool upkeep deletes it, and the next grant gets another
-            mark_failed(res, "release", args.retire_vm)
+            mark_failed(res, "retire", args.retire_vm)
         elif usable and spec.get("recycle"):  # the recycle checks free disk too
             token, info = begin_op(res, "recycle", "recycling", args.id), res.get("info")  # no grant takes it mid-reset
         elif usable and spec.get("health"):  # a VM left under the floors is retired now, not at the next grant
