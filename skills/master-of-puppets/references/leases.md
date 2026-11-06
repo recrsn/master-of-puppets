@@ -80,10 +80,12 @@ creates new ones without a coordinator step:
   retries at once) picks another one or creates one. The facts go on the
   holder's `RESOURCE` line. `scripts/examples/vm-pool-health` is the
   command for a Vmctl pool; it changes nothing on the VM. It first reads
-  `vmctl env status`: anything but `READY` and `Available`, with no deletion
-  request, fails the check (reason `health`, so the upkeep deletes it). That
-  covers a failed rebuild, a rebuild still running, a stopped env and an env
-  Vmctl no longer has. An error from Vmctl itself counts as unreachable.
+  `vmctl env status`. Only a known unhealthy state fails the check (reason
+  `health`, so the upkeep deletes it): progressStatus `FAILED` or `BUILDING`
+  (a failed rebuild, a rebuild still running), envState `Shutdown`, a
+  deletion request, or an env Vmctl no longer has. `READY` with `Available`
+  passes. An error from Vmctl, a malformed response or an unknown state
+  counts as unreachable: kept, never deleted for it.
 - **Health at every release.** `puppet.py release` (pass, fail or partial)
   runs the health command while the resource is `checking` (busy, so no grant
   takes it). With `--pool-clean CMD`, the clean command runs first, to free
