@@ -136,14 +136,14 @@ show who, why and each changed key with its old and new value)
   config set-class NAME [--description T] [--default-gib N] [--default-cpus N] [--max-minutes N]
                 [--settle OTHER=S ...] [--auto-acquire on|off]
                 [--pool-create CMD] [--pool-start CMD] [--pool-stop CMD] [--pool-delete CMD] [--pool-recycle CMD] [--pool-max N] [--pool-idle-delete-hours H] [--pool-stop-after-minutes M]
-                [--pool-health CMD] [--pool-clean CMD] [--pool-min-free-gib N] [--pool-min-mem-gib N]
+                [--pool-health CMD] [--pool-clean CMD] [--pool-find CMD] [--pool-min-free-gib N] [--pool-min-mem-gib N]
        a class with pool commands leases one named resource at a time (references/leases.md)
   resource list|add|mark|remove CLASS [--name R] [--state free|stopped|failed] [--info JSON] [--delete]
        the resources of a pool class
        stream update ... --auto-acquire on|off   same for one stream's members
        The server does pool upkeep once a minute: it stops unheld running pool resources idle past
-       --pool-stop-after-minutes (release never stops), resets resources stuck in a busy state for
-       90 min with no live operation, deletes unheld failed ones (not those failed as unreachable or
+       --pool-stop-after-minutes (release never stops), resets a busy resource whose operation's
+       process is gone (at once; 90 min with no operation record), names what a dead create made (CREATE-LOST), deletes unheld failed ones (not those failed as unreachable or
        after a failed delete), deletes unheld ones idle past --pool-idle-delete-hours, and
        sends the lease's coordinator POOL-EXPIRED for a lease that expired over an hour ago and
        still holds a resource.
@@ -379,7 +379,7 @@ from moplib import (
     say, deliver, notify, READS, memory_path, add_read_commands, pr_refs, gh_http, http_error,
     read_cmd, run, worktree_pids, drain, pool_spec, pool_env, pool_run, pool_info, find_resource, RESOURCE_NAME, parse_prefer, prefer_matches,
     set_state, stop_resource, begin_op, end_op, op_current, op_live, BUSY_STATES, POOL_STUCK_MINUTES, delete_claimed,
-    mark_failed, health_run, FAIL_DELETE, CLEAN_TIMEOUT, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
+    mark_failed, health_run, FAIL_DELETE, CLEAN_TIMEOUT, FIND_TIMEOUT, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
 )
 
 
@@ -629,7 +629,7 @@ def config_cmd(args):
             for flag, field in (("pool_create", "create"), ("pool_start", "start"), ("pool_stop", "stop"),
                                 ("pool_delete", "delete"), ("pool_recycle", "recycle"), ("pool_max", "max"),
                                 ("pool_idle_delete_hours", "idleDeleteHours"), ("pool_stop_after_minutes", "stopAfterMinutes"),
-                                ("pool_health", "health"), ("pool_clean", "clean"), ("pool_min_free_gib", "minFreeGiB"), ("pool_min_mem_gib", "minMemGiB")):
+                                ("pool_health", "health"), ("pool_clean", "clean"), ("pool_find", "find"), ("pool_min_free_gib", "minFreeGiB"), ("pool_min_mem_gib", "minMemGiB")):
                 value = getattr(args, flag)
                 if value is not None:
                     pool = c.setdefault("pool", {})
@@ -3066,8 +3066,9 @@ def auto_class(c, ctx):
 def pool_upkeep():
     """In the server, once a minute, for each pool class: stop an unheld running resource idle for
     stopAfterMinutes (release never stops: a stop is costly, and the next grant may come soon); reset a
-    resource stuck in a busy state past POOL_STUCK_MINUTES whose operation's process is gone (a crashed
-    create, start, stop or delete; a live operation is never reset); delete an unheld failed resource (a
+    busy resource whose operation's process is gone (a crash or a server restart), at once, or past
+    POOL_STUCK_MINUTES when the busy state has no operation record (a live operation is never reset); a dead
+    create's placeholder goes, its queued request gets a new create, and its coordinator gets CREATE-LOST; delete an unheld failed resource (a
     failed start or health check, a release with --retire-vm, a manual mark) only when its reason is in
     FAIL_DELETE (another reason or none is quarantined);
     delete an unheld resource idle for the class's idleDeleteHours (both need a delete command; a failed
@@ -3089,7 +3090,7 @@ def pool_pass(warned, by="server"):
         pool = spec.get("pool")
         if not pool:
             continue
-        idle, to_stop, failed = [], [], []
+        idle, to_stop, failed, lost = [], [], [], []
         lock()
         try:
             state = load()
@@ -3097,9 +3098,17 @@ def pool_pass(warned, by="server"):
             for r in list(state["resources"][cls]):
                 age = (t - dt.datetime.fromisoformat(r.get("since") or t.isoformat())).total_seconds() / 60
                 op = r.get("op") or {}
-                if (op or r["state"] in BUSY_STATES) and age > POOL_STUCK_MINUTES and not op_live(op):
+                dead = bool(op.get("pid")) and not op_live(op)  # its process is gone (a server restart): no need to wait
+                if (op or r["state"] in BUSY_STATES) and (dead or age > POOL_STUCK_MINUTES and not op_live(op)):
                     if r["state"] == "creating":
                         state["resources"][cls].remove(r)
+                        lid = op.get("for")
+                        entry = next((q for q in state["queue"][cls] if q["id"] == lid), None)
+                        if entry:
+                            entry.pop("assigning", None)  # still queued: the next grant creates again
+                        owner = entry or next((h for h in state[cls] if h["id"] == lid), None) or {}
+                        lost.append((r["name"], r.get("since"), lid, owner.get("coordinator"), bool(entry),
+                                     owner.get("prefer") or {}))
                     else:
                         end_op(r, {"assigning": r.get("prior") or "free", "deleting": "failed"}.get(r["state"], "free"))
                         r.pop("prior", None)
@@ -3125,10 +3134,38 @@ def pool_pass(warned, by="server"):
                                 f"{h['resource']}; ask the holder to release", h["coordinator"])
         finally:
             unlock()
+        for item in lost:
+            create_lost(cls, pool, *item)
         for name in to_stop:
             stop_resource(cls, name)
         for name in failed + idle:
             resource_cmd(argparse.Namespace(rcmd="remove", cls=cls, name=name, by=by, delete=True, state="free", info=None))
+
+
+def create_lost(cls, pool, name, since, lease_id, coordinator, queued, prefer):
+    """A create whose process died (a server restart) and whose placeholder the upkeep removed: the create
+    may have made a resource that is not in the pool. The class's find command (optional) lists resources
+    made since the create began; none is claimed, because a parallel create or one made by hand looks the
+    same. The lease's coordinator gets CREATE-LOST with the candidates."""
+    found = "no find command"
+    if pool.get("find"):
+        env = {**pool_env(cls, "", None, lease_id, None, prefer), "MOP_SINCE": since or ""}
+        ok, out, err = pool_run(pool["find"], env, FIND_TIMEOUT)
+        known = {r["name"] for r in load()["resources"][cls]}
+        names = []
+        for line in (out or "").splitlines():
+            try:
+                data = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(data, dict) and isinstance(data.get("name"), str) and data["name"] not in known:
+                names.append(data["name"])
+        found = ", ".join(names) or "none" if ok else f"find failed: {err}"
+    log(f"resource create-lost {cls} {name} for={lease_id} since={since} candidates={json.dumps(found)}")
+    say("pool", f"CREATE-LOST {cls} {name} for {lease_id}: its create began {since} and its process is gone "
+                f"(a server restart?); the placeholder is removed"
+                f"{' and the request gets a new create' if queued else ''}. Resources made since then, not in the pool: "
+                f"{found}. Check each, then resource add {cls} --name <name>, or delete it.", coordinator)
 
 
 def cloud_state(task):
@@ -3560,6 +3597,9 @@ def main(argv=None):
                     'an unhealthy resource is marked failed, not granted, and the pool upkeep deletes it; "" removes it')
     sc.add_argument("--pool-clean", help="shell command run at each release before the health check that frees disk on the resource "
                     '(best effort, at most %d s; a failure goes on to the health check); "" removes it' % CLEAN_TIMEOUT)
+    sc.add_argument("--pool-find", help="shell command that prints a JSON line {\"name\": ...} for each resource made since "
+                    "MOP_SINCE; after a create dies (a server restart), the upkeep names them to the coordinator, and claims none; "
+                    '"" removes it')
     sc.add_argument("--pool-min-free-gib", type=float, help=f"health: least free disk on / (default {HEALTH_MIN_FREE_GIB}); 0 = the default")
     sc.add_argument("--pool-min-mem-gib", type=float, help=f"health: least available memory (default {HEALTH_MIN_MEM_GIB}); 0 = the default")
     sc.add_argument("--pool-idle-delete-hours", type=float, help="the server's pool upkeep deletes an unheld resource idle this long (needs a delete command); 0 = never")

@@ -708,7 +708,7 @@ RESOURCE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
 
 def pool_spec(cls, machine=None):
     """The pool of a class that leases named resources (a VM, a device, a seat), else None.
-    Fields: create, start, stop, delete, recycle, health, clean (shell commands, each optional), max (resources
+    Fields: create, start, stop, delete, recycle, health, clean, find (shell commands, each optional), max (resources
     that may exist, 0 = no cap), and minFreeGiB and minMemGiB (the health floors). A command reads MOP_CLASS, MOP_RESOURCE, MOP_RESOURCE_INFO
     (JSON), MOP_LEASE_ID and MOP_WORKTREE from its environment. When the request named
     preferences, it also reads MOP_PREFER (JSON) and MOP_PREFER_<KEY> for each. A create that fails after
@@ -774,6 +774,7 @@ RECYCLE_TIMEOUT = 900  # seconds; a recycle that runs longer counts as unreachab
 
 HEALTH_TIMEOUT = 180  # seconds; a health check that runs longer counts as unreachable
 CLEAN_TIMEOUT = 600  # seconds; a release cleanup that runs longer is stopped, and the health check runs
+FIND_TIMEOUT = 120  # seconds; for the find command after a create died
 HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB = 10, 2  # defaults for a pool's minFreeGiB and minMemGiB
 # Why a resource is failed. The server's pool upkeep deletes a failed resource only for these reasons. Any other
 # reason, or none (a resource failed before reasons existed), is quarantined: kept until a coordinator marks it

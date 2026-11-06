@@ -182,9 +182,17 @@ running resource idle for M minutes; `--pool-idle-delete-hours H` (default 0 =
 never) deletes an unheld resource that has idled for H hours, using the delete
 command. Every lifecycle step (create, start, stop, delete) claims the
 resource with an op token and a busy state; `resource mark` and `remove`
-refuse a busy resource. Upkeep also resets a resource stuck in a busy state
-for 90 min whose operation's process is gone (a crashed command); a live
-operation is never reset. The events log records each reset and deletion.
+refuse a busy resource. Upkeep also resets a busy resource whose operation's
+process is gone (a crashed command or a server restart), at once; a busy
+state with no operation record waits 90 min. A live operation is never
+reset. A dead create's placeholder goes, and a request still queued for it
+gets a new create at the next grant. The create may have made a resource
+outside the pool, so with `--pool-find CMD` upkeep lists the resources made
+since the create began (`MOP_SINCE`; one `{"name": ...}` line each) and
+sends the lease's coordinator `CREATE-LOST` with the names not in the pool.
+It claims none, because a parallel create or one made by hand looks the
+same: check each, then `resource add` it or delete it.
+`scripts/examples/hutch-pool-find` lists your Hutch envs on main. The events log records each reset and deletion.
 For a lease that expired over an hour ago and still holds a resource, the
 lease's coordinator gets `INBOX pool: POOL-EXPIRED ...` in `watch`: ask the
 holder to release. Upkeep never takes a resource back.

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Find command for a HUTCH pool class (config set-class HUTCH --pool-find <this file>).
+# After a create died (a server restart), print one JSON line {"name": <env id>, "slotType": ..., "createdAt": ...}
+# for each of your Hutch envs on main made since MOP_SINCE (ISO time, 60 s of clock slack), with the slot type
+# MOP_PREFER_SLOTTYPE when it is set. The pool names them to the coordinator and claims none. It changes nothing.
+set -uo pipefail
+"${HUTCH_BIN:-$HOME/.local/bin/hutch-latest}" env list --json | SINCE="${MOP_SINCE:-}" SLOT="${MOP_PREFER_SLOTTYPE:-}" python3 -I -c '
+import datetime,json,os,sys
+def ts(s): return datetime.datetime.fromisoformat(s.replace("Z","+00:00")).timestamp()
+d=json.load(sys.stdin)
+envs=d if isinstance(d,list) else next((v for v in d.values() if isinstance(v,list)),[]) if isinstance(d,dict) else []
+t0=ts(os.environ["SINCE"])-60 if os.environ["SINCE"] else 0
+for e in envs:
+    try: t=ts(e["codespaceCreatedAt"])
+    except (KeyError,TypeError,ValueError,AttributeError): continue
+    if t>=t0 and e.get("codespaceBranch")=="main" and isinstance(e.get("id"),str) \
+            and (not os.environ["SLOT"] or e.get("slotType")==os.environ["SLOT"]):
+        print(json.dumps({"name":e["id"],"slotType":e.get("slotType"),"createdAt":e["codespaceCreatedAt"]}))
+'
