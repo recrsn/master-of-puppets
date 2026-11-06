@@ -109,7 +109,11 @@ creates new ones without a coordinator step:
   non-zero: the pool keeps it, failed (reason `create`), and the upkeep
   deletes it, so no VM is left behind. `scripts/examples/hutch-pool-create`
   does this; it reads the env id from Hutch's stdout JSON, else from its
-  stderr progress lines (`id` or `environmentId`).
+  stderr progress lines (`id` or `environmentId`). When Hutch names no env,
+  the refusal lists your envs on main with that slot type made since the
+  create started. The helper claims none of them, because a parallel create
+  or an env you made by hand looks the same: check each, then `resource add`
+  it or delete it.
 - **Guard.** With 2 resources failed as `unreachable`, `acquire` creates no
   more and exits 3 with `resources_blocked`: the server's ssh is likely
   broken, and every new VM would fail the same way. Fix ssh, then mark them

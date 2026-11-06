@@ -5,16 +5,20 @@
 # Hutch picks the zone; the hutch CLI has no zone flag. Hutch's stdout and stderr stay apart: the env id
 # comes from the stdout JSON, else from the stderr progress lines (key id or environmentId). A failed
 # create that made an env still prints its JSON, and exits 1 with Hutch's stderr, so the pool keeps the
-# env as failed and deletes it; it is never left behind.
+# env as failed and deletes it. When Hutch names no env at all, the error lists your envs on main with this
+# slot type that Hutch made since the create started (env list); it claims none, because a parallel create
+# or one you made by hand looks the same. Check each, then resource add it or delete it.
 set -uo pipefail
 slot="${MOP_PREFER_SLOTTYPE:-emulated}"
 case "$slot" in native|emulated|shared|ngrok) ;; *) echo "bad slot type: $slot" >&2; exit 2 ;; esac
 errf=$(mktemp) || exit 1
 trap 'rm -f "$errf"' EXIT
-out=$("${HUTCH_BIN:-$HOME/.local/bin/hutch-latest}" env create --branch main --slot-type "$slot" --wait --json 2>"$errf")
+hutch="${HUTCH_BIN:-$HOME/.local/bin/hutch-latest}"
+started=$(date -u +%s)
+out=$("$hutch" env create --branch main --slot-type "$slot" --wait --json 2>"$errf")
 code=$?
-OUT="$out" ERRF="$errf" SLOT="$slot" CODE="$code" python3 -I -c '
-import json,os,re,sys
+OUT="$out" ERRF="$errf" SLOT="$slot" CODE="$code" HUTCH="$hutch" STARTED="$started" python3 -I -c '
+import datetime,json,os,re,subprocess,sys
 u=re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 def find(o):
     if isinstance(o,dict):
@@ -38,9 +42,25 @@ def scan(raw):
         i=find(obj)
         if i: return i
 out=os.environ["OUT"]; err=open(os.environ["ERRF"],errors="replace").read(); code=int(os.environ["CODE"])
+def since():
+    # Your envs on main with this slot type that Hutch made since the create started (60 s of clock slack).
+    try:
+        p=subprocess.run([os.environ["HUTCH"],"env","list","--json"],capture_output=True,text=True,timeout=60)
+        d=json.loads(p.stdout)
+    except (OSError,ValueError,subprocess.TimeoutExpired):
+        return "env list failed"
+    envs=d if isinstance(d,list) else next((v for v in d.values() if isinstance(v,list)),[]) if isinstance(d,dict) else []
+    t0=int(os.environ["STARTED"])-60; found=[]
+    for e in envs:
+        try: t=datetime.datetime.fromisoformat(e["codespaceCreatedAt"].replace("Z","+00:00")).timestamp()
+        except (KeyError,TypeError,ValueError,AttributeError): continue
+        if t>=t0 and e.get("codespaceBranch")=="main" and e.get("slotType")==os.environ["SLOT"] and isinstance(e.get("id"),str):
+            found.append(e["id"])
+    return ", ".join(found) or "none"
 i=scan(out) or scan(err)
 if i: print(json.dumps({"name":i,"slotType":os.environ["SLOT"],"branch":"main"}))
 if code:
-    sys.exit("hutch env create exit %d%s: %s" % (code, " after it made "+i if i else "", (err or out)[-600:]))
-if not i: sys.exit("no env id in create output: "+(out[-300:] or "")+" | stderr: "+err[-300:])
+    sys.exit("hutch env create exit %d%s: %s%s" % (code, " after it made "+i if i else "", " ".join((err or out).split())[-200:],
+        "" if i else " | envs made since the start: "+since()))
+if not i: sys.exit("no env id in create output: "+" ".join((out+" | stderr: "+err).split())[-200:]+" | envs made since the start: "+since())
 '
