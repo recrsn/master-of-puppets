@@ -82,8 +82,14 @@ creates new ones without a coordinator step:
   command for a Hutch pool; it changes nothing on the VM.
 - **Health at every release.** `puppet.py release` (pass, fail or partial)
   runs the health command while the resource is `checking` (busy, so no grant
-  takes it). Healthy: free again, so a test failure keeps a good VM. Under a
-  floor: marked failed (reason `health`) at once, not at the next grant.
+  takes it). With `--pool-clean CMD`, the clean command runs first, to free
+  disk a run left behind: best effort, at most 600 s, and a failure goes on
+  to the health check. It logs `resource cleaned ... before=B GiB after=A
+  GiB`, so the log shows whether the floor fits. `scripts/examples/hutch-pool-clean`
+  saves a dirty checkout under `refs/recycle/`, resets it to origin/main,
+  runs `git clean -ffdx`, `pnpm store prune`, and removes `~/.cache/turbo`
+  and `node_modules/.cache`. Healthy: free again, so a test failure keeps a
+  good VM. Under a floor: marked failed (reason `health`) at once, not at the next grant.
   Unreachable: marked failed and kept, and the coordinator gets
   `HEALTH-UNREACHABLE`. With a recycle command, the recycle runs instead (it
   checks free disk too).

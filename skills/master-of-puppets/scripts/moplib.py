@@ -708,7 +708,7 @@ RESOURCE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
 
 def pool_spec(cls, machine=None):
     """The pool of a class that leases named resources (a VM, a device, a seat), else None.
-    Fields: create, start, stop, delete, recycle, health (shell commands, each optional), max (resources
+    Fields: create, start, stop, delete, recycle, health, clean (shell commands, each optional), max (resources
     that may exist, 0 = no cap), and minFreeGiB and minMemGiB (the health floors). A command reads MOP_CLASS, MOP_RESOURCE, MOP_RESOURCE_INFO
     (JSON), MOP_LEASE_ID and MOP_WORKTREE from its environment. When the request named
     preferences, it also reads MOP_PREFER (JSON) and MOP_PREFER_<KEY> for each. A create that fails after
@@ -773,6 +773,7 @@ RECYCLE_TIMEOUT = 900  # seconds; a recycle that runs longer counts as unreachab
 
 
 HEALTH_TIMEOUT = 180  # seconds; a health check that runs longer counts as unreachable
+CLEAN_TIMEOUT = 600  # seconds; a release cleanup that runs longer is stopped, and the health check runs
 HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB = 10, 2  # defaults for a pool's minFreeGiB and minMemGiB
 # Why a resource is failed. The server's pool upkeep deletes a failed resource only for these reasons. Any other
 # reason, or none (a resource failed before reasons existed), is quarantined: kept until a coordinator marks it
@@ -1008,12 +1009,32 @@ def recycle_released(cls, name, token, info, lease_id, coordinator, worktree=Non
     return recycle_note(cls, name, outcome, detail, tail)
 
 
+def clean_run(cls, name, info, lease_id=None, worktree=None):
+    """Run the class's clean command on resource name, without the lock: best effort, at most CLEAN_TIMEOUT.
+    The command frees disk and prints one JSON line, {"freeBeforeGiB": B, "freeAfterGiB": A, ...}.
+    Returns (ok, detail): the JSON line (a dict), else the error text. None without a clean command."""
+    spec = pool_spec(cls) or {}
+    if not spec.get("clean"):
+        return None
+    ok, out, err = pool_run(spec["clean"], pool_env(cls, name, info, lease_id, worktree), CLEAN_TIMEOUT)
+    tail = json_tail(out)
+    return (True, tail) if ok else (False, tail.get("failed") or err or "no output")
+
+
 def health_released(cls, name, token, info, lease_id, coordinator, worktree=None):
-    """After a release, run the class's health command on the resource this caller claimed (begin_op health,
-    state checking, saved), without the lock held. Healthy: free again. Failed (under the pool's floors, or a
+    """After a release, run the class's clean command (best effort), then its health command, on the resource
+    this caller claimed (begin_op health, state checking, saved), without the lock held. Healthy: free again. Failed (under the pool's floors, or a
     failed check): marked failed with reason health, and the server's pool upkeep deletes it. Unreachable:
     marked failed with reason unreachable, kept. Logs the outcome and returns a line for the member."""
     tail = f"for={lease_id} coordinator={coordinator}"
+    cleaned, freed = clean_run(cls, name, info, lease_id, worktree) or (None, None), ""
+    if cleaned[0]:
+        before, after = cleaned[1].get("freeBeforeGiB"), cleaned[1].get("freeAfterGiB")
+        freed = f"; cleaned {before} -> {after} GiB free"
+        log(f"resource cleaned {cls} {name} before={before} GiB after={after} GiB detail={json.dumps(cleaned[1])} {tail}")
+    elif cleaned[0] is False:  # best effort: the health check below decides
+        freed = "; its cleanup failed"
+        log(f"resource clean-failed {cls} {name} error={json.dumps(cleaned[1])} {tail}")
     outcome, detail = health_run(cls, name, info, lease_id, worktree)
     lock()
     try:
@@ -1032,13 +1053,13 @@ def health_released(cls, name, token, info, lease_id, coordinator, worktree=None
     if outcome in ("ok", "none"):
         facts = detail or {}
         log(f"resource healthy {cls} {name} free={facts.get('freeGiB')} GiB mem={facts.get('memAvailGiB')} GiB {tail}")
-        return f"{name} is healthy ({facts.get('freeGiB')} GiB disk, {facts.get('memAvailGiB')} GiB memory free); back in the pool"
+        return f"{name} is healthy ({facts.get('freeGiB')} GiB disk, {facts.get('memAvailGiB')} GiB memory free{freed}); back in the pool"
     log(f"resource failed {cls} {name} reason={outcome} detail={json.dumps(detail)} {tail}")
     if outcome == "unreachable":
         say("pool", f"HEALTH-UNREACHABLE {cls} {name} for {lease_id}: {detail}; marked failed and kept "
                     f"(check ssh from the server, then resource mark {cls} --name {name} --state free)", coordinator)
         return f"could not reach {name} to check it ({detail}); marked failed and kept"
-    return f"{name} failed its health check ({detail}); retired, and the pool deletes it"
+    return f"{name} failed its health check ({detail}{freed}); retired, and the pool deletes it"
 
 
 def total_gib():

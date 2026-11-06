@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Clean command for a HUTCH pool class (config set-class HUTCH --pool-clean <this file>).
+# At each release, before the health check, over ssh to the Hutch env $MOP_RESOURCE: free disk that one
+# install, typecheck and test run leaves behind. Best effort: each step has its own timeout, and a failed
+# step goes on to the next. The steps:
+#   reset the checkout to origin/main and git clean -fdx (node_modules and build output go), pnpm store
+#   prune, then rm -rf ~/.cache/turbo and node_modules/.cache.
+# A dirty checkout is committed to refs/recycle/<time>-<lease> on the VM first, as the recycle command does.
+# The last stdout line: {"freeBeforeGiB": B, "freeAfterGiB": A, "steps": "<failed steps or ok>"}, exit 0.
+# The health command then decides whether the VM is still over the pool's minFreeGiB.
+set -uo pipefail
+hutch="${HUTCH_BIN:-$HOME/.local/bin/hutch-latest}"
+repo="${HUTCH_CLEAN_REPO:-/workspaces/mono}"
+alias=$("$hutch" env ssh-config "$MOP_RESOURCE" 2>/dev/null | tail -n 1) || alias=""
+if [ -z "$alias" ]; then
+	echo "no ssh alias for $MOP_RESOURCE (hutch env ssh-config failed)" >&2
+	exit 1
+fi
+exec ssh -o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 \
+	"$alias" "REPO='$repo' LEASE='${MOP_LEASE_ID:-none}' bash -s" <<'REMOTE'
+set -uo pipefail
+avail() { df -BG --output=avail / | tail -n 1 | tr -dc '0-9'; }
+before=$(avail)
+failed=()
+step() { # step NAME SECONDS CMD...: run one step, bounded; a failure is noted, never fatal
+	local name=$1 secs=$2; shift 2
+	timeout "$secs" "$@" >&2 || failed+=("$name")
+}
+owner=$(id -un)
+as=()
+if sudo -n true 2>/dev/null; then as=(sudo -n); fi
+g() { ${as[@]+"${as[@]}"} git -c safe.directory="$REPO" -C "$REPO" "$@"; }
+if [ -d "$REPO/.git" ]; then
+	dirty=$(g status --porcelain | wc -l | tr -d ' ')
+	if [ "$dirty" != "0" ]; then
+		saved="refs/recycle/$(date -u +%Y%m%dT%H%M%SZ)-$LEASE"
+		{ g add -A && g -c user.name=recycle -c user.email=recycle@localhost commit --quiet --no-verify \
+			-m "clean: $dirty changed paths before the reset for lease $LEASE" && g update-ref "$saved" HEAD; } >&2 \
+			|| echo "could not save $dirty changed paths; resetting anyway" >&2
+	fi
+	step reset 120 ${as[@]+"${as[@]}"} git -c safe.directory="$REPO" -C "$REPO" reset --quiet --hard origin/main
+	step clean 300 ${as[@]+"${as[@]}"} git -c safe.directory="$REPO" -C "$REPO" clean -ffdxq
+	if [ ${#as[@]} -gt 0 ]; then step chown 120 sudo -n chown -R "$owner": "$REPO"; fi
+	step prune 300 bash -lc 'cd "$REPO" && pnpm store prune'  # a login shell, so pnpm is on PATH
+	step cache 120 ${as[@]+"${as[@]}"} rm -rf "$REPO/node_modules/.cache"
+else
+	failed+=("no-checkout")
+	step prune 300 bash -lc 'pnpm store prune'
+fi
+step turbo 120 rm -rf "$HOME/.cache/turbo"
+after=$(avail)
+steps=$(IFS=,; echo "${failed[*]:-ok}")
+printf '{"freeBeforeGiB": %s, "freeAfterGiB": %s, "steps": "%s"}\n' "${before:-null}" "${after:-null}" "$steps"
+REMOTE
