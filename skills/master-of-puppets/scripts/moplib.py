@@ -711,7 +711,9 @@ def pool_spec(cls, machine=None):
     Fields: create, start, stop, delete, recycle, health (shell commands, each optional), max (resources
     that may exist, 0 = no cap), and minFreeGiB and minMemGiB (the health floors). A command reads MOP_CLASS, MOP_RESOURCE, MOP_RESOURCE_INFO
     (JSON), MOP_LEASE_ID and MOP_WORKTREE from its environment. When the request named
-    preferences, it also reads MOP_PREFER (JSON) and MOP_PREFER_<KEY> for each."""
+    preferences, it also reads MOP_PREFER (JSON) and MOP_PREFER_<KEY> for each. A create that fails after
+    it made a resource prints the resource's JSON anyway and exits non-zero: the pool keeps it as failed
+    (reason create), and the upkeep deletes it."""
     return registry(machine).get(cls, {}).get("pool")
 
 
@@ -776,7 +778,7 @@ HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB = 10, 2  # defaults for a pool's minFree
 # reason, or none (a resource failed before reasons existed), is quarantined: kept until a coordinator marks it
 # again. The kept reasons: unreachable (not reset, so its files stay for a check), delete (its delete failed
 # once), stuck-delete (a delete whose process died).
-FAIL_DELETE = ("start", "health", "retire", "manual")
+FAIL_DELETE = ("create", "start", "health", "retire", "manual")
 
 
 def set_state(res, state):

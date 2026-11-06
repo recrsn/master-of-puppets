@@ -1828,9 +1828,15 @@ def pool_acquire_cmd(args):
             ok, out, err = box["r"]
     elif action == "start" and spec.get("start"):
         ok, out, err = pool_run(spec["start"], pool_env(cls, placeholder, info, args.id, args.worktree, prefer))
-    name, new_info = pool_info(out) if action == "create" and ok else (placeholder, info)
-    if action == "create" and ok and name is None:
-        ok, err = False, "create printed no JSON object with a valid name"
+    name, new_info, made = placeholder, info, None
+    if action == "create":
+        got = pool_info(out)
+        if got[0] and ok:
+            name, new_info = got
+        elif got[0]:
+            made = got  # the create failed after it made this resource: keep it, failed, so the upkeep deletes it
+        elif ok:
+            ok, err = False, "create printed no JSON object with a valid name"
     # Every grant checks free disk and memory first, an assign too: a free resource can be full from its last holder.
     health, facts = health_run(cls, name, new_info, args.id, args.worktree) if ok else ("none", None)
     unhealthy = health in ("failed", "unreachable")
@@ -1852,6 +1858,10 @@ def pool_acquire_cmd(args):
                 set_state(pool[-1], "free")
                 if unhealthy:
                     mark_failed(pool[-1], "unreachable" if health == "unreachable" else "health", facts)
+            elif made and not find_resource(state, cls, made[0]):
+                pool.append({"name": made[0], "info": made[1]})
+                set_state(pool[-1], "free")
+                mark_failed(pool[-1], "create", err)
         elif ok and action == "create" and any(r["name"] == name and r is not res for r in pool):
             problem = f"create returned {name}, which the pool already has"
         if not problem and queued and entry is None:
@@ -1866,6 +1876,11 @@ def pool_acquire_cmd(args):
                     res.pop("prior", None)
                     mark_failed(res, "unreachable" if health == "unreachable" else "health", facts)
                     log(f"resource failed {cls} {name} for={args.id} reason={health} detail={json.dumps(facts)}")
+                elif action == "create" and made and not any(r["name"] == made[0] and r is not res for r in pool):
+                    res.update(name=made[0], info=made[1])
+                    res.pop("prior", None)
+                    mark_failed(res, "create", err)
+                    log(f"resource failed {cls} {made[0]} for={args.id} reason=create detail={json.dumps(err)}")
                 elif action == "create" and not ok:
                     pool.remove(res)
                 elif not ok:
@@ -1926,20 +1941,25 @@ def finish_create(maker, box, cls, placeholder, token, lease_id):
     (or drop the placeholder when the create failed). Writes only the state and the events log."""
     maker.join()
     ok, out, err = box.get("r") or (False, "", "no result")
-    name, info = pool_info(out) if ok else (None, None)
+    name, info = pool_info(out)
     lock()
     try:
         state, machine = load(), load_machine()
         pool = state["resources"][cls]
         res = op_current(state, cls, placeholder, token)
-        if ok and name and not any(r["name"] == name and r is not res for r in pool):
+        if name and not any(r["name"] == name and r is not res for r in pool):
             if res is None:
                 pool.append({"name": name, "info": info})
                 res = pool[-1]
+                set_state(res, "free")
             else:
                 res.update(name=name, info=info)
-            end_op(res, "free")
-            log(f"resource created {cls} {name} for={lease_id} (background; free)")
+            if ok:
+                end_op(res, "free")
+                log(f"resource created {cls} {name} for={lease_id} (background; free)")
+            else:  # the create failed after it made this resource: the upkeep deletes it
+                mark_failed(res, "create", err)
+                log(f"resource failed {cls} {name} for={lease_id} reason=create (background) detail={json.dumps(err)}")
         else:
             if res is not None:
                 pool.remove(res)
