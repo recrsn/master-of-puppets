@@ -91,8 +91,8 @@ creates new ones without a coordinator step:
   unusable VM: marked failed (reason `retire`), never granted again.
 - **Failed resources are deleted, by an explicit list.** Once a minute the
   server's pool upkeep deletes an unheld failed resource with the delete
-  command only when its reason is `start`, `health`, `retire` or `manual`
-  (from `resource mark --state failed`). Every other failed resource is kept:
+  command only when its reason is `create`, `start`, `health`, `retire` or
+  `manual` (from `resource mark --state failed`). Every other failed resource is kept:
   `unreachable` (the health or recycle command could not reach it, so its
   files stay for a check: `resource mark ... --state free` returns it),
   `delete` (its delete failed once; check it, then `resource remove ...
@@ -104,7 +104,12 @@ creates new ones without a coordinator step:
 - **New resources.** With no free or stopped resource left, `acquire` creates
   one. Hutch picks the zone; its CLI has no zone flag. A stopped VM keeps its
   zone, so a start that fails for capacity marks it failed, the upkeep deletes
-  it, and the next grant creates a VM where Hutch has room.
+  it, and the next grant creates a VM where Hutch has room. A create command
+  that fails after it made a resource prints the resource's JSON and exits
+  non-zero: the pool keeps it, failed (reason `create`), and the upkeep
+  deletes it, so no VM is left behind. `scripts/examples/hutch-pool-create`
+  does this; it reads the env id from Hutch's stdout JSON, else from its
+  stderr progress lines (`id` or `environmentId`).
 - **Guard.** With 2 resources failed as `unreachable`, `acquire` creates no
   more and exits 3 with `resources_blocked`: the server's ssh is likely
   broken, and every new VM would fail the same way. Fix ssh, then mark them

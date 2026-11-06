@@ -2,24 +2,25 @@
 # Create command for a HUTCH pool class (config set-class HUTCH --pool-create <this file>).
 # Create a Hutch env on main and print {"name": <env id>, "slotType": ..., "branch": "main"}.
 # MOP_PREFER_SLOTTYPE (native|emulated|shared|ngrok) picks the slot type; default emulated.
-# Hutch picks the zone; the hutch CLI has no zone flag. A failed create copies Hutch's own output to
-# stderr, so the refusal names the reason (for example no capacity in the zone).
+# Hutch picks the zone; the hutch CLI has no zone flag. Hutch's stdout and stderr stay apart: the env id
+# comes from the stdout JSON, else from the stderr progress lines (key id or environmentId). A failed
+# create that made an env still prints its JSON, and exits 1 with Hutch's stderr, so the pool keeps the
+# env as failed and deletes it; it is never left behind.
 set -uo pipefail
 slot="${MOP_PREFER_SLOTTYPE:-emulated}"
 case "$slot" in native|emulated|shared|ngrok) ;; *) echo "bad slot type: $slot" >&2; exit 2 ;; esac
-out=$("${HUTCH_BIN:-$HOME/.local/bin/hutch-latest}" env create --branch main --slot-type "$slot" --wait --json 2>&1)
+errf=$(mktemp) || exit 1
+trap 'rm -f "$errf"' EXIT
+out=$("${HUTCH_BIN:-$HOME/.local/bin/hutch-latest}" env create --branch main --slot-type "$slot" --wait --json 2>"$errf")
 code=$?
-if [ "$code" -ne 0 ]; then
-	printf 'hutch env create exit %s: %s\n' "$code" "$(printf '%s' "$out" | tail -c 600)" >&2
-	exit 1
-fi
-printf '%s' "$out" | SLOT="$slot" python3 -c '
+OUT="$out" ERRF="$errf" SLOT="$slot" CODE="$code" python3 -I -c '
 import json,os,re,sys
 u=re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 def find(o):
     if isinstance(o,dict):
-        v=o.get("id")
-        if isinstance(v,str) and u.match(v): return v
+        for k in ("id","environmentId"):
+            v=o.get(k)
+            if isinstance(v,str) and u.match(v): return v
         for x in o.values():
             r=find(x)
             if r: return r
@@ -27,13 +28,19 @@ def find(o):
         for x in o:
             r=find(x)
             if r: return r
-raw=sys.stdin.read(); dec=json.JSONDecoder(); pos=0; i=None
-while pos<len(raw) and not i:
-    while pos<len(raw) and raw[pos].isspace(): pos+=1
-    if pos>=len(raw): break
-    try: obj,pos=dec.raw_decode(raw,pos)
-    except ValueError: pos=raw.find("\n",pos)+1 or len(raw); continue
-    i=find(obj)
-if not i: sys.exit("no env id in create output: "+raw[-400:])
-print(json.dumps({"name":i,"slotType":os.environ["SLOT"],"branch":"main"}))
+def scan(raw):
+    dec=json.JSONDecoder(); pos=0
+    while pos<len(raw):
+        while pos<len(raw) and raw[pos].isspace(): pos+=1
+        if pos>=len(raw): break
+        try: obj,pos=dec.raw_decode(raw,pos)
+        except ValueError: pos=raw.find("\n",pos)+1 or len(raw); continue
+        i=find(obj)
+        if i: return i
+out=os.environ["OUT"]; err=open(os.environ["ERRF"],errors="replace").read(); code=int(os.environ["CODE"])
+i=scan(out) or scan(err)
+if i: print(json.dumps({"name":i,"slotType":os.environ["SLOT"],"branch":"main"}))
+if code:
+    sys.exit("hutch env create exit %d%s: %s" % (code, " after it made "+i if i else "", (err or out)[-600:]))
+if not i: sys.exit("no env id in create output: "+(out[-300:] or "")+" | stderr: "+err[-300:])
 '
