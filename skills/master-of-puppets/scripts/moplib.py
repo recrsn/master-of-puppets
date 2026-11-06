@@ -772,9 +772,11 @@ RECYCLE_TIMEOUT = 900  # seconds; a recycle that runs longer counts as unreachab
 
 HEALTH_TIMEOUT = 180  # seconds; a health check that runs longer counts as unreachable
 HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB = 10, 2  # defaults for a pool's minFreeGiB and minMemGiB
-# Why a resource is failed. The server's pool upkeep deletes a failed resource, except for these reasons:
-# unreachable (it was not reset, so its files stay for a check) and delete (its delete failed once).
-FAIL_KEPT = ("unreachable", "delete")
+# Why a resource is failed. The server's pool upkeep deletes a failed resource only for these reasons. Any other
+# reason, or none (a resource failed before reasons existed), is quarantined: kept until a coordinator marks it
+# again. The kept reasons: unreachable (not reset, so its files stay for a check), delete (its delete failed
+# once), stuck-delete (a delete whose process died).
+FAIL_DELETE = ("start", "health", "retire", "manual")
 
 
 def set_state(res, state):
@@ -787,8 +789,8 @@ def set_state(res, state):
 
 
 def mark_failed(res, reason, detail=""):
-    """End any operation and mark the resource failed for reason (start, health, release, unreachable, delete,
-    manual): out of rotation, and deleted by the pool upkeep unless reason is in FAIL_KEPT."""
+    """End any operation and mark the resource failed for reason: out of rotation, and deleted by the pool
+    upkeep only when reason is in FAIL_DELETE."""
     end_op(res, "failed")
     res["failReason"], res["failDetail"] = reason, " ".join(str(detail or "").split())[:200]
 

@@ -88,14 +88,19 @@ creates new ones without a coordinator step:
   `HEALTH-UNREACHABLE`. With a recycle command, the recycle runs instead (it
   checks free disk too).
 - **`--retire-vm "<reason>"` retires the resource** at release, for a dirty or
-  unusable VM: marked failed (reason `release`), never granted again.
-- **Failed resources are deleted.** Once a minute the server's pool upkeep
-  deletes every unheld failed resource with the delete command (reasons
-  `start`, `health`, `release`, `manual` from `resource mark --state failed`).
-  It keeps two reasons: `unreachable` (the health or recycle command could not
-  reach it, so its files stay for a check: `resource mark ... --state free`
-  returns it) and `delete` (its delete failed once; check it, then `resource
-  remove ... --delete`). `resource list` shows each reason.
+  unusable VM: marked failed (reason `retire`), never granted again.
+- **Failed resources are deleted, by an explicit list.** Once a minute the
+  server's pool upkeep deletes an unheld failed resource with the delete
+  command only when its reason is `start`, `health`, `retire` or `manual`
+  (from `resource mark --state failed`). Every other failed resource is kept:
+  `unreachable` (the health or recycle command could not reach it, so its
+  files stay for a check: `resource mark ... --state free` returns it),
+  `delete` (its delete failed once; check it, then `resource remove ...
+  --delete`), `stuck-delete` (a delete whose process died), and any failed
+  resource with no reason or an unknown one, for example one that failed
+  before reasons existed or one added with `resource add --state failed`.
+  `resource list` shows these as `quarantined`; a coordinator marks them
+  again (`--state failed` to delete, `--state free` to return).
 - **New resources.** With no free or stopped resource left, `acquire` creates
   one. Hutch picks the zone; its CLI has no zone flag. A stopped VM keeps its
   zone, so a start that fails for capacity marks it failed, the upkeep deletes

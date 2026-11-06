@@ -379,7 +379,7 @@ from moplib import (
     say, deliver, notify, READS, memory_path, add_read_commands, pr_refs, gh_http, http_error,
     read_cmd, run, worktree_pids, drain, pool_spec, pool_env, pool_run, pool_info, find_resource, RESOURCE_NAME, parse_prefer, prefer_matches,
     set_state, stop_resource, begin_op, end_op, op_current, op_live, BUSY_STATES, POOL_STUCK_MINUTES, delete_claimed,
-    mark_failed, health_run, FAIL_KEPT, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
+    mark_failed, health_run, FAIL_DELETE, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
 )
 
 
@@ -1861,7 +1861,7 @@ def pool_acquire_cmd(args):
             problem = refused and refused[1]
         if problem:
             if res is not None:
-                if unhealthy:  # never granted; the pool upkeep deletes it, unless unreachable (FAIL_KEPT)
+                if unhealthy:  # never granted; the pool upkeep deletes it, unless unreachable (not in FAIL_DELETE)
                     res.update(name=name, info=new_info)
                     res.pop("prior", None)
                     mark_failed(res, "unreachable" if health == "unreachable" else "health", facts)
@@ -1965,7 +1965,9 @@ def resource_cmd(args):
         held = {h.get("resource"): h["id"] for h in state[args.cls]}
         if args.rcmd == "list":
             for r in pool:
-                why = f"({r['failReason']}: {r.get('failDetail', '')})" if r.get("failReason") else ""
+                why = "" if r["state"] != "failed" else (
+                    f"({r['failReason']}: {r.get('failDetail', '')})" if r.get("failReason") in FAIL_DELETE else
+                    f"(quarantined: {r.get('failReason') or 'no reason'}{': ' + r['failDetail'] if r.get('failDetail') else ''})")
                 print(f"{r['name']} {r['state']}{why}" + (f" held by {held[r['name']]}" if r["name"] in held else "")
                       + f" {json.dumps(r.get('info', {}))}")
             return 0
@@ -3046,7 +3048,8 @@ def pool_upkeep():
     stopAfterMinutes (release never stops: a stop is costly, and the next grant may come soon); reset a
     resource stuck in a busy state past POOL_STUCK_MINUTES whose operation's process is gone (a crashed
     create, start, stop or delete; a live operation is never reset); delete an unheld failed resource (a
-    failed start or health check, a release with fail, a manual mark) unless its reason is in FAIL_KEPT;
+    failed start or health check, a release with --retire-vm, a manual mark) only when its reason is in
+    FAIL_DELETE (another reason or none is quarantined);
     delete an unheld resource idle for the class's idleDeleteHours (both need a delete command; a failed
     delete marks it failed with reason delete, so it is tried once). The lease's coordinator gets POOL-EXPIRED in its inbox
     once per lease that expired over an hour ago while still holding a resource (never taken back). Each step
@@ -3080,11 +3083,13 @@ def pool_pass(warned, by="server"):
                     else:
                         end_op(r, {"assigning": r.get("prior") or "free", "deleting": "failed"}.get(r["state"], "free"))
                         r.pop("prior", None)
+                        if r["state"] == "failed":
+                            r["failReason"], r["failDetail"] = "stuck-delete", f"delete stuck {age:.0f} min, its process gone"
                     save(state, machine)
                     log(f"resource reset {cls} {r['name']} stuck {age:.0f} min by={by}")
                 elif op or r["state"] in BUSY_STATES or r["name"] in held:
                     continue
-                elif r["state"] == "failed" and pool.get("delete") and r.get("failReason") not in FAIL_KEPT:
+                elif r["state"] == "failed" and pool.get("delete") and r.get("failReason") in FAIL_DELETE:
                     failed.append(r["name"])  # user rule: "you manage vms, deleting and creating should be automatic"
                 elif r["state"] in ("free", "stopped") and pool.get("idleDeleteHours") and pool.get("delete") \
                         and age > pool["idleDeleteHours"] * 60:
