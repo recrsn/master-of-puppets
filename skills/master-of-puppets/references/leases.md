@@ -79,7 +79,11 @@ creates new ones without a coordinator step:
   not granted; `acquire` exits 8 and the next try (the server's auto acquire
   retries at once) picks another one or creates one. The facts go on the
   holder's `RESOURCE` line. `scripts/examples/hutch-pool-health` is the
-  command for a Hutch pool; it changes nothing on the VM.
+  command for a Hutch pool; it changes nothing on the VM. It first reads
+  `hutch env status`: anything but `READY` and `Available`, with no deletion
+  request, fails the check (reason `health`, so the upkeep deletes it). That
+  covers a failed rebuild, a rebuild still running, a stopped env and an env
+  Hutch no longer has. An error from Hutch itself counts as unreachable.
 - **Health at every release.** `puppet.py release` (pass, fail or partial)
   runs the health command while the resource is `checking` (busy, so no grant
   takes it). With `--pool-clean CMD`, the clean command runs first, to free
