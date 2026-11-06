@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Health command for a HUTCH pool class (config set-class HUTCH --pool-health <this file>).
-# Before every grant and at every release: first the Hutch env status (hutch env status --json). Anything but
-# progressStatus READY with codespaceState Available and no deletion request fails the check: a failed rebuild,
-# a rebuild in progress, a stopped or deleting env. Then, over ssh to the env $MOP_RESOURCE: read free disk on /
+# Before every grant and at every release: first the Hutch env status (hutch env status --json). Only known
+# unhealthy states fail the check (exit 3, deleted): progressStatus FAILED or BUILDING (a failed rebuild, a
+# rebuild in progress), codespaceState Shutdown, a deletion request, or an env Hutch no longer has. READY with
+# Available passes. Any other response (malformed, missing fields, an unknown state) is unreachable. Then, over ssh to the env $MOP_RESOURCE: read free disk on /
 # and available memory.
 # The last stdout line is the result for moplib.health_run, which compares it with the pool's
 # minFreeGiB and minMemGiB:
@@ -21,17 +22,29 @@ status=$("$hutch" env status "$MOP_RESOURCE" --json 2>&1) || {
 }
 verdict=$(printf '%s' "$status" | python3 -I -c '
 import json,sys
-try: e=json.load(sys.stdin)["environment"]
-except (ValueError,KeyError,TypeError): print("unknown"); sys.exit()
-p,s=e.get("progressStatus"),e.get("codespaceState")
-if p=="READY" and s=="Available" and not e.get("deletionRequestedAt"): print("ok")
-else: print(json.dumps({"failed":"hutch status %s, %s%s: %s" % (p,s," deletion requested" if e.get("deletionRequestedAt") else "",
-    (e.get("progressMessage") or "")[:150])}))
+# ok, failed (a JSON line: an explicit, known unhealthy state) or unknown: <why> (kept as unreachable)
+try: d=json.load(sys.stdin)
+except ValueError: print("unknown: not JSON"); sys.exit()
+e=d.get("environment") if isinstance(d,dict) else None
+if not isinstance(e,dict): print("unknown: no environment object"); sys.exit()
+p,s,gone=e.get("progressStatus"),e.get("codespaceState"),e.get("deletionRequestedAt")
+why=[]
+if gone: why.append("deletion requested")
+if p in ("FAILED","BUILDING"): why.append("progressStatus "+p)
+if s=="Shutdown": why.append("codespaceState Shutdown")
+if why: print(json.dumps({"failed":"hutch env %s: %s" % (", ".join(why),str(e.get("progressMessage") or "")[:150])}))
+elif p=="READY" and s=="Available": print("ok")
+else: print("unknown: progressStatus %r, codespaceState %r" % (p,s))
 ')
+parsed=$?
+if [ "$parsed" -ne 0 ] || [ -z "$verdict" ]; then
+	echo "could not read hutch env status for $MOP_RESOURCE (parser exit $parsed)" >&2
+	exit 1
+fi
 case "$verdict" in
 	ok) ;;
-	unknown) echo "hutch env status $MOP_RESOURCE printed no environment: $(printf '%s' "$status" | tail -c 300)" >&2; exit 1 ;;
-	*) printf '%s\n' "$verdict"; exit 3 ;;
+	'{"failed"'*) printf '%s\n' "$verdict"; exit 3 ;;
+	*) echo "hutch env status $MOP_RESOURCE: $verdict: $(printf '%s' "$status" | tr '\n' ' ' | tail -c 300)" >&2; exit 1 ;;
 esac
 alias=$("$hutch" env ssh-config "$MOP_RESOURCE" 2>/dev/null | tail -n 1) || alias=""
 if [ -z "$alias" ]; then
