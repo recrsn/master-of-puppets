@@ -380,7 +380,7 @@ from moplib import (
     say, deliver, notify, READS, memory_path, add_read_commands, pr_refs, gh_http, http_error,
     read_cmd, run, worktree_pids, drain, pool_spec, pool_env, pool_run, pool_info, find_resource, RESOURCE_NAME, parse_prefer, prefer_matches,
     set_state, stop_resource, begin_op, end_op, op_current, op_live, BUSY_STATES, POOL_STUCK_MINUTES, delete_claimed,
-    mark_failed, health_run, FAIL_DELETE, CLEAN_TIMEOUT, FIND_TIMEOUT, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
+    mark_failed, health_run, host_hold, host_held, FAIL_DELETE, CLEAN_TIMEOUT, FIND_TIMEOUT, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
 )
 
 
@@ -1849,8 +1849,10 @@ def pool_acquire_cmd(args):
     # Every grant checks free disk and memory first, an assign too: a free resource can be full from its last holder.
     health, facts = health_run(cls, name, new_info, args.id, args.worktree) if ok else ("none", None)
     unhealthy = health in ("failed", "unreachable")
-    if unhealthy:
+    kept = health in ("stopped", "host")  # never granted, never failed: stopped is started at a later grant
+    if unhealthy or kept:
         ok, err = False, f"health check {health}: {facts}"
+    held = False
     lock()
     try:
         state, machine = load(), load_machine()
@@ -1862,9 +1864,9 @@ def pool_acquire_cmd(args):
         problem = None if ok else f"{action} failed: {err}"
         if res is None:
             problem = f"{placeholder} was reset or removed while {action} ran"
-            if action == "create" and (ok or unhealthy) and not find_resource(state, cls, name):
+            if action == "create" and (ok or unhealthy or kept) and not find_resource(state, cls, name):
                 pool.append({"name": name, "info": new_info})  # the VM exists: keep it, free (failed when unhealthy)
-                set_state(pool[-1], "free")
+                set_state(pool[-1], "stopped" if health == "stopped" else "free")
                 if unhealthy:
                     mark_failed(pool[-1], "unreachable" if health == "unreachable" else "health", facts)
             elif made and not find_resource(state, cls, made[0]):
@@ -1885,6 +1887,11 @@ def pool_acquire_cmd(args):
                     res.pop("prior", None)
                     mark_failed(res, "unreachable" if health == "unreachable" else "health", facts)
                     log(f"resource failed {cls} {name} for={args.id} reason={health} detail={json.dumps(facts)}")
+                elif kept:  # a stopped resource waits for a start; on a host fault the resource was not checked
+                    res.update(name=name, info=new_info)
+                    res.pop("prior", None)
+                    end_op(res, health if health == "stopped" else "free")
+                    log(f"resource health-{health} {cls} {name} for={args.id} detail={json.dumps(facts)}")
                 elif action == "create" and made and not any(r["name"] == made[0] and r is not res for r in pool):
                     res.update(name=made[0], info=made[1])
                     res.pop("prior", None)
@@ -1899,8 +1906,11 @@ def pool_acquire_cmd(args):
                         res.update(name=name, info=new_info)
                     res.pop("prior", None)
                     end_op(res, "free")
+            held = health == "host" and host_hold(state, cls, facts)
             save(state, machine)
             log(f"refuse {cls} {args.coordinator} {args.id} resource {problem}")
+            if held:
+                host_held(cls, name, facts, f"for={args.id}")
             print(json.dumps({"resource_error": problem}))
             return 8
         res.pop("prior", None)

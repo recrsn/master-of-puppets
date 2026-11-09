@@ -792,6 +792,24 @@ def set_state(res, state):
         res.pop("failDetail", None)
 
 
+def host_hold(state, cls, reason):
+    """Hold admission of cls for a fault on this Mac (health outcome host), unless a hold is set: no grant runs a
+    health check that cannot pass, and no resource is quarantined for it. A coordinator clears it (admission
+    clear) once the fault is fixed. The caller holds the lock and saves. Returns whether this call set it."""
+    holds = state.setdefault("admission", {})
+    if cls in holds:
+        return False
+    holds[cls] = {"by": "pool", "reason": reason, "at": now().isoformat()}
+    return True
+
+
+def host_held(cls, name, reason, tail):
+    """Log and announce a hold that host_hold set, after the lock is released."""
+    log(f"admission hold {cls} by=pool resource={name} reason={json.dumps(reason)} {tail}")
+    say("pool", f"HOST-FAULT {cls}: {reason}. Admission of {cls} is on hold and no VM was marked; "
+                f"after the fix, run admission clear {cls}")
+
+
 def mark_failed(res, reason, detail=""):
     """End any operation and mark the resource failed for reason: out of rotation, and deleted by the pool
     upkeep only when reason is in FAIL_DELETE."""
@@ -910,16 +928,21 @@ def recycle_run(cls, name, info, lease_id=None, worktree=None):
 def health_run(cls, name, info, lease_id=None, worktree=None):
     """Run the class's health command on resource name, without the lock, before a grant. The command prints
     one JSON line with exit 0: {"freeGiB": N, "memAvailGiB": M, ...}, or {"failed": "<reason>"} with a non-zero
-    exit when it reached the resource and found it broken. Returns (outcome, detail): ok (the JSON line, a
-    dict), failed (the reason: a failed check, or free disk or memory under the pool's minFreeGiB or
-    minMemGiB), unreachable (any other failure) or none (the class has no health command)."""
+    exit when it reached the resource and found it broken, {"stopped": "<reason>"} when the resource is stopped
+    (start it, do not delete it), or {"hostError": "<reason>"} when this Mac cannot check any resource (for
+    example expired credentials). Returns (outcome, detail): ok (the JSON line, a dict), failed (the reason: a
+    failed check, or free disk or memory under the pool's minFreeGiB or minMemGiB), stopped, host, unreachable
+    (any other failure) or none (the class has no health command)."""
     spec = pool_spec(cls) or {}
     if not spec.get("health"):
         return "none", None
     ok, out, err = pool_run(spec["health"], pool_env(cls, name, info, lease_id, worktree), HEALTH_TIMEOUT)
     tail = json_tail(out)
     if not ok:
-        return ("failed", str(tail["failed"])) if tail.get("failed") else ("unreachable", err or "no output")
+        for key, outcome in (("hostError", "host"), ("stopped", "stopped"), ("failed", "failed")):
+            if tail.get(key):
+                return outcome, str(tail[key])
+        return "unreachable", err or "no output"
     for key, floor, what in (("freeGiB", spec.get("minFreeGiB", HEALTH_MIN_FREE_GIB), "disk on /"),
                              ("memAvailGiB", spec.get("minMemGiB", HEALTH_MIN_MEM_GIB), "memory")):
         value = tail.get(key)
@@ -1025,8 +1048,10 @@ def clean_run(cls, name, info, lease_id=None, worktree=None):
 def health_released(cls, name, token, info, lease_id, coordinator, worktree=None):
     """After a release, run the class's clean command (best effort), then its health command, on the resource
     this caller claimed (begin_op health, state checking, saved), without the lock held. Healthy: free again. Failed (under the pool's floors, or a
-    failed check): marked failed with reason health, and the server's pool upkeep deletes it. Unreachable:
-    marked failed with reason unreachable, kept. Logs the outcome and returns a line for the member."""
+    failed check): marked failed with reason health, and the server's pool upkeep deletes it. Stopped: marked
+    stopped, and the next grant starts it. Host (this Mac cannot check it): free again, and the class's
+    admission is held (host_hold). Unreachable: marked failed with reason unreachable, kept. Logs the outcome
+    and returns a line for the member."""
     tail = f"for={lease_id} coordinator={coordinator}"
     cleaned, freed = clean_run(cls, name, info, lease_id, worktree) or (None, None), ""
     if cleaned[0]:
@@ -1044,8 +1069,12 @@ def health_released(cls, name, token, info, lease_id, coordinator, worktree=None
         if res is None:
             log(f"resource health-reset {cls} {name} {tail}")
             return f"{name} was reset while its health was checked; ask your coordinator"
-        if outcome in ("ok", "none"):
+        held = False
+        if outcome in ("ok", "none", "host"):
             end_op(res, "free")  # also stamps the idle clock for the server's pool upkeep
+            held = outcome == "host" and host_hold(state, cls, detail)
+        elif outcome == "stopped":
+            end_op(res, "stopped")
         else:
             mark_failed(res, "unreachable" if outcome == "unreachable" else "health", detail)
         save(state, machine)
@@ -1055,6 +1084,14 @@ def health_released(cls, name, token, info, lease_id, coordinator, worktree=None
         facts = detail or {}
         log(f"resource healthy {cls} {name} free={facts.get('freeGiB')} GiB mem={facts.get('memAvailGiB')} GiB {tail}")
         return f"{name} is healthy ({facts.get('freeGiB')} GiB disk, {facts.get('memAvailGiB')} GiB memory free{freed}); back in the pool"
+    if outcome == "host":
+        log(f"resource health-host {cls} {name} kept free detail={json.dumps(detail)} {tail}")
+        if held:
+            host_held(cls, name, detail, tail)
+        return f"{name} was not checked: {detail}; it stays in the pool, and {cls} admission is on hold"
+    if outcome == "stopped":
+        log(f"resource health-stopped {cls} {name} detail={json.dumps(detail)} {tail}")
+        return f"{name} is stopped ({detail}); kept, and the next grant starts it"
     log(f"resource failed {cls} {name} reason={outcome} detail={json.dumps(detail)} {tail}")
     if outcome == "unreachable":
         say("pool", f"HEALTH-UNREACHABLE {cls} {name} for {lease_id}: {detail}; marked failed and kept "
