@@ -1056,6 +1056,14 @@ def roster_cmd(args):
             x["name"] == args.parent and x["name"] != args.name for x in members):
         print(f"{args.parent} is not a member of {args.coordinator}")
         return 3
+    if args.mcmd == "add" and args.parent and args.parent != args.coordinator:
+        # Puppets cannot have children (machine rule m-0a2948). The session already runs, so add it (it answers to
+        # the coordinator), but say who broke the rule, so the coordinator tells that member.
+        warn = (f"rule break: member {args.parent} started {args.name}; puppets cannot have children (m-0a2948). "
+                f"{args.name} answers to {args.coordinator}; tell {args.parent} to send TASK REQUEST next time")
+        print(f"warning: {warn}", file=sys.stderr)
+        log(f"child-rule-break {args.coordinator} parent={args.parent} child={args.name}")
+        note(args.coordinator, warn)
     if args.mcmd == "add":
         if m is None and args.parent:
             kids = [x for x in members if x.get("status") == "pending" and x.get("parent") == args.parent]
