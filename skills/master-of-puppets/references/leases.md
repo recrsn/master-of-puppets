@@ -81,13 +81,24 @@ creates new ones without a coordinator step:
   holder's `RESOURCE` line. `scripts/examples/hutch-pool-health` is the
   command for a Hutch pool; it changes nothing on the VM. It first reads
   `hutch env status`. Only a known unhealthy state fails the check (reason
-  `health`, so the upkeep deletes it): progressStatus `FAILED`, codespaceState
-  `Shutdown`, a deletion request, or an env Hutch no longer has. `READY` or
+  `health`, so the upkeep deletes it): progressStatus `FAILED`, a deletion
+  request, or an env Hutch no longer has. codespaceState `Shutdown` alone
+  (Hutch stops an env after some idle hours, also while it is held) prints
+  `{"stopped": ...}`: the resource is marked `stopped`, never deleted for it,
+  and the next grant that picks it runs the pool's start command. `READY` or
   `BUILDING` with `Available` goes on to the disk, memory and SSH checks:
   Hutch shows `BUILDING` when the app services are down (a member stopped
   them, or the clean removed the build output), and checks do not need the
   app services. An error from Hutch, a malformed response or an unknown state
   counts as unreachable: kept, never deleted for it.
+- **Host faults.** When the health command prints `{"hostError": ...}`
+  (exit 4), the fault is on this Mac, not on the resource: for Hutch, an
+  error text that asks for `gcloud auth login`. The resource is not marked
+  (free again at a release, untouched at a grant), the grant is refused, and
+  the pool sets an admission hold on the class (`by pool`, with the reason),
+  once. The dashboard shows the hold as a serious alert, and every
+  coordinator gets `HOST-FAULT <class>: <reason>`. After the fix (`gcloud
+  auth login`), a coordinator runs `admission clear <class>`.
 - **Health at every release.** `puppet.py release` (pass, fail or partial)
   runs the health command while the resource is `checking` (busy, so no grant
   takes it). With `--pool-clean CMD`, the clean command runs first, to free

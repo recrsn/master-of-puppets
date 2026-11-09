@@ -1,23 +1,35 @@
 #!/usr/bin/env bash
 # Health command for a HUTCH pool class (config set-class HUTCH --pool-health <this file>).
 # Before every grant and at every release: first the Hutch env status (hutch env status --json). Only known
-# unhealthy states fail the check (exit 3, deleted): progressStatus FAILED, codespaceState Shutdown, a
-# deletion request, or an env Hutch no longer has. READY or BUILDING with Available goes on to the VM checks:
+# unhealthy states fail the check (exit 3, deleted): progressStatus FAILED, a deletion request, or an env
+# Hutch no longer has. codespaceState Shutdown alone (Hutch stops an idle env after some hours) is stopped:
+# kept, and the next grant starts it. READY or BUILDING with Available goes on to the VM checks:
 # BUILDING is what Hutch shows when the app services are down (a member ran crstop, or the clean removed the
 # build output), and checks do not need them. Any other response (malformed, missing fields, an unknown
 # state) is unreachable. Then, over ssh to the env $MOP_RESOURCE: read free disk on / and available memory.
 # The last stdout line is the result for moplib.health_run, which compares it with the pool's
 # minFreeGiB and minMemGiB:
 #   {"freeGiB": N, "memAvailGiB": M, "sshAlias": A, "uptimeS": S}   exit 0: the facts
-#   {"failed": "<reason>"}     exit 3: the env is not READY, is gone, or a check on the VM failed (mark it failed)
+#   {"failed": "<reason>"}     exit 3: the env failed, is gone or is being deleted, or a check on the VM failed
+#   {"stopped": "<reason>"}    exit 3: the env is stopped (Shutdown): marked stopped, started at the next grant
+#   {"hostError": "<reason>"}  exit 4: this Mac cannot reach Hutch VMs (gcloud credentials expired): the VM is
+#                              not marked, and the pool holds HUTCH admission until a coordinator clears it
 #   anything else (hutch env status or ssh failed, no alias, a timeout): unreachable (marked failed and kept)
 # It changes nothing on the VM.
 set -uo pipefail
 hutch="${HUTCH_BIN:-$HOME/.local/bin/hutch-latest}"
+host_error() { # host_error TEXT: exit 4 when TEXT shows that this Mac's gcloud credentials expired
+	case "$1" in
+		*"gcloud auth login"*|*"Reauthentication failed"*|*"invalid_grant"*)
+			printf '{"hostError": "gcloud credentials on this Mac expired: run gcloud auth login"}\n'
+			exit 4 ;;
+	esac
+}
 status=$("$hutch" env status "$MOP_RESOURCE" --json 2>&1) || {
 	case "$status" in  # the env is gone: failed, so the pool drops it; any other error is unreachable
 		*"No environment matched"*) printf '{"failed": "hutch has no env %s"}\n' "$MOP_RESOURCE"; exit 3 ;;
 	esac
+	host_error "$status"
 	echo "hutch env status $MOP_RESOURCE failed: $(printf '%s' "$status" | tr '\n' ' ' | tail -c 300)" >&2
 	exit 1
 }
@@ -32,8 +44,9 @@ p,s,gone=e.get("progressStatus"),e.get("codespaceState"),e.get("deletionRequeste
 why=[]
 if gone: why.append("deletion requested")
 if p=="FAILED": why.append("progressStatus "+p)
-if s=="Shutdown": why.append("codespaceState Shutdown")
-if why: print(json.dumps({"failed":"hutch env %s: %s" % (", ".join(why),str(e.get("progressMessage") or "")[:150])}))
+msg=str(e.get("progressMessage") or "")[:150]
+if why: print(json.dumps({"failed":"hutch env %s: %s" % (", ".join(why+(["codespaceState Shutdown"] if s=="Shutdown" else [])),msg)}))
+elif s=="Shutdown": print(json.dumps({"stopped":"hutch env codespaceState Shutdown: %s" % msg}))
 elif p in ("READY","BUILDING") and s=="Available": print("ok" if p=="READY" else "building")
 else: print("unknown: progressStatus %r, codespaceState %r" % (p,s))
 ')
@@ -45,7 +58,7 @@ fi
 case "$verdict" in
 	ok) ;;
 	building) echo "hutch env $MOP_RESOURCE is BUILDING (app services down); checking the VM itself" >&2 ;;
-	'{"failed"'*) printf '%s\n' "$verdict"; exit 3 ;;
+	'{"failed"'*|'{"stopped"'*) printf '%s\n' "$verdict"; exit 3 ;;
 	*) echo "hutch env status $MOP_RESOURCE: $verdict: $(printf '%s' "$status" | tr '\n' ' ' | tail -c 300)" >&2; exit 1 ;;
 esac
 alias=$("$hutch" env ssh-config "$MOP_RESOURCE" 2>/dev/null | tail -n 1) || alias=""
@@ -53,8 +66,10 @@ if [ -z "$alias" ]; then
 	echo "no ssh alias for $MOP_RESOURCE (hutch env ssh-config failed)" >&2
 	exit 1
 fi
-exec ssh -o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 \
-	"$alias" "ALIAS='$alias' bash -s" <<'REMOTE'
+errf=$(mktemp)
+trap 'rm -f "$errf"' EXIT
+ssh -o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 \
+	"$alias" "ALIAS='$alias' bash -s" 2>"$errf" <<'REMOTE'
 set -uo pipefail
 fail() {
 	reason=$(printf '%s' "$1" | tr '\n\t' '  ' | sed 's/\\/\\\\/g; s/"/\\"/g')  # one JSON string
@@ -68,3 +83,8 @@ mem=$(awk '/^MemAvailable:/ {printf "%.1f", $2 / 1048576}' /proc/meminfo)
 up=$(cut -d. -f1 /proc/uptime 2>/dev/null) || up=""
 printf '{"freeGiB": %s, "memAvailGiB": %s, "sshAlias": "%s"%s}\n' "$free" "$mem" "$ALIAS" "${up:+, \"uptimeS\": $up}"
 REMOTE
+rc=$?
+err=$(cat "$errf")
+[ "$rc" -eq 0 ] || host_error "$err"
+[ -z "$err" ] || printf '%s\n' "$err" >&2
+exit "$rc"
