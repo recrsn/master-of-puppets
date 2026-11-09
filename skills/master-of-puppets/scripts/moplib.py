@@ -709,7 +709,8 @@ RESOURCE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
 def pool_spec(cls, machine=None):
     """The pool of a class that leases named resources (a VM, a device, a seat), else None.
     Fields: create, start, stop, delete, recycle, health, clean, find (shell commands, each optional), max (resources
-    that may exist, 0 = no cap), and minFreeGiB and minMemGiB (the health floors). A command reads MOP_CLASS, MOP_RESOURCE, MOP_RESOURCE_INFO
+    that may exist, 0 = no cap), min (usable resources under which a delete after a failed restart alerts the
+    coordinators, POOL-LOW; 0 = never), and minFreeGiB and minMemGiB (the health floors). A command reads MOP_CLASS, MOP_RESOURCE, MOP_RESOURCE_INFO
     (JSON), MOP_LEASE_ID and MOP_WORKTREE from its environment. When the request named
     preferences, it also reads MOP_PREFER (JSON) and MOP_PREFER_<KEY> for each. A create that fails after
     it made a resource prints the resource's JSON anyway and exits non-zero: the pool keeps it as failed
@@ -808,6 +809,48 @@ def host_held(cls, name, reason, tail):
     log(f"admission hold {cls} by=pool resource={name} reason={json.dumps(reason)} {tail}")
     say("pool", f"HOST-FAULT {cls}: {reason}. Admission of {cls} is on hold and no VM was marked; "
                 f"after the fix, run admission clear {cls}")
+
+
+def restart_tried(cls, name, token):
+    """Whether resource name (claimed with token) was already restarted once for a failed env."""
+    lock()
+    try:
+        res = op_current(load(), cls, name, token)
+        return bool(res and res.get("restartedAt"))
+    finally:
+        unlock()
+
+
+def failed_restart(cls, name, info, token):
+    """Health outcome restart: the env failed but the resource's own checks pass. Run the stop command once,
+    without the lock (the caller holds the resource claimed with token); the next grant that picks the stopped
+    resource starts it and checks it again. Returns (stopped, error); stopped is None when it was restarted
+    before or the class has no stop command, so failed_restart_end deletes it."""
+    spec = pool_spec(cls) or {}
+    if not spec.get("stop"):
+        return None, "the class has no stop command"
+    if restart_tried(cls, name, token):
+        return None, "restarted once already"
+    ok, _, err = pool_run(spec["stop"], pool_env(cls, name, info))
+    return ok, err
+
+
+def failed_restart_end(state, cls, res, stopped, detail):
+    """Under the lock, after failed_restart: mark the resource stopped (restartedAt set, out of rotation until a
+    grant starts it), or failed with reason health when it was restarted before or its stop failed (the pool
+    upkeep deletes it). Returns (event, line): the log event and a POOL-LOW line for say when the pool falls
+    under its min, else None."""
+    if stopped:
+        res["restartedAt"] = now().isoformat()
+        end_op(res, "stopped")
+        return "hutch-failed-restarted", None
+    res.pop("restartedAt", None)
+    mark_failed(res, "health", detail)
+    floor = (pool_spec(cls) or {}).get("min") or 0
+    usable = sum(r["state"] != "failed" and not r["name"].startswith("pending-") for r in state["resources"][cls])
+    low = (f"POOL-LOW {cls}: {usable} usable of minimum {floor} after {res['name']} was retired for a failed env "
+           f"({detail})") if usable < floor else None
+    return "hutch-failed-deleted", low
 
 
 def mark_failed(res, reason, detail=""):
@@ -930,8 +973,9 @@ def health_run(cls, name, info, lease_id=None, worktree=None):
     one JSON line with exit 0: {"freeGiB": N, "memAvailGiB": M, ...}, or {"failed": "<reason>"} with a non-zero
     exit when it reached the resource and found it broken, {"stopped": "<reason>"} when the resource is stopped
     (start it, do not delete it), or {"hostError": "<reason>"} when this Mac cannot check any resource (for
-    example expired credentials). Returns (outcome, detail): ok (the JSON line, a dict), failed (the reason: a
-    failed check, or free disk or memory under the pool's minFreeGiB or minMemGiB), stopped, host, unreachable
+    example expired credentials), or {"restart": "<reason>"} when its env failed but its own checks pass.
+    Returns (outcome, detail): ok (the JSON line, a dict), failed (the reason: a failed check, or free disk or
+    memory under the pool's minFreeGiB or minMemGiB), stopped, host, restart (failed_restart), unreachable
     (any other failure) or none (the class has no health command)."""
     spec = pool_spec(cls) or {}
     if not spec.get("health"):
@@ -939,7 +983,7 @@ def health_run(cls, name, info, lease_id=None, worktree=None):
     ok, out, err = pool_run(spec["health"], pool_env(cls, name, info, lease_id, worktree), HEALTH_TIMEOUT)
     tail = json_tail(out)
     if not ok:
-        for key, outcome in (("hostError", "host"), ("stopped", "stopped"), ("failed", "failed")):
+        for key, outcome in (("hostError", "host"), ("stopped", "stopped"), ("restart", "restart"), ("failed", "failed")):
             if tail.get(key):
                 return outcome, str(tail[key])
         return "unreachable", err or "no output"
@@ -1062,6 +1106,7 @@ def health_released(cls, name, token, info, lease_id, coordinator, worktree=None
         freed = "; its cleanup failed"
         log(f"resource clean-failed {cls} {name} error={json.dumps(cleaned[1])} {tail}")
     outcome, detail = health_run(cls, name, info, lease_id, worktree)
+    stopped, stop_err = failed_restart(cls, name, info, token) if outcome == "restart" else (None, None)
     lock()
     try:
         state, machine = load(), load_machine()
@@ -1069,8 +1114,12 @@ def health_released(cls, name, token, info, lease_id, coordinator, worktree=None
         if res is None:
             log(f"resource health-reset {cls} {name} {tail}")
             return f"{name} was reset while its health was checked; ask your coordinator"
-        held = False
-        if outcome in ("ok", "none", "host"):
+        held, event, low = False, None, None
+        if outcome == "restart":
+            event, low = failed_restart_end(state, cls, res, stopped, detail if stopped is not False else f"{detail}; stop failed: {stop_err}")
+        elif outcome in ("ok", "none", "host"):
+            if outcome != "host":
+                res.pop("restartedAt", None)
             end_op(res, "free")  # also stamps the idle clock for the server's pool upkeep
             held = outcome == "host" and host_hold(state, cls, detail)
         elif outcome == "stopped":
@@ -1084,6 +1133,13 @@ def health_released(cls, name, token, info, lease_id, coordinator, worktree=None
         facts = detail or {}
         log(f"resource healthy {cls} {name} free={facts.get('freeGiB')} GiB mem={facts.get('memAvailGiB')} GiB {tail}")
         return f"{name} is healthy ({facts.get('freeGiB')} GiB disk, {facts.get('memAvailGiB')} GiB memory free{freed}); back in the pool"
+    if event:
+        log(f"resource {event} {cls} {name} detail={json.dumps(detail)}" + (f" stop={json.dumps(stop_err)}" if stopped is not True and stop_err else "") + f" {tail}")
+        if low:
+            say("pool", low)
+        if event == "hutch-failed-restarted":
+            return f"{name}'s env failed but the VM checks pass ({detail}); stopped for a restart, and the next grant starts it"
+        return f"{name}'s env failed again after a restart ({detail}); retired, and the pool deletes it"
     if outcome == "host":
         log(f"resource health-host {cls} {name} kept free detail={json.dumps(detail)} {tail}")
         if held:

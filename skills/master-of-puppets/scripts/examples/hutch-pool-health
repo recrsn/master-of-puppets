@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Health command for a HUTCH pool class (config set-class HUTCH --pool-health <this file>).
 # Before every grant and at every release: first the Hutch env status (hutch env status --json). Only known
-# unhealthy states fail the check (exit 3, deleted): progressStatus FAILED, a deletion request, or an env
-# Hutch no longer has. codespaceState Shutdown alone (Hutch stops an idle env after some hours) is stopped:
+# unhealthy states fail the check (exit 3, deleted): a deletion request, an env Hutch no longer has, or
+# progressStatus FAILED on a stopped env. FAILED with Available goes on to the VM checks: when they pass, it
+# prints restart (the pool stops it once, and the next grant starts it); when they fail, it is failed.
+# codespaceState Shutdown alone (Hutch stops an idle env after some hours) is stopped:
 # kept, and the next grant starts it. READY or BUILDING with Available goes on to the VM checks:
 # BUILDING is what Hutch shows when the app services are down (a member ran crstop, or the clean removed the
 # build output), and checks do not need them. Any other response (malformed, missing fields, an unknown
@@ -11,12 +13,14 @@
 # minFreeGiB and minMemGiB:
 #   {"freeGiB": N, "memAvailGiB": M, "sshAlias": A, "uptimeS": S}   exit 0: the facts
 #   {"failed": "<reason>"}     exit 3: the env failed, is gone or is being deleted, or a check on the VM failed
+#   {"restart": "<reason>"}    exit 3: the env is FAILED but the VM checks pass: restart it once, then delete
 #   {"stopped": "<reason>"}    exit 3: the env is stopped (Shutdown): marked stopped, started at the next grant
 #   {"hostError": "<reason>"}  exit 4: this Mac cannot reach Hutch VMs (gcloud credentials expired): the VM is
 #                              not marked, and the pool holds HUTCH admission until a coordinator clears it
 #   anything else (hutch env status or ssh failed, no alias, a timeout): unreachable (marked failed and kept)
 # It changes nothing on the VM.
 set -uo pipefail
+pending=""  # a FAILED env: its failed line, printed unless the VM checks pass
 hutch="${HUTCH_BIN:-$HOME/.local/bin/hutch-latest}"
 host_error() { # host_error TEXT: exit 4 when TEXT shows that this Mac's gcloud credentials expired
 	case "$1" in
@@ -45,7 +49,10 @@ why=[]
 if gone: why.append("deletion requested")
 if p=="FAILED": why.append("progressStatus "+p)
 msg=str(e.get("progressMessage") or "")[:150]
-if why: print(json.dumps({"failed":"hutch env %s: %s" % (", ".join(why+(["codespaceState Shutdown"] if s=="Shutdown" else [])),msg)}))
+line=lambda: json.dumps({"failed":"hutch env %s: %s" % (", ".join(why+(["codespaceState Shutdown"] if s=="Shutdown" else [])),msg)})
+if gone: print(line())
+elif why and s=="Available": print("check "+line())
+elif why: print(line())
 elif s=="Shutdown": print(json.dumps({"stopped":"hutch env codespaceState Shutdown: %s" % msg}))
 elif p in ("READY","BUILDING") and s=="Available": print("ok" if p=="READY" else "building")
 else: print("unknown: progressStatus %r, codespaceState %r" % (p,s))
@@ -57,6 +64,7 @@ if [ "$parsed" -ne 0 ] || [ -z "$verdict" ]; then
 fi
 case "$verdict" in
 	ok) ;;
+	check\ *) pending=${verdict#check }; echo "hutch env $MOP_RESOURCE is FAILED; checking the VM before a restart" >&2 ;;
 	building) echo "hutch env $MOP_RESOURCE is BUILDING (app services down); checking the VM itself" >&2 ;;
 	'{"failed"'*|'{"stopped"'*) printf '%s\n' "$verdict"; exit 3 ;;
 	*) echo "hutch env status $MOP_RESOURCE: $verdict: $(printf '%s' "$status" | tr '\n' ' ' | tail -c 300)" >&2; exit 1 ;;
@@ -87,4 +95,9 @@ rc=$?
 err=$(cat "$errf")
 [ "$rc" -eq 0 ] || host_error "$err"
 [ -z "$err" ] || printf '%s\n' "$err" >&2
+if [ -n "$pending" ]; then
+	[ "$rc" -eq 0 ] && pending=$(printf '%s' "$pending" | sed 's/^{"failed": "/{"restart": "/; s/"}$/; the VM checks pass"}/')
+	printf '%s\n' "$pending"
+	exit 3
+fi
 exit "$rc"

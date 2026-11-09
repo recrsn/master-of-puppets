@@ -81,8 +81,17 @@ creates new ones without a coordinator step:
   holder's `RESOURCE` line. `scripts/examples/hutch-pool-health` is the
   command for a Hutch pool; it changes nothing on the VM. It first reads
   `hutch env status`. Only a known unhealthy state fails the check (reason
-  `health`, so the upkeep deletes it): progressStatus `FAILED`, a deletion
-  request, or an env Hutch no longer has. codespaceState `Shutdown` alone
+  `health`, so the upkeep deletes it): a deletion request, an env Hutch no
+  longer has, or progressStatus `FAILED` on a stopped env. `FAILED` with
+  `Available` goes on to the VM checks. When they fail, it is failed. When
+  they pass, it prints `{"restart": ...}`: the pool runs the stop command
+  once (log `hutch-failed-restarted`, the resource is `stopped` with
+  `restartedAt`), and the next grant that picks it starts it and checks it
+  again. `FAILED` again after that restart, or a failed stop, retires it (log
+  `hutch-failed-deleted`). A pass clears `restartedAt`. No alert for the
+  restart; after a retire, every coordinator gets `POOL-LOW` when the usable
+  resources fall under the pool's `min` (`config set-class --pool-min N`).
+  codespaceState `Shutdown` alone
   (Hutch stops an env after some idle hours, also while it is held) prints
   `{"stopped": ...}`: the resource is marked `stopped`, never deleted for it,
   and the next grant that picks it runs the pool's start command. `READY` or
