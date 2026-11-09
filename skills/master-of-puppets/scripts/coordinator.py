@@ -135,7 +135,7 @@ show who, why and each changed key with its old and new value)
                 --max-slots CLASS=N (N=0 removes the cap)
   config set-class NAME [--description T] [--default-gib N] [--default-cpus N] [--max-minutes N]
                 [--settle OTHER=S ...] [--auto-acquire on|off]
-                [--pool-create CMD] [--pool-start CMD] [--pool-stop CMD] [--pool-delete CMD] [--pool-recycle CMD] [--pool-max N] [--pool-idle-delete-hours H] [--pool-stop-after-minutes M]
+                [--pool-create CMD] [--pool-start CMD] [--pool-stop CMD] [--pool-delete CMD] [--pool-recycle CMD] [--pool-max N] [--pool-min N] [--pool-idle-delete-hours H] [--pool-stop-after-minutes M]
                 [--pool-health CMD] [--pool-clean CMD] [--pool-find CMD] [--pool-min-free-gib N] [--pool-min-mem-gib N]
        a class with pool commands leases one named resource at a time (references/leases.md)
   resource list|add|mark|remove CLASS [--name R] [--state free|stopped|failed] [--info JSON] [--delete]
@@ -380,7 +380,7 @@ from moplib import (
     say, deliver, notify, READS, memory_path, add_read_commands, pr_refs, gh_http, http_error,
     read_cmd, run, worktree_pids, drain, pool_spec, pool_env, pool_run, pool_info, find_resource, RESOURCE_NAME, parse_prefer, prefer_matches,
     set_state, stop_resource, begin_op, end_op, op_current, op_live, BUSY_STATES, POOL_STUCK_MINUTES, delete_claimed,
-    mark_failed, health_run, host_hold, host_held, FAIL_DELETE, CLEAN_TIMEOUT, FIND_TIMEOUT, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
+    mark_failed, health_run, host_hold, host_held, failed_restart, failed_restart_end, FAIL_DELETE, CLEAN_TIMEOUT, FIND_TIMEOUT, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
 )
 
 
@@ -628,7 +628,7 @@ def config_cmd(args):
             if args.auto_acquire is not None:
                 c["autoAcquire"] = args.auto_acquire == "on"
             for flag, field in (("pool_create", "create"), ("pool_start", "start"), ("pool_stop", "stop"),
-                                ("pool_delete", "delete"), ("pool_recycle", "recycle"), ("pool_max", "max"),
+                                ("pool_delete", "delete"), ("pool_recycle", "recycle"), ("pool_max", "max"), ("pool_min", "min"),
                                 ("pool_idle_delete_hours", "idleDeleteHours"), ("pool_stop_after_minutes", "stopAfterMinutes"),
                                 ("pool_health", "health"), ("pool_clean", "clean"), ("pool_find", "find"), ("pool_min_free_gib", "minFreeGiB"), ("pool_min_mem_gib", "minMemGiB")):
                 value = getattr(args, flag)
@@ -1850,9 +1850,11 @@ def pool_acquire_cmd(args):
     health, facts = health_run(cls, name, new_info, args.id, args.worktree) if ok else ("none", None)
     unhealthy = health in ("failed", "unreachable")
     kept = health in ("stopped", "host")  # never granted, never failed: stopped is started at a later grant
-    if unhealthy or kept:
+    restart = health == "restart"  # the env failed, the resource's checks pass: stop it once (failed_restart)
+    stopped, stop_err = failed_restart(cls, name, new_info, token) if restart else (None, None)
+    if unhealthy or kept or restart:
         ok, err = False, f"health check {health}: {facts}"
-    held = False
+    held, event, low = False, None, None
     lock()
     try:
         state, machine = load(), load_machine()
@@ -1864,10 +1866,10 @@ def pool_acquire_cmd(args):
         problem = None if ok else f"{action} failed: {err}"
         if res is None:
             problem = f"{placeholder} was reset or removed while {action} ran"
-            if action == "create" and (ok or unhealthy or kept) and not find_resource(state, cls, name):
+            if action == "create" and (ok or unhealthy or kept or restart) and not find_resource(state, cls, name):
                 pool.append({"name": name, "info": new_info})  # the VM exists: keep it, free (failed when unhealthy)
                 set_state(pool[-1], "stopped" if health == "stopped" else "free")
-                if unhealthy:
+                if unhealthy or restart:
                     mark_failed(pool[-1], "unreachable" if health == "unreachable" else "health", facts)
             elif made and not find_resource(state, cls, made[0]):
                 pool.append({"name": made[0], "info": made[1]})
@@ -1882,7 +1884,14 @@ def pool_acquire_cmd(args):
             problem = refused and refused[1]
         if problem:
             if res is not None:
-                if unhealthy:  # never granted; the pool upkeep deletes it, unless unreachable (not in FAIL_DELETE)
+                if restart:
+                    res.update(name=name, info=new_info)
+                    res.pop("prior", None)
+                    event, low = failed_restart_end(state, cls, res, stopped,
+                                                    facts if stopped is not False else f"{facts}; stop failed: {stop_err}")
+                    log(f"resource {event} {cls} {name} for={args.id} detail={json.dumps(facts)}"
+                        + (f" stop={json.dumps(stop_err)}" if stopped is not True and stop_err else ""))
+                elif unhealthy:  # never granted; the pool upkeep deletes it, unless unreachable (not in FAIL_DELETE)
                     res.update(name=name, info=new_info)
                     res.pop("prior", None)
                     mark_failed(res, "unreachable" if health == "unreachable" else "health", facts)
@@ -1911,9 +1920,12 @@ def pool_acquire_cmd(args):
             log(f"refuse {cls} {args.coordinator} {args.id} resource {problem}")
             if held:
                 host_held(cls, name, facts, f"for={args.id}")
+            if low:
+                say("pool", low)
             print(json.dumps({"resource_error": problem}))
             return 8
         res.pop("prior", None)
+        res.pop("restartedAt", None)  # healthy again after a restart
         res.update(name=name, info=new_info)
         end_op(res, "free")
         key = (entry or queued or {}).get("project") or project_key(args.worktree)[0]
@@ -3639,6 +3651,7 @@ def main(argv=None):
     sc.add_argument("--pool-idle-delete-hours", type=float, help="the server's pool upkeep deletes an unheld resource idle this long (needs a delete command); 0 = never")
     sc.add_argument("--pool-stop-after-minutes", type=float, help="the server's pool upkeep runs the stop command on an unheld running resource idle this long; 0 = never stop")
     sc.add_argument("--pool-max", type=int, help="most resources the pool may hold; 0 = no cap")
+    sc.add_argument("--pool-min", type=int, help="usable resources under which a delete after a failed restart sends POOL-LOW; 0 = never")
     sc.add_argument("--auto-acquire", choices=("on", "off"), help="on: the server grants this class's head entry when every gate passes")
     rc = csub.add_parser("remove-class")
     rc.set_defaults(_self=("by",))
