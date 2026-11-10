@@ -35,7 +35,7 @@ not write product code.
 | File | What it does |
 | --- | --- |
 | `scripts/coordinator.py` | Coordinator commands: roster and members, streams, leases, messaging, shared-record reads, watchers, config and install. Run with `python3 -I`; the docstring lists every command. |
-| `scripts/puppet.py` | Member commands: roster, whoami, memory list, the shared-record reads (`inbox`, `ledger`, `events`, `who`, `sizes`), and for the member's own lease `request`, `await-grant`, `extend` (asks for more time) and `release`. It cannot grant or extend. Members run only this file. |
+| `scripts/puppet.py` | Member commands: roster, whoami, memory list, the shared-record reads (`inbox`, `ledger`, `events`, `who`, `sizes`), and for the member's own lease `request`, `await-grant`, `extend` (asks for more time) and `release`; for a scout, `scout tick\|alert\|resolve\|paused\|show` on its own watch state. It cannot grant or extend. Members run only this file. |
 | `scripts/moplib.py` | State code that the server runs, and the client code that both CLIs use. |
 | `scripts/server.py` | The one dashboard, on `http://localhost:4720/`, with the page shell `scripts/dashboard.html`: host values and page links on every page. Dashboard: "Needs you" first, the work list and lease lanes. Events: coordinators and the ledger. Config and Rules: edit machine, class and project config and memory rules. Live by SSE. It is also the one reader and writer of the state: it runs every `coordinator.py` and `puppet.py` command. Exits with "already serving" when one runs. |
 
@@ -71,7 +71,8 @@ Read `references/setup.md` on the first run in a project,
 conduct and PR rules, `references/dashboard.md` before you write your state
 file, `references/handoff.md` before you send or take a handoff, and
 `references/coderabbit-cloud.md` before you suggest, start or track a
-CodeRabbit cloud task.
+CodeRabbit cloud task, and `references/scouts.md` before you enroll a scout or
+act on its ALERT.
 
 Read [references/agents.md](references/agents.md) for Claude/Codex tool
 equivalents, session identity, messaging, watchers, scheduling and PR repair.
@@ -196,6 +197,14 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
   (it runs `member add` and prints the WELCOME to send). A JOIN that names a
   member as `parent` comes from a session that member started before puppets
   lost children: record it under you as any other member; it answers to you.
+- **Scouts** are read-only members that watch one target (production
+  signals, a release, the host and credentials, PRs, security or member
+  compliance) and report. Start one with `coordinator.py enroll --role scout
+  --task "<class>: <targets>"`; its `SCOUT JOIN` goes through `join` as
+  above. Scouts get no ACTIVE or PAUSE and no leases. Record each ALERT with
+  `note`, and acknowledge it with `note --text "ACK <fingerprint> ..."`, which
+  costs no message. Take a P0 to the user at once, quoted. Follow
+  `references/scouts.md`.
 - **UPDATE, STATUS reply or MERGED**: `coordinator.py member update --name <name> --phase "<phase>" --kind ok|work|warn|done --latest "<newest fact>" [--pr ...]`.
   This also updates the member's row on the dashboard. Keep `--phase` and
   `--latest` short; shorten a long UPDATE first (`references/dashboard.md`,
@@ -339,6 +348,9 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    CodeRabbit cloud members are the exception: they cannot reply, so record
    their `CLOUD` lines or `coderabbit code show` with `member update`
    and act on them (`references/coderabbit-cloud.md`, "Track").
+   Scouts show in the same list when they have not ticked for 2 ticks, are
+   paused, or have an open P0. Do not send a scout `STATUS?`: read its state
+   with `puppet.py scout show`, then ask only when it is stale.
    Look for members whose work can move to the cloud ("Members and tasks").
    A member silent for two rounds while its PR is blocked: tell the user, with
    its deep link. Check pending entries ("Members and tasks").
