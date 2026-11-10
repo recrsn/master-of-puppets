@@ -1432,6 +1432,32 @@ AGO = re.compile(r"^(\d+)([smhd])$")
 AGO_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 
 
+SCOUTS = os.path.join(DIR, "scouts")
+SCOUT_CLASSES = ("prod", "release", "host", "prs", "security", "compliance")
+SCOUT_SEVERITIES = ("P0", "P1", "P2")
+
+
+def scout_path(name):
+    """A scout's own watch state file. Scout names are unique on the machine (member add refuses a second one)."""
+    return os.path.join(SCOUTS, f"{name}.json")
+
+
+def scout_state(name):
+    """The scout's watch state: lastTick, tickMin, openAlerts [{fingerprint, severity, kind, text, firstSeen,
+    lastSeen}], summary {at, text} and pausedSince. Missing or unreadable: {}."""
+    s = read_json(scout_path(name))
+    return s if isinstance(s, dict) else {}
+
+
+def scout_stale(m, state=None, at=None):
+    """(stale, last tick or None) for scout member m: no tick for 2 ticks. Before its first tick, joinedAt counts."""
+    state = scout_state(m["name"]) if state is None else state
+    last = state.get("lastTick") or m.get("joinedAt") or m.get("enrolledAt")
+    when = dt.datetime.fromisoformat(last) if last else None
+    tick = float(state.get("tickMin") or m.get("tickMin") or 15)
+    return (when is None or (at or now()) - when > dt.timedelta(minutes=2 * tick)), when
+
+
 def memory_path(project_root=None):
     name = project_key(project_root)[0] if project_root else "machine"
     return os.path.join(MEMORY, f"{name}.json"), name

@@ -180,13 +180,14 @@ Roster and members (coordinators write; members send messages, and request and r
        a stream is a named goal (one or more PR stacks) that groups members on the
        dashboard. The slug is unique on the machine; only its coordinator changes it.
        add needs --label (at most 40 characters); --goal at most 140.
-  enroll --task TEXT [--by MEMBER] [--name NAME] [--pr N ...] [--stream SLUG] [--priority N]
+  enroll --task TEXT [--by MEMBER] [--name NAME] [--pr N ...] [--stream SLUG] [--priority N] [--role scout]
        registers a task before it starts and prints the kickoff line for its prompt. Only
        coordinators start sessions (puppets cannot have children); --by records the member
        whose TASK REQUEST it answers. The task answers to C, not to that member
   join --text "JOIN — ..." [--local local_ID] [--repo owner/repo] [--project-root P] [--dry-run]
        parses a member's JOIN line (name, tool and id, worktree, task, PRs, phase, commands,
-       parent), runs member add --status active, then prints its WELCOME. --local: the Claude
+       parent), or a SCOUT JOIN line (name, tool and id, worktree|none, target class, targets,
+       end condition, tick, parent), runs member add --status active, then prints its WELCOME. --local: the Claude
        desktop id that the dashboard links to (the JOIN carries the inner Claude Code id)
   welcome --name NAME [--project-root P]
        the WELCOME text (references/protocol.md): focus, task, PRs, pr-rules.md, the machine and
@@ -194,6 +195,10 @@ Roster and members (coordinators write; members send messages, and request and r
   member add|update --name NAME [--tool] [--session-id] [--worktree] [--task]
        [--pr N ...] [--repo owner/repo] [--status] [--phase] [--kind] [--latest] [--session URL]
        [--stream SLUG] [--priority N] [--parent MEMBER]   (--stream "" clears it)
+       [--role puppet|scout] [--target-class CLASS] [--targets TEXT] [--tick MIN] [--end TEXT]
+       --role scout: a read-only watcher (references/scouts.md); it needs --target-class. Scout
+       names are unique on the machine. member stale reports a scout with no tick for 2 ticks,
+       or one that is paused or has an open P0, from its scouts/NAME.json
        --parent: a member that started this session before puppets lost children (a record
        only; the member answers to C). On add, it takes over a pending entry of that parent
        with the same --session-id, else the same --task, else its only one
@@ -381,6 +386,7 @@ from moplib import (
     read_cmd, run, worktree_pids, drain, pool_spec, pool_env, pool_run, pool_info, find_resource, RESOURCE_NAME, parse_prefer, prefer_matches,
     set_state, stop_resource, begin_op, end_op, op_current, op_live, BUSY_STATES, POOL_STUCK_MINUTES, delete_claimed,
     mark_failed, health_run, host_hold, host_held, failed_restart, failed_restart_end, FAIL_DELETE, CLEAN_TIMEOUT, FIND_TIMEOUT, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
+    SCOUT_CLASSES, scout_path, scout_state, scout_stale,
 )
 
 
@@ -824,10 +830,18 @@ def pr_conflicts(roster, name, prs):
 
 
 KICKOFF_MARK = "MASTER-OF-PUPPETS ENROLLED"
+SCOUT_MARK = "MASTER-OF-PUPPETS SCOUT ENROLLED"
 
 
-def kickoff_line(coord, name, parent):
+def kickoff_line(coord, name, parent, role="puppet"):
     by = f", at the request of {parent}" if parent and parent != coord else ""
+    if role == "scout":
+        return (
+            f"{SCOUT_MARK} — {coord} has enrolled you as scout {name}{by}. "
+            f"You must enroll: your first action is to run /scout and send {coord} your SCOUT JOIN message as {name}, before any other work; "
+            f"then watch and report to {coord}. You are read only: never implement, never hold a lease, and never start another session "
+            f"(ask {coord} with TASK REQUEST)."
+        )
     with_parent = ""  # every session answers to its coordinator: JOIN says parent none
     return (
         f"{KICKOFF_MARK} — {coord} has enrolled you as member {name}{by}. "
@@ -1013,9 +1027,13 @@ def roster_cmd(args):
     if args.cmd == "enroll":
         name = args.name or f"{re.sub(r'[^a-z0-9]+', '-', args.task.lower()).strip('-')[:24].strip('-')}-{os.urandom(2).hex()}"
         members[:] = [m for m in members if m["name"] != name]
+        if args.role == "scout" and (err := scout_name_taken(roster, name, args.coordinator)):
+            print(err)
+            return 3
         members.append({
             "name": name,
             "status": "pending",
+            **({"role": "scout"} if args.role == "scout" else {}),
             "parent": args.coordinator,  # every session answers to its coordinator
             **({"requestedBy": args.by} if args.by else {}),
             "task": args.task,
@@ -1028,13 +1046,26 @@ def roster_cmd(args):
         upsert_task(args.coordinator, name, {"name": args.task, "phase": "Enrolled, not started", "kind": "work", "stream": stream or ""})
         note(args.coordinator, f"{name} enrolled{' at the request of ' + args.by if args.by else ''}: {args.task}"
              + (f", priority {args.priority}" if args.priority else ""))
-        print(kickoff_line(args.coordinator, name, args.by))
+        print(kickoff_line(args.coordinator, name, args.by, args.role))
         return 0
     if args.cmd == "member" and args.mcmd == "stale":
         cutoff = now() - dt.timedelta(minutes=args.minutes)
         rows = []
         for x in members:
             if x.get("status") == "done":
+                continue
+            if x.get("role") == "scout":
+                if x.get("status") == "pending":
+                    continue
+                st = scout_state(x["name"])
+                stale, when = scout_stale(x, st)
+                age = int((now() - when).total_seconds() // 60) if when else None
+                flags = [f"paused since {st['pausedSince'][:16]}"] if st.get("pausedSince") else []
+                p0 = [a["fingerprint"] for a in st.get("openAlerts") or [] if a.get("severity") == "P0"]
+                flags += [f"open P0 {' '.join(p0)}"] if p0 else []
+                if stale or flags:
+                    rows.append(f"{x['name']} scout {'stale' if stale else 'ticking'} last update {age if age is not None else '?'} min ago — "
+                                f"{x.get('targetClass', '?')}: {x.get('targets', '')[:50]}" + (f" ({'; '.join(flags)})" if flags else ""))
                 continue
             last = x.get("updatedAt") or x.get("joinedAt") or x.get("enrolledAt")
             when = dt.datetime.fromisoformat(last) if last else None
@@ -1050,6 +1081,11 @@ def roster_cmd(args):
         members[:] = [x for x in members if x["name"] != args.name]
         save_roster(roster)
         remove_task(args.coordinator, args.name)
+        if m and m.get("role") == "scout":
+            try:
+                os.remove(scout_path(args.name))
+            except OSError:
+                pass
         note(args.coordinator, f"{args.name} left")
         return 0
     if args.parent is not None and args.parent != args.coordinator and not any(
@@ -1064,6 +1100,13 @@ def roster_cmd(args):
         print(f"warning: {warn}", file=sys.stderr)
         log(f"child-rule-break {args.coordinator} parent={args.parent} child={args.name}")
         note(args.coordinator, warn)
+    role = args.role or (m or {}).get("role") or "puppet"
+    if args.mcmd == "add" and role == "scout" and (err := scout_name_taken(roster, args.name, args.coordinator)):
+        print(err)
+        return 3
+    if role == "scout" and args.target_class is None and not (m or {}).get("targetClass"):
+        print(f"a scout needs --target-class ({', '.join(SCOUT_CLASSES)})")
+        return 2
     if args.mcmd == "add":
         if m is None and args.parent:
             kids = [x for x in members if x.get("status") == "pending" and x.get("parent") == args.parent]
@@ -1083,9 +1126,14 @@ def roster_cmd(args):
         print(f"{args.name} is not a member of {args.coordinator}")
         return 3
     for flag, field in (("tool", "tool"), ("session_id", "sessionId"), ("worktree", "worktree"), ("task", "task"), ("status", "status"),
-                        ("stream", "stream"), ("repo", "repo"), ("parent", "parent")):
+                        ("stream", "stream"), ("repo", "repo"), ("parent", "parent"), ("target_class", "targetClass"),
+                        ("targets", "targets"), ("tick", "tickMin"), ("end", "end")):
         if getattr(args, flag, None) is not None:
             m[field] = getattr(args, flag)
+    if role == "scout":
+        m["role"] = "scout"
+    else:
+        m.pop("role", None)
     moved = None
     if args.priority is not None and args.priority != m.get("priority", 0):
         m["priority"] = args.priority
@@ -1109,14 +1157,25 @@ def roster_cmd(args):
     if (args.pr is not None or args.repo) and m.get("repo"):
         row["links"] = [{"label": f"PR #{n}", "href": f"https://github.com/{m['repo']}/pull/{n}"} for n in m.get("prs", [])]
     if args.mcmd == "add":
-        row.setdefault("phase", "Joined")
+        row.setdefault("phase", "Watching" if role == "scout" else "Joined")
     upsert_task(args.coordinator, args.name, row)
-    if args.mcmd == "add":
+    if args.mcmd == "add" and role == "scout":
+        note(args.coordinator, f"scout {args.name} joined: {m.get('targetClass')} {m.get('targets', '')} "
+                               f"(tick {m.get('tickMin', 15)} min, until {m.get('end') or 'long-running'})")
+    elif args.mcmd == "add":
         by = f", child of {m['parent']}" if m.get("parent") and m["parent"] != args.coordinator else ""
         note(args.coordinator, f"{args.name} joined{by}: {m.get('task', '')} (PRs {' '.join('#' + str(n) for n in m.get('prs', [])) or 'none'})")
     if moved:
         print(json.dumps({"moved": moved}))
     return 0
+
+
+def scout_name_taken(roster, name, coord):
+    """An error when another coordinator has a scout called name: a scout's state file is keyed by its name."""
+    for c, mlist in roster["members"].items():
+        if c != coord and any(x["name"] == name and x.get("role") == "scout" for x in mlist):
+            return f"{c} already has a scout named {name}; scout names are unique on the machine"
+    return None
 
 
 def transfer_cmd(args, roster):
@@ -2485,6 +2544,8 @@ def parse_join(text):
     phase, commands, parent. Fields are split on " — "; a task with a dash in it keeps it, because the
     fields after the task are counted from the end. Raises ValueError on a line that is not a JOIN."""
     parts = [p.strip() for p in JOIN_SEP.split(text.strip())]
+    if parts[0].upper() == "SCOUT JOIN":
+        return parse_scout_join(parts)
     if len(parts) < 9 or parts[0].upper() != "JOIN":
         raise ValueError("not a JOIN line: JOIN — name — tool id — worktree — task — PRs ... — phase — commands — parent P")
     tool, _, sid = parts[2].partition(" ")
@@ -2501,6 +2562,33 @@ def parse_join(text):
             "phase": parts[-3], "commands": parts[-2], "parent": None if parent.lower() == "none" else parent}
 
 
+def parse_scout_join(parts):
+    """The fields of a SCOUT JOIN line (scout skill, section 2): SCOUT JOIN — name — tool id — worktree|none —
+    target class — targets — end condition|long-running — tick N min — parent P|none."""
+    if len(parts) != 9:
+        raise ValueError("not a SCOUT JOIN line: SCOUT JOIN — name — tool id — worktree|none — class — targets — "
+                         "end|long-running — tick N min — parent P|none")
+    tool, _, sid = parts[2].partition(" ")
+    if tool not in MEMBER_TOOLS:
+        raise ValueError(f"unknown tool {tool!r}; known: {', '.join(MEMBER_TOOLS)}")
+    cls = parts[4].lower()
+    if cls not in SCOUT_CLASSES:
+        raise ValueError(f"unknown target class {parts[4]!r}; known: {', '.join(SCOUT_CLASSES)}")
+    tick = re.match(r"(?i)tick\s+(\d+(?:\.\d+)?)\s*m", parts[7])
+    if not tick:
+        raise ValueError("the eighth field must be tick N min")
+    parent = parts[8]
+    if not parent.lower().startswith("parent"):
+        raise ValueError("the last field must be parent <name|none>")
+    parent = parent.split(None, 1)[1].strip() if len(parent.split()) > 1 else "none"
+    end = parts[6].strip()
+    wt = parts[3].split()[0]
+    return {"role": "scout", "name": parts[1], "tool": tool, "sessionId": sid.strip(),
+            "worktree": None if wt.lower() == "none" else wt, "targetClass": cls, "targets": parts[5],
+            "end": None if end.lower() in ("long-running", "long running", "none") else end, "tick": float(tick.group(1)),
+            "parent": None if parent.lower() == "none" else parent}
+
+
 def join_cmd(args):
     """member add from a JOIN line, then the WELCOME text. --local is the Claude desktop session id (local_...)
     that the dashboard links to and SendMessage reaches; the JOIN carries the inner Claude Code id."""
@@ -2509,10 +2597,17 @@ def join_cmd(args):
     except ValueError as e:
         print(e)
         return 2
-    argv = ["member", "add", "--name", j["name"], "--tool", j["tool"], "--session-id", j["sessionId"],
-            "--worktree", j["worktree"], "--task", j["task"], "--phase", j["phase"][:60], "--status", "active"]
-    if j["prs"]:
-        argv += ["--pr", *map(str, j["prs"])]
+    if j.get("role") == "scout":
+        argv = ["member", "add", "--role", "scout", "--name", j["name"], "--tool", j["tool"], "--session-id", j["sessionId"],
+                "--task", f"scout {j['targetClass']}: {j['targets']}", "--target-class", j["targetClass"],
+                "--targets", j["targets"], "--tick", f"{j['tick']:g}", "--status", "active", "--kind", "ok"]
+        argv += ["--worktree", j["worktree"]] if j["worktree"] else []
+        argv += ["--end", j["end"]] if j["end"] else []
+    else:
+        argv = ["member", "add", "--name", j["name"], "--tool", j["tool"], "--session-id", j["sessionId"],
+                "--worktree", j["worktree"], "--task", j["task"], "--phase", j["phase"][:60], "--status", "active"]
+        if j["prs"]:
+            argv += ["--pr", *map(str, j["prs"])]
     if j["parent"]:
         argv += ["--parent", j["parent"]]
     if args.local:
@@ -2526,7 +2621,7 @@ def join_cmd(args):
     code = main(argv)
     if code:
         return code
-    if j["commands"].strip().lower() not in ("", "none", "none planned", "-"):
+    if j.get("role") != "scout" and j["commands"].strip().lower() not in ("", "none", "none planned", "-"):
         print(f"heavy commands planned: {j['commands']}")
     return welcome_text(args.coordinator, j["name"], args.project_root)
 
@@ -2542,9 +2637,20 @@ def welcome_text(me, name, project_root=None):
     c = roster["coordinators"].get(me) or {}
     root = project_root or (m.get("worktree") if m.get("worktree") and os.path.isdir(m["worktree"]) else None)
     prs = " ".join(f"#{n}" for n in m.get("prs") or []) or "none"
-    lines = [f"WELCOME {name} — {me} coordinates {c.get('focus') or 'its stack'}. "
-             f"You are a member for {m.get('task') or 'your task'} (PRs {prs}).", "Follow the puppet skill."]
-    if os.path.exists(os.path.join(DIR, "pr-rules.md")):
+    scout = m.get("role") == "scout"
+    if scout:
+        lines = [f"WELCOME {name} — {me} coordinates {c.get('focus') or 'its stack'}. You are a scout for "
+                 f"{m.get('targetClass')}: {m.get('targets') or '?'} (tick {m.get('tickMin', 15):g} min, until "
+                 f"{m.get('end') or 'stopped: long-running'}).", "Follow the scout skill. You are read only.",
+                 f"Write every tick with puppet.py scout tick --coordinator {me} --name {name}; it is how I see you.",
+                 "Send me only ALERT, UPDATE, GAP and DONE, at most one message per tick. P0 goes to me and to the Security "
+                 "Coordinator. I acknowledge with a ledger note ACK <fingerprint>; read it with puppet.py ledger --grep.",
+                 "You hold no leases and no VMs, get no ACTIVE or PAUSE, and open no PRs. A read that needs a VM or a write "
+                 "is a TASK REQUEST to me."]
+    else:
+        lines = [f"WELCOME {name} — {me} coordinates {c.get('focus') or 'its stack'}. "
+                 f"You are a member for {m.get('task') or 'your task'} (PRs {prs}).", "Follow the puppet skill."]
+    if not scout and os.path.exists(os.path.join(DIR, "pr-rules.md")):
         lines.append(f"Shared PR rules: {os.path.join(DIR, 'pr-rules.md')}")
     rules = []
     for scope in [None] + ([root] if root else []):
@@ -2554,8 +2660,9 @@ def welcome_text(me, name, project_root=None):
         lines.append("Rules from my memory" + ("" if root else " (machine only; give --project-root for project rules)") + ":")
         lines += [f"- {r}" for r in rules]
     leases = roster.get("leases") == "on"
-    lines.append(f"Leases are {'on' if leases else 'off'}.")
-    if leases:
+    if not scout:
+        lines.append(f"Leases are {'on' if leases else 'off'}.")
+    if leases and not scout:
         machine = load_machine()
         proj = load_project(project_key(root)[0]) if root else None
         lines.append(f"LEASES ON — {me} grants these classes (puppet skill, section 5):")
@@ -3744,6 +3851,11 @@ def main(argv=None):
         mx.add_argument("--stream", help='stream slug; "" clears it')
         mx.add_argument("--priority", type=int, help="task priority: 0 default, higher first, below 0 for background work")
         mx.add_argument("--parent", help="the JOIN parent field: a record only; every member answers to its coordinator")
+        mx.add_argument("--role", choices=("puppet", "scout"), help="puppet (default) implements; scout watches and reports, read only")
+        mx.add_argument("--target-class", choices=SCOUT_CLASSES, help="scout: what it watches (references/scouts.md)")
+        mx.add_argument("--targets", help="scout: the targets, for example monitor ids, a release or PR numbers")
+        mx.add_argument("--tick", type=float, help="scout: minutes between its checks; stale after 2 ticks with no tick")
+        mx.add_argument("--end", help="scout: its end condition; omit for a long-running scout")
     mt = msub.add_parser("transfer")
     mt.set_defaults(_self=("coordinator",))
     mt.add_argument("--name", required=True)
@@ -3768,6 +3880,7 @@ def main(argv=None):
     en.add_argument("--pr", type=int, nargs="+", action="extend", help="PR numbers, several allowed (--pr 1 2 or --pr 1 --pr 2)")
     en.add_argument("--stream", help="stream slug (stream add)")
     en.add_argument("--priority", type=int, help="task priority: 0 default, higher first, below 0 for background work")
+    en.add_argument("--role", choices=("puppet", "scout"), default="puppet", help="scout: print the SCOUT ENROLLED kickoff line")
     sm = sub.add_parser("stream")
     ssub = sm.add_subparsers(dest="scmd", required=True)
     for name in ("add", "update", "close", "reopen"):
