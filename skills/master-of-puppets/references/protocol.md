@@ -41,6 +41,9 @@ observed peak unless you tell me why the run is smaller.
 | Message | Coordinator action |
 | --- | --- |
 | `JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs ... — phase — commands — parent <parent\|none>` | `coordinator.py join --text "<the line>" [--local <local_ id>]`: member add and the WELCOME text to send. A task marked `scheduled:` or `sweep:` is background work (`references/leases.md`, "Priority") |
+| `SCOUT JOIN — <name> — <tool> <session id> — <worktree\|none> — <class> — <targets> — <end\|long-running> — tick <n> min — parent <parent\|none>` | `coordinator.py join --text "<the line>" [--local <local_ id>]`: member add --role scout and the scout WELCOME (`references/scouts.md`) |
+| `ALERT — <scout> — P0\|P1\|P2 — <fingerprint> — <line>` | `note` it; act or find the owner; acknowledge with `note --text "ACK <fingerprint> ..."`. P0: to the user at once, quoted (`references/scouts.md`) |
+| `UPDATE — <scout> — <fingerprint> — <change>`, `GAP — <scout> — P1\|P2 — ...`, `DONE — <scout> — ...` | `note`; a P1 GAP that blinds members is a host problem to fix or take to the user; after DONE, accept the scout's LEAVE (`leave --no-release-check`) |
 | `UPDATE — <name> — <phase> — <fact>` | `member update` |
 | `TASK REQUEST — <name> — <task> — <why> — PRs <n ...\|none>` | Members never start sessions. Decide; to run it, `enroll` it under you and start it (SKILL.md, "Members and tasks"); it answers to you |
 | `CLOUD TASK — <name> — <taskId> — <url> — <task> — PRs <n>` | `member add --tool coderabbit`, `cloud-<slug>.txt` (`references/coderabbit-cloud.md`, "Record") |
