@@ -379,6 +379,8 @@ def render_page(host):
 
     tasks = {(coord, t.get("id", "")): t for coord, src in sources.items() for t in src.get("tasks", [])}
     member_of = {(coord, m.get("name")): m for coord, mlist in members.items() for m in mlist}
+    scouts = {k: m for k, m in member_of.items() if m.get("role") == "scout"}
+    scout_rows = {k: tasks.pop(k, {}) for k in scouts}  # scouts have their own section, not the work board
 
     today = dt.datetime.now().date()
 
@@ -476,8 +478,26 @@ def render_page(host):
             n["asks"].append({"text": d.get("text", ""), "coord": coord, "id": d.get("id", ""), "options": d.get("options") or []})
             if d.get("href"):
                 n["href"] = d["href"]
+    scout_info = {}
+    for (coord, name), m in scouts.items():
+        st = moplib.scout_state(name)
+        stale, last = moplib.scout_stale(m, st, now)
+        scout_info[(coord, name)] = (st, stale, last)
+        if m.get("status") in ("done", "paused", "pending"):
+            continue
+        card = dict(id=name, title=f"Scout {name} · {m.get('targetClass', '')}: {m.get('targets', '')}", coord=coord, when=last,
+                    href=scout_rows.get((coord, name), {}).get("session", ""))
+        for a in st.get("openAlerts") or []:
+            if a.get("severity") == "P0":
+                need(("scout", coord, name), "critical", f"P0 {a.get('kind', 'alert')} · {a.get('text', '')[:80]}", **card)
+        if stale:
+            need(("scout", coord, name), "warning", f"Scout stale · no tick for {since(last, now)}" if last else "Scout stale · never ticked", **card)
+        if st.get("pausedSince"):
+            need(("scout", coord, name), "warning", f"Scout paused since {local(parse(st['pausedSince']))}", **card)
     for coord, mlist in members.items():
         for m in mlist:
+            if m.get("role") == "scout":
+                continue
             last = last_update(coord, m.get("name"))
             if m.get("status") in ("done", "paused") or not last or now - last <= dt.timedelta(minutes=STALE_MINUTES):
                 continue
@@ -501,7 +521,7 @@ def render_page(host):
                      when=last_update(coord, name), stream=m.get("stream", ""))
 
     def group_of(key, n):
-        if key[0] in ("host", "lease", "admission", "coord"):
+        if key[0] in ("host", "lease", "admission", "coord", "scout"):
             return "alarm"
         if n["asks"]:
             return "decision"
@@ -514,7 +534,7 @@ def render_page(host):
     def need_order(item):
         """Alarms worst first; inside every group, oldest change first."""
         n = item[1]
-        return (SEV_ORDER[n["sev"]] if item[0][0] in ("host", "lease", "admission", "coord") else 0,
+        return (SEV_ORDER[n["sev"]] if item[0][0] in ("host", "lease", "admission", "coord", "scout") else 0,
                 n["when"] is None, n["when"] or now)
 
     groups = []
@@ -827,6 +847,37 @@ def render_page(host):
                 + (f'<div class="links">{link({"href": p["url"], "label": "Open PR"})}</div>' if p.get("url") else ""))
         return row(dom_id("pr", ref), pr_dot(p), f"{ref} {p.get('title', '')}".strip(), changed, body, title_cls="t2")
 
+    def scout_row(coord, name):
+        m = scouts[(coord, name)]
+        st, stale, last = scout_info[(coord, name)]
+        opened = st.get("openAlerts") or []
+        counts = " ".join(f"{n} {sev}" for sev in moplib.SCOUT_SEVERITIES if (n := sum(1 for a in opened if a.get("severity") == sev)))
+        flags = [x for x in ("stale" if stale else "", "paused" if st.get("pausedSince") else "",
+                             "pending" if m.get("status") == "pending" else "") if x]
+        meta = meta_line(name, coord, m.get("targetClass", ""), f"tick {m.get('tickMin', 15):g} min",
+                         f"until {m['end']}" if m.get("end") else "long-running", f"last tick {local(last)}" if last else "never ticked",
+                         counts or "no open alerts", *flags)
+        alerts = "".join(f'<p class="{"danger" if a.get("severity") == "P0" else "t2"}"><span class="mono sm">{e(a.get("severity", ""))} '
+                         f'{e(a.get("fingerprint", ""))}</span> {e(a.get("text", ""))} · since {e(local(parse(a["firstSeen"])))}</p>'
+                         for a in sorted(opened, key=lambda a: a.get("severity", "P9")) if a.get("firstSeen"))
+        summary = st.get("summary") or {}
+        body = (meta + (f'<p class="t2">{e(m.get("targets", ""))}</p>' if m.get("targets") else "") + alerts
+                + (f'<p class="t3">Summary {e(local(parse(summary["at"])))}: {e(summary.get("text", ""))}</p>' if summary.get("at") else "")
+                + actions(open_button(scout_rows.get((coord, name), {}).get("session", ""))))
+        sev = min((a.get("severity", "P2") for a in opened), default="")
+        dot = "blocked" if stale or sev == "P0" or st.get("pausedSince") else "progress" if sev else "ontrack live"
+        title = name + (f" · {m['targetClass']}" if m.get("targetClass") else "") + (f" · {counts}" if counts else "")
+        return row(dom_id("scout", coord, name), dot, title, last, body, title_cls="t2")
+
+    scout_keys = sorted(scouts, key=lambda k: (not scout_info[k][1], k))
+    scouts_html = (
+        f'<section class="sec" id="scouts"><details class="grp" id="fold-scouts" data-fold open><summary class="sec-h"><h2>Scouts</h2>'
+        f'<span class="n">{len(scout_keys)}</span>'
+        + (f'<span class="warn">{sum(1 for k in scout_keys if scout_info[k][1])} stale</span>' if any(scout_info[k][1] for k in scout_keys) else "")
+        + "</summary>" + "".join(scout_row(c, n) for c, n in scout_keys) + "</details></section>"
+        if scout_keys else ""
+    )
+
     pr_items = sorted(pr_state.get("prs", {}).items(), key=pr_rank)
     pr_open = sum(1 for _, p in pr_items if p.get("state") == "OPEN")
     pr_html = (
@@ -841,7 +892,7 @@ def render_page(host):
         f'<section class="sec needs"><div class="sec-h"><h2>Needs you</h2><span class="n {worst}">{need_count}</span></div>'
         + ("".join(need_group(g) for g in groups) or '<p class="none">None</p>')
         + f'</section><section class="sec"><div class="sec-h"><h2>Work</h2><span class="n">{work_count}</span></div>{board}</section>'
-        f'{pr_html}{parked_html}{sleepers_html}</div><aside class="col-side">{lease_panel}</aside></main>'
+        f'{scouts_html}{pr_html}{parked_html}{sleepers_html}</div><aside class="col-side">{lease_panel}</aside></main>'
     )
     events = (
         '<main class="page"><section class="sec"><div class="sec-h"><h2>Coordinators</h2></div>'
