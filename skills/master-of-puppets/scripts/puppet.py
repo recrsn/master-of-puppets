@@ -62,6 +62,13 @@ Usage: python3 -I puppet.py <command> ...
        When the class has a recycle command, release then resets the resource (it stays busy until
        done) and logs `resource recycled ... free=N GiB`; a failed reset destroys it with the class's
        delete command and logs `resource destroyed ... reason="..."`.
+  scout tick|alert|resolve|paused|show --coordinator C --name NAME ...   (scouts only)
+       a scout's own watch state file, scouts/NAME.json, which C's heartbeat and the dashboard read.
+       tick [--summary TEXT]: a check (QUIET ticks and the daily summary go here, never in a message).
+       alert --fingerprint F --severity P0|P1|P2 [--kind alert|gap] --text TEXT: prints NEW or
+       ESCALATED (send it) or SEEN (do not send it again). resolve --fingerprint F: prints RESOLVED
+       (send UPDATE recovered). paused [--clear]: a send returned Paused. Never a secret in TEXT.
+       A scout holds no leases: request refuses it (exit 3)
 """
 import argparse
 import datetime as dt
@@ -81,6 +88,7 @@ from moplib import (
     load, save, load_roster, queue_entry, extension_refusal, READS, add_read_commands, read_cmd, version_warning, drain,
     find_resource, set_state, mark_failed, parse_prefer, RESOURCE_NAME, pool_spec,
     begin_op, recycle_run, recycle_note, destroy_recycled, recycle_released, health_released,
+    write_json, scout_path, scout_state, SCOUT_SEVERITIES,
 )
 
 MAX_RECYCLE_DESTROYS = 3  # resources one await-grant may destroy for failed recycles before it stops re-queueing
@@ -118,7 +126,11 @@ def request(args):
         if roster["leases"] != "on":
             print("leases are off; run the commands without a lease")
             return 3
-        if not any(m["name"] == args.name for m in roster["members"].get(args.coordinator, [])):
+        me = next((m for m in roster["members"].get(args.coordinator, []) if m["name"] == args.name), None)
+        if me and me.get("role") == "scout":
+            print(f"{args.name} is a scout: scouts hold no leases. Send {args.coordinator} a TASK REQUEST for work that needs one")
+            return 3
+        if me is None:
             print(f"{args.name} is not a member of {args.coordinator}. Send it your JOIN line by its direct route "
                   "(puppet skill, section 2: JOIN — name — tool id — worktree — task — PRs — phase — commands — parent), "
                   "wait for WELCOME, then request again")
@@ -394,6 +406,62 @@ def release(args):
     return 0
 
 
+# ---------------------------------------------------------------- scouts
+
+SEV_RANK = {s: i for i, s in enumerate(SCOUT_SEVERITIES)}  # P0 first
+
+
+def scout_cmd(args):
+    """A scout's own watch state file (references/scouts.md): tick, alert, resolve, paused, show.
+    Only the scout itself writes it; the coordinator heartbeat and the dashboard read it."""
+    roster = load_roster()
+    m = next((x for x in roster["members"].get(args.coordinator, []) if x["name"] == args.name), None)
+    if m is None or m.get("role") != "scout":
+        print(f"{args.name} is not a scout of {args.coordinator}; send SCOUT JOIN first")
+        return 3
+    st = scout_state(args.name)
+    if args.scmd == "show":
+        print(json.dumps(st, indent=1))
+        return 0
+    t = now().isoformat()
+    st.setdefault("openAlerts", [])
+    st["tickMin"] = m.get("tickMin", 15)
+    out = ""
+    if args.scmd == "tick":
+        st["lastTick"] = t
+        if args.summary:
+            st["summary"] = {"at": t, "text": args.summary}
+        out = f"tick {t[:19]}Z; {len(st['openAlerts'])} open"
+    elif args.scmd == "alert":
+        old = next((a for a in st["openAlerts"] if a["fingerprint"] == args.fingerprint), None)
+        if old is None:
+            st["openAlerts"].append({"fingerprint": args.fingerprint, "severity": args.severity, "kind": args.kind,
+                                     "text": args.text, "firstSeen": t, "lastSeen": t})
+            out = "NEW: send it"
+        else:
+            worse = SEV_RANK[args.severity] < SEV_RANK[old["severity"]]
+            out = f"ESCALATED {old['severity']} to {args.severity}: send it" if worse else "SEEN: do not send it again"
+            old.update({"lastSeen": t, "text": args.text, "kind": args.kind,
+                        "severity": args.severity if worse else old["severity"]})
+        st["lastTick"] = t
+    elif args.scmd == "resolve":
+        left = [a for a in st["openAlerts"] if a["fingerprint"] != args.fingerprint]
+        out = ("RESOLVED: send UPDATE recovered" if len(left) < len(st["openAlerts"])
+               else f"{args.fingerprint} is not open")
+        st["openAlerts"] = left
+        st["lastTick"] = t
+    elif args.scmd == "paused":
+        if args.clear:
+            st.pop("pausedSince", None)
+            out = "not paused"
+        else:
+            st.setdefault("pausedSince", t)
+            out = f"paused since {st['pausedSince'][:19]}Z"
+    write_json(scout_path(args.name), st)
+    print(out)
+    return 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="puppet.py")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -439,7 +507,27 @@ def main(argv=None):
     r.add_argument("--process", action="append", help="also count processes matching this pattern (pgrep -f)")
     r.add_argument("--ignore-pid", type=int, action="append", help="a process in the worktree that the run did not start "
                    "(for example your own wait loop); name the reason in --note")
+    sc = sub.add_parser("scout", help="a scout's own watch state (references/scouts.md); never put a secret in --text or --summary")
+    scs = sc.add_subparsers(dest="scmd", required=True)
+    for name, what in (("tick", "record a check; QUIET ticks go here only"), ("alert", "open or refresh an alert; prints whether to send it"),
+                       ("resolve", "close an alert; prints whether to send UPDATE"), ("paused", "a send returned Paused"),
+                       ("show", "print the state file")):
+        x = scs.add_parser(name, help=what)
+        x.add_argument("--coordinator", required=True)
+        x.add_argument("--name", required=True, help="your scout name")
+        if name == "tick":
+            x.add_argument("--summary", help="the daily SUMMARY, kept in the file instead of a message")
+        if name in ("alert", "resolve"):
+            x.add_argument("--fingerprint", required=True, help="monitor or issue id plus the cause")
+        if name == "alert":
+            x.add_argument("--severity", required=True, choices=SCOUT_SEVERITIES)
+            x.add_argument("--kind", choices=("alert", "gap"), default="alert", help="gap: your own read failed")
+            x.add_argument("--text", required=True, help="one line; the location of a secret, never its value")
+        if name == "paused":
+            x.add_argument("--clear", action="store_true", help="sends work again")
     args = p.parse_args(argv)
+    if args.cmd == "scout":
+        return scout_cmd(args)
     if args.cmd in ("await-grant", "extend", "release") and not args.cls:
         args.cls = class_of(args.id)
         if not args.cls:
