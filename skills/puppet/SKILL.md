@@ -164,13 +164,23 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
    jump the queue. When the user wants your task to go first, send it as
    `USER SYNC`; the coordinator decides. To drop a queued request, ask your
    coordinator.
-2. Start waiting at once: `puppet.py await-grant <CLASS> --id <id>`. It prints
-   one line:
-   - `GRANTED` (exit 0): the only signal to run. Your coordinator also sends
-     LEASE GRANTED with the expiry.
-   - `NOT-GRANTED ... left the queue` (exit 3), `... never queued` (exit 6):
-     do not run; ask your coordinator.
-   - `NOT-GRANTED ... timeout` (exit 5): still queued; run `await-grant` again.
+2. Start waiting at once: `puppet.py await-grant <CLASS> --id <id>`. It ends
+   with one final line, and each line has its own exit code:
+
+   | Final line | Exit | Do |
+   | --- | --- | --- |
+   | `GRANTED` | 0 | Run. This is the only grant. Your coordinator also sends LEASE GRANTED with the expiry. |
+   | `DENIED` | 4 | Do not run and do not retry. Ask your coordinator why. |
+   | `LEFT-QUEUE` | 3 | Do not run. Ask your coordinator. |
+   | `TIMEOUT` | 5 | Do not run. You are still queued (or not queued yet): run `await-grant` again. |
+   | `NEVER-QUEUED` | 6 | Do not run. Check the id with your coordinator. |
+
+   **Run only on exit 0.** Gate the command on the exit code of the bare
+   `await-grant`, for example `puppet.py await-grant BUILD --id <id> && <command>`.
+   Never put `await-grant` in a pipe (`| tail`, `| tee`, `| grep`): the pipe
+   returns the exit code of its last command, so a TIMEOUT can look like exit
+   0. Never decide from a text match on the output. If you must read the
+   text, only a final line that starts with `GRANTED ` is a grant.
    - Pool class with a recycle command (for example HUTCH): before `GRANTED`
      it resets the resource (`RECYCLING`, then `RECYCLED`). `RECYCLE-FAILED`
      (destroyed) or `RECYCLE-UNREACHABLE` (kept, marked failed) means you do
