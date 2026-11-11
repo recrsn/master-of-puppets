@@ -36,13 +36,16 @@ Usage: python3 -I puppet.py <command> ...
        ASSIGNING <what> while a pool class creates or starts your resource (can take minutes),
        and after GRANTED of a pool class, RESOURCE <name> <info JSON>: the resource you hold
        until you release it (release never stops it: the server's pool upkeep does, when idle),
-       then GRANTED, DENIED <reason> or NOT-GRANTED <reason>. When the class has a recycle command,
+       then one final line: GRANTED, DENIED, LEFT-QUEUE, TIMEOUT or NEVER-QUEUED <reason>. Only GRANTED
+       is a grant, and no other final line contains the word GRANTED. When the class has a recycle command,
        a granted resource is reset first: RECYCLING <name>, then RECYCLED. A failed reset prints
        RECYCLE-FAILED (the resource is destroyed); an unreachable one RECYCLE-UNREACHABLE (it is kept,
        marked failed). Either way you do not get it: the entry is queued again at the front
-       (REQUEUED; keep waiting), up to 3 times, then NOT-GRANTED. Exit 0 granted (the only grant);
-       4 denied by your coordinator (do not retry; ask why); 3 left the queue without a grant; 5 timeout while still queued; 6 never queued
-       within --appear-timeout (default 600 s)
+       (REQUEUED; keep waiting), up to 3 times, then LEFT-QUEUE. Exit 0 GRANTED (the only grant);
+       4 DENIED by your coordinator (do not retry; ask why); 3 LEFT-QUEUE (left the queue, or every reset
+       failed); 5 TIMEOUT after --timeout-min, still queued or not queued yet (run await-grant again);
+       6 NEVER-QUEUED within --appear-timeout (default 600 s). Check the exit code of the bare command:
+       a pipe (| tail, | tee) returns the exit code of its last command, not of await-grant
   extend [CLASS] --coordinator C --name NAME --id ID --minutes N --reason TEXT
        ask your coordinator to extend your own granted lease to expire N minutes from now.
        It does not change the expiry: the coordinator decides. Writes one event line,
@@ -231,8 +234,9 @@ def recycle_granted(cls, lease_id, requeue):
 def await_grant(args):
     """Poll without the lock. The coordinator may queue the ID for the member, so the
     ID gets --appear-timeout to show up before it is judged. Prints HELD <reason> when
-    the coordinator holds or reviews the entry, then one final line: GRANTED,
-    DENIED <reason> or NOT-GRANTED <reason>; only exit 0 means granted. A pool class with a
+    the coordinator holds or reviews the entry, then one final line: GRANTED, DENIED,
+    LEFT-QUEUE, TIMEOUT or NEVER-QUEUED <reason>; only GRANTED (exit 0) means granted, and no
+    other final line contains the word GRANTED, so a text match cannot read a refusal as a grant. A pool class with a
     recycle command resets the granted resource first (recycle_granted)."""
     start = time.time()
     seen, held, assigning, destroyed = False, None, None, 0
@@ -250,7 +254,7 @@ def await_grant(args):
                 destroyed += 1
                 print(f"RECYCLE-{'FAILED' if outcome == 'destroyed' else 'UNREACHABLE'} {args.cls} {args.id}: {line}", flush=True)
                 if not any(q["id"] == args.id for q in load()["queue"][args.cls]):
-                    print(f"NOT-GRANTED {args.cls} {args.id}: {destroyed} resource(s) failed their reset; ask your coordinator")
+                    print(f"LEFT-QUEUE {args.cls} {args.id}: {destroyed} resource(s) failed their reset; do not run; ask your coordinator")
                     return 3
                 print(f"REQUEUED {args.cls} {args.id}: at the front of the queue for another resource; keep waiting", flush=True)
                 seen = True
@@ -280,15 +284,16 @@ def await_grant(args):
                 if assigning:
                     print(f"ASSIGNING {args.cls} {args.id}: {assigning}; keep waiting", flush=True)
         elif seen:
-            print(f"NOT-GRANTED {args.cls} {args.id}: left the queue without a grant; ask your coordinator")
+            print(f"LEFT-QUEUE {args.cls} {args.id}: left the queue with no lease; do not run; ask your coordinator")
             return 3
         elif waited >= args.appear_timeout:
-            print(f"NOT-GRANTED {args.cls} {args.id}: never queued within {args.appear_timeout:g} s; check the id with your coordinator")
+            print(f"NEVER-QUEUED {args.cls} {args.id}: not queued within {args.appear_timeout:g} s; do not run; check the id with your coordinator")
             return 6
         if waited >= args.timeout_min * 60:
             ready = [q["id"] for q in state["queue"][args.cls] if not q.get("hold")]
-            pos = ready.index(args.id) + 1 if args.id in ready else "on hold" if entry else "not queued"
-            print(f"NOT-GRANTED {args.cls} {args.id}: timeout after {args.timeout_min:g} min; position {pos}; still queued, wait again")
+            where = (f"position {ready.index(args.id) + 1}" if args.id in ready else "on hold") + "; still queued" \
+                if entry else "not queued yet"
+            print(f"TIMEOUT {args.cls} {args.id}: after {args.timeout_min:g} min; {where}; do not run; run await-grant again")
             return 5
         nap(args.interval)
 
