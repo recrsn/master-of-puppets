@@ -134,7 +134,7 @@ show who, why and each changed key with its old and new value)
                 --max-swapouts --swap-interval-s --load-per-core --dashboard-port
                 --max-slots CLASS=N (N=0 removes the cap)
   config set-class NAME [--description T] [--default-gib N] [--default-cpus N] [--max-minutes N]
-                [--settle OTHER=S ...] [--auto-acquire on|off] [--stall-minutes N]
+                [--settle OTHER=S ...] [--auto-acquire on|off] [--stall-minutes N] [--reclaim-minutes N]
                 [--pool-create CMD] [--pool-start CMD] [--pool-stop CMD] [--pool-delete CMD] [--pool-recycle CMD] [--pool-max N] [--pool-min N] [--pool-idle-delete-hours H] [--pool-stop-after-minutes M]
                 [--pool-health CMD] [--pool-clean CMD] [--pool-find CMD] [--pool-min-free-gib N] [--pool-min-mem-gib N]
        a class with pool commands leases one named resource at a time (references/leases.md)
@@ -154,6 +154,8 @@ show who, why and each changed key with its old and new value)
        An entry that waits for its own coordinator (exit 2 or 6, review, incomplete, not on auto)
        for --stall-minutes (default 20; 0 = never), or at once when its coordinator is not live, is
        stalled: it keeps its place, acquire and the auto grant pass over it, and C gets AUTO-STALLED.
+       A lease expired more than --reclaim-minutes ago (default 10, pool classes 0; 0 = never) with no
+       process in its worktree is released by the server as fail (AUTO-RECLAIMED to C and the member).
   config remove-class NAME        refused while the class has holders or queue entries
        project: --name --base-branch --merge-method merge|squash|rebase|auto --leases-default
                 [--class CLASS --max-minutes N --minutes learn|fixed --peak learn|fixed --default-gib N
@@ -340,6 +342,7 @@ Watchers and install
          VOTE PASSED ID | VOTE ID REJECTED   the outcome of a vote
          auto: AUTO-GRANTED|AUTO-REFUSED|AUTO-SKIPPED ...   the server's auto grant
          auto: AUTO-STALLED CLASS ID ...   your entry waited too long for you; the queue now passes over it
+         auto: AUTO-RECLAIMED CLASS ID ...   an expired lease with no process in its worktree was released as fail
          pool: POOL-EXPIRED ...  your lease expired over an hour ago and still holds a resource
          pool: RECYCLE-DESTROYED|RECYCLE-DESTROY-FAILED ...  a recycle failed: the resource was deleted,
                or its delete failed too and it is marked failed
@@ -393,6 +396,7 @@ from moplib import (
     set_state, stop_resource, begin_op, end_op, op_current, op_live, BUSY_STATES, POOL_STUCK_MINUTES, delete_claimed,
     mark_failed, health_run, host_hold, host_held, failed_restart, failed_restart_end, FAIL_DELETE, CLEAN_TIMEOUT, FIND_TIMEOUT, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
     SCOUT_CLASSES, scout_path, scout_state, scout_stale, stalled, queue_head, blocked_by, STALL_MINUTES,
+    RECLAIM_MINUTES, reclaim_minutes,
 )
 
 
@@ -634,7 +638,8 @@ def config_cmd(args):
         else:
             c = reg.setdefault(args.name, {"description": "", "defaultGiB": 0, "defaultCpus": 0, "maxMinutes": 0, "settle": {}})
             for flag, field in (("description", "description"), ("default_gib", "defaultGiB"), ("default_cpus", "defaultCpus"),
-                                ("max_minutes", "maxMinutes"), ("stall_minutes", "stallMinutes")):
+                                ("max_minutes", "maxMinutes"), ("stall_minutes", "stallMinutes"),
+                                ("reclaim_minutes", "reclaimMinutes")):
                 if getattr(args, flag) is not None:
                     c[field] = getattr(args, flag)
             if args.auto_acquire is not None:
@@ -3238,14 +3243,59 @@ def mark_stalls(c):
         say("auto", msg, me)
 
 
+RECLAIM_CHECK_S = 60  # how often one expired lease's worktree is checked for processes
+
+
+def reclaim_expired(c, checked):
+    """Release each lease of class c that expired more than the class's reclaimMinutes ago (reclaim_minutes;
+    0 = never) and has no process left in its worktree (the drain count of watch's EXPIRED line; measure-peak
+    does not count). A member whose waiter died never releases, and only it may; so the server does, as
+    result fail, through the member's own release (run minutes, peaks, pool recycle and the event line).
+    The coordinator and the member get one AUTO-RECLAIMED; the next head is then granted. A lease with a
+    live process stays held: watch's EXPIRED alert covers it. checked: {(id, expiresAt): time of the last
+    process check}, so each lease costs one check a minute. Returns the ids it released."""
+    grace = reclaim_minutes(c)
+    if not grace:
+        return []
+    import puppet  # the member's release; a sibling module, loaded on first use
+    t, done = now(), []
+    for h in load()[c]:
+        over = (t - dt.datetime.fromisoformat(h["expiresAt"])).total_seconds() / 60
+        key = (h["id"], h["expiresAt"])
+        if over < grace or time.time() - checked.get(key, 0) < RECLAIM_CHECK_S:
+            continue
+        checked[key] = time.time()
+        ignore = [h["measurePid"]] if h.get("measurePid") else []
+        left = drain(h["worktree"], ignore=ignore) if h.get("worktree") else []
+        if left:
+            continue
+        note = f"reclaimed by the server {int(over)} min after expiry: no process in the worktree"
+        ns = argparse.Namespace(cls=c, id=h["id"], result="fail", note=note, peak_gib=None, peak_cpus=None,
+                                port=[], process=[], ignore_pid=ignore, retire_vm=None)
+        with captured() as buf:
+            code = puppet.release(ns)
+        if code != 0:  # the member released it meanwhile
+            continue
+        done.append(h["id"])
+        log(f"reclaim {c} {h['coordinator']} {h['id']} over={int(over)}")
+        msg = (f"AUTO-RECLAIMED {c} {h['id']}: expired {int(over)} min ago with no process in its worktree, so the server "
+               f"released it as fail and the queue moves on. Do not run under it; request again with a new id. "
+               + " ".join(buf.getvalue().split())[:200])
+        member = h["holder"].partition(" ")[0]
+        for to in dict.fromkeys((h["coordinator"], member)):
+            say("auto", msg, to)
+    return done
+
+
 def auto_class(c, ctx):
-    """Run auto_step for class c every 2 s until c leaves the registry."""
+    """Every 2 s until c leaves the registry: reclaim expired idle leases of class c, then run auto_step."""
     RUN.__dict__.update(ctx)  # output to the server log, as in the thread that started this one
-    seen = None
+    seen, checked = None, {}
     while True:
         try:
             if c not in class_names(load_machine()):
                 return
+            reclaim_expired(c, checked)
             seen = auto_step(c, seen)
         except Exception as exc:  # keep granting; the server log shows the failure
             print(f"auto grants {c} failed: {exc!r}", file=sys.stderr, flush=True)
@@ -3854,6 +3904,8 @@ def main(argv=None):
     sc.add_argument("--default-gib", type=float, help="expected peak; 0 = not memory-bound")
     sc.add_argument("--default-cpus", type=float, help="expected peak cores; 0 = not CPU-bound")
     sc.add_argument("--max-minutes", type=int)
+    sc.add_argument("--reclaim-minutes", type=int, help="minutes after expiry before the server releases a lease (as fail) whose "
+                    "worktree has no process left (default %d, pool classes 0; 0 = never)" % RECLAIM_MINUTES)
     sc.add_argument("--stall-minutes", type=int, help="minutes the head entry may wait for its own coordinator (undersized, "
                     "over the limit, review, incomplete or not on auto) before the auto grant passes over it (default %d; 0 = never)" % STALL_MINUTES)
     sc.add_argument("--settle", action="append", help="OTHER=SECONDS: after a grant of this class, OTHER waits (0 removes)")

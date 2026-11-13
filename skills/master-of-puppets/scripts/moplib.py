@@ -43,6 +43,7 @@ FILES = ("moplib.py", "coordinator.py", "puppet.py")  # the live helpers that in
 OBSOLETE = ("lease.py",)  # helpers that earlier versions installed; install removes them
 SOURCE = os.path.join(DIR, "source.json")  # the skill copy that install last copied from
 STALL_MINUTES = 20  # default stallMinutes: how long the head entry may wait for its own coordinator before the auto grant passes over it
+RECLAIM_MINUTES = 10  # default reclaimMinutes (pool classes: 0): grace after expiry before the server releases an idle lease
 CLASS_NAME = re.compile(r"^[A-Z][A-Z0-9_-]{0,23}$")
 DEFAULT_REGISTRY = {
     "BUILD": {"description": "builds, typecheck, lint/format, tests, codegen", "defaultGiB": 0, "defaultCpus": 0, "maxMinutes": 0, "settle": {}},
@@ -370,6 +371,15 @@ def registry(machine=None):
     stored = machine.get("classes") or DEFAULT_REGISTRY
     return {n: json.loads(json.dumps({"defaultCpus": 0, "stallMinutes": STALL_MINUTES, **DEFAULT_REGISTRY.get(n, {}), **c}))
             for n, c in stored.items()}
+
+
+def reclaim_minutes(cls, machine=None):
+    """The class's reclaimMinutes: set, else 0 for a pool class (its resource has its own expiry
+    handling, and its run may work on the resource from outside the worktree), else RECLAIM_MINUTES."""
+    spec = registry(machine)[cls]
+    if spec.get("reclaimMinutes") is not None:
+        return spec["reclaimMinutes"]
+    return 0 if spec.get("pool") else RECLAIM_MINUTES
 
 
 def stalled(entry):
