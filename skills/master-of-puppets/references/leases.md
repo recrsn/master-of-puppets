@@ -348,8 +348,10 @@ Only the member releases its lease, and a member whose waiter died (for
 example in an app restart) never does. An expired lease then blocks its slot
 and the whole queue behind it. So the server releases a lease that expired
 more than the class's `reclaimMinutes` ago (default 10) when no process runs
-in its worktree (the `left=N` count of watch's `EXPIRED` line; measure-peak
-does not count):
+in its worktree (the `left=N` count of watch's `EXPIRED` line). The helpers
+do not count: measure-peak, and a member's `await-grant` or `request` for its
+next run. Any other process does, for example a watch loop that the member
+started in the worktree; run such loops outside a leased worktree:
 
 - It uses the member's own release, as `--result fail`: the run minutes and
   peaks are recorded, and a pool resource is recycled.

@@ -1311,9 +1311,19 @@ def elapsed_s(text):
         return None
 
 
+def helper_command(cmd):
+    """True when the command line runs one of these helpers (puppet.py, coordinator.py, server.py, from the
+    state dir or a skill copy): a member's await-grant or request, measure-peak, the server. A helper is
+    never part of a run, so drain does not count it."""
+    for arg in cmd.split():
+        if os.path.basename(arg) in FILES + ("server.py",) and os.path.isfile(os.path.join(os.path.dirname(arg), "moplib.py")):
+            return True
+    return False
+
+
 def drain(worktree, ports=(), patterns=(), since=None, ignore=()):
     """What a run left behind: processes working in the worktree (except session
-    processes), listeners on the given ports, processes matching each pattern.
+    processes and helper_command processes), listeners on the given ports, processes matching each pattern.
     since (a datetime, the grant): a worktree process that started before it is not the run's.
     ignore: pids the member names as not the run's. Returns a list of report lines, one per
     process left. It only reports; it never kills."""
@@ -1325,9 +1335,10 @@ def drain(worktree, ports=(), patterns=(), since=None, ignore=()):
             age = elapsed_s(run(["ps", "-o", "etime=", "-p", pid]))
             if age is not None and (now() - since).total_seconds() < age - 5:
                 continue  # it was running before the grant, so the run did not start it
-        cmd = run(["ps", "-o", "command=", "-p", pid]).strip()[:100]
-        if not cmd:
+        full = run(["ps", "-o", "command=", "-p", pid]).strip()
+        if not full or helper_command(full):
             continue
+        cmd = full[:100]
         listen = [l[1:] for l in run(["lsof", "-nP", "-a", "-p", pid, "-iTCP", "-sTCP:LISTEN", "-Fn"]).splitlines() if l.startswith("n")]
         lines.append(f"worktree {pid} {'[listen ' + ' '.join(listen) + '] ' if listen else ''}{cmd}")
     for port in ports:
