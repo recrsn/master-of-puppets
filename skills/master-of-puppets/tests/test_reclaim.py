@@ -98,6 +98,17 @@ class Reclaim(unittest.TestCase):
         self.assertIn("a-old", self.held())
         self.assertEqual([r for r in self.inbox() if r["message"].startswith("AUTO-RECLAIMED")], [])
 
+    def test_helper_waiting_in_the_worktree_does_not_block_reclaim(self):
+        helpers = os.path.join(self.tmp.name, "helpers")  # a skill copy: puppet.py beside moplib.py
+        os.makedirs(helpers)
+        open(os.path.join(helpers, "moplib.py"), "w").close()
+        with open(os.path.join(helpers, "puppet.py"), "w") as f:
+            f.write("import time\ntime.sleep(60)\n")
+        self.procs.append(subprocess.Popen([sys.executable, "-I", os.path.join(helpers, "puppet.py"), "await-grant",
+                                            "--id", "a-next"], cwd=self.tree, start_new_session=True))
+        self.hold("a-old", 30)
+        self.assertEqual(self.c.reclaim_expired(CLASS, {}), ["a-old"])  # the member's next await-grant is not a run
+
     def test_reclaim_minutes_zero_turns_it_off(self):
         self.config(reclaim=0)
         self.hold("a-old", 120)
