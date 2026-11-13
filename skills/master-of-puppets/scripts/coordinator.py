@@ -354,9 +354,11 @@ Watchers and install
          EXPIRED CLASS ID ...   each of C's expired leases, once, with left=N processes in its worktree
          CLOUD <task> <member> <state>   a state change of a task in cloud-<C>.txt (a CodeRabbit
                                 cloud task id or URL, then the member name, per line), every --interval s
-  install    from the skill copy: copy moplib.py, coordinator.py and puppet.py into the state
+  install [--allow-rollback]    from the skill copy: copy moplib.py, coordinator.py and puppet.py into the state
        dir (replacing copies that differ), remove obsolete helpers (lease.py), record this
-       copy in source.json and restart the server from it. roster, whoami, register,
+       copy and its commit in source.json and restart the server from it. It refuses (exit 3) a copy
+       whose commit is older than the installed one (a stale checkout would roll every coordinator
+       back), unless --allow-rollback. roster, whoami, register,
        heartbeat and status warn on stderr when the live copies differ from that copy
 
 A coordinator is live while its heartbeat is newer than 40 minutes. register and
@@ -3545,13 +3547,40 @@ def install_cmd(args):
     if os.path.realpath(DIR) == here:
         print("this is the live copy; run install from the skill copy")
         return 2
+    older = rollback(here)
+    if older and not args.allow_rollback:
+        print(f"refused: {older}. Bring this copy up to date (git pull, or git checkout --detach origin/main), "
+              "or install from a current copy; --allow-rollback installs it anyway")
+        return 3
     code = install_files(here)
     print(restart_server(here))
     return code
 
 
+def git_head(path):
+    """The full commit SHA checked out at path, or None outside a git checkout."""
+    out = subprocess.run(["git", "-C", path, "rev-parse", "HEAD"], capture_output=True, text=True)
+    return out.stdout.strip() if out.returncode == 0 else None
+
+
+def rollback(here):
+    """Why installing from here would roll the live helpers back, or None: the copy's commit is a strict
+    ancestor of the commit the last install recorded. A copy that is ahead, on another line or not in git
+    passes, since only an older commit is known to drop work."""
+    old, new = (read_json(SOURCE) or {}).get("commit"), git_head(here)
+    if not (old and new) or old == new:
+        return None
+    out = subprocess.run(["git", "-C", here, "merge-base", "--is-ancestor", new, old], capture_output=True)
+    if out.returncode != 0:
+        return None
+    return f"this copy is at {new[:12]}, older than the installed {old[:12]} (from {(read_json(SOURCE) or {}).get('path')})"
+
+
 def install_files(here):
-    write_json(SOURCE, {"path": here, "at": now().isoformat()})
+    commit = git_head(here)
+    write_json(SOURCE, {"path": here, "at": now().isoformat(), **({"commit": commit} if commit else {})})
+    if commit:
+        print(f"installing {commit[:12]} from {here}")
     plan = []
     for name in FILES:
         src, dst = os.path.join(here, name), os.path.join(DIR, name)
@@ -4000,7 +4029,8 @@ def main(argv=None):
     wa = sub.add_parser("watch")
     wa.set_defaults(_self=("me",))
     wa.add_argument("--interval", type=int, default=180, help="seconds between cloud task polls")
-    sub.add_parser("install")
+    sub.add_parser("install").add_argument("--allow-rollback", action="store_true",
+                                           help="install even when this copy is older than the installed commit")
     args, extra = p.parse_known_args(argv)
     if getattr(args, "_self", None):
         me = caller()
