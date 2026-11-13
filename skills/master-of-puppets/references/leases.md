@@ -342,6 +342,27 @@ A coordinator that wants to grant a class by hand turns auto off for it; its
 head entries then stall after `stallMinutes` too, when another coordinator's
 stream has the class on auto.
 
+### Reclaim
+
+Only the member releases its lease, and a member whose waiter died (for
+example in an app restart) never does. An expired lease then blocks its slot
+and the whole queue behind it. So the server releases a lease that expired
+more than the class's `reclaimMinutes` ago (default 10) when no process runs
+in its worktree (the `left=N` count of watch's `EXPIRED` line; measure-peak
+does not count):
+
+- It uses the member's own release, as `--result fail`: the run minutes and
+  peaks are recorded, and a pool resource is recycled.
+- The coordinator and the member get one
+  `INBOX auto: AUTO-RECLAIMED CLASS ID ...`. The next head is then granted.
+- A lease with a live process in its worktree is never reclaimed. Only the
+  `EXPIRED` alert goes out, as before.
+
+Pool classes default to 0 (off): a run can use its resource from outside the
+worktree, and pool upkeep already reports a lease that holds a resource long
+after expiry (`POOL-EXPIRED`). Set the time with
+`coordinator.py config set-class CLASS --reclaim-minutes N`; 0 turns it off.
+
 A member's request ends in one of three outcomes: `GRANTED`, `HELD <reason>`
 (wait for the coordinator) or `DENIED <reason>`.
 

@@ -203,7 +203,11 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
    - Exit 2: the whole run would be over the class limit. Release with
      `--result partial` and request the rest with a new id.
    - Exit 3: not a member, not your lease, or not held. Fix what it names.
-   On `LEASE EXPIRED`, ask the same way, or release at once.
+   On `LEASE EXPIRED`, ask the same way, or release at once. When a lease
+   is expired for the class's reclaim time (default 10 min) and no process
+   runs in your worktree, the server releases it as `fail`
+   (`AUTO-RECLAIMED`). You then hold nothing: do not run under it, and
+   request again with a new id.
 4. For E2E, stop the servers you started before releasing, including on
    failure. Release:
    `puppet.py release <CLASS> --id <id> --result pass|fail|partial --note "<one line: what passed, or the first failure>" [--port <n> ...]`.
