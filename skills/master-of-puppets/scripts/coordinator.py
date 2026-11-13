@@ -134,7 +134,7 @@ show who, why and each changed key with its old and new value)
                 --max-swapouts --swap-interval-s --load-per-core --dashboard-port
                 --max-slots CLASS=N (N=0 removes the cap)
   config set-class NAME [--description T] [--default-gib N] [--default-cpus N] [--max-minutes N]
-                [--settle OTHER=S ...] [--auto-acquire on|off]
+                [--settle OTHER=S ...] [--auto-acquire on|off] [--stall-minutes N]
                 [--pool-create CMD] [--pool-start CMD] [--pool-stop CMD] [--pool-delete CMD] [--pool-recycle CMD] [--pool-max N] [--pool-min N] [--pool-idle-delete-hours H] [--pool-stop-after-minutes M]
                 [--pool-health CMD] [--pool-clean CMD] [--pool-find CMD] [--pool-min-free-gib N] [--pool-min-mem-gib N]
        a class with pool commands leases one named resource at a time (references/leases.md)
@@ -151,6 +151,9 @@ show who, why and each changed key with its old and new value)
        The server also grants the head entry of each auto class or stream (any registered
        coordinator's, with minutes and a worktree) and sends its coordinator AUTO-GRANTED, AUTO-REFUSED or
        AUTO-SKIPPED. Exit 2 and 6 refusals are left to C (split the run, or acquire --accept-size).
+       An entry that waits for its own coordinator (exit 2 or 6, review, incomplete, not on auto)
+       for --stall-minutes (default 20; 0 = never), or at once when its coordinator is not live, is
+       stalled: it keeps its place, acquire and the auto grant pass over it, and C gets AUTO-STALLED.
   config remove-class NAME        refused while the class has holders or queue entries
        project: --name --base-branch --merge-method merge|squash|rebase|auto --leases-default
                 [--class CLASS --max-minutes N --minutes learn|fixed --peak learn|fixed --default-gib N
@@ -336,11 +339,12 @@ Watchers and install
          CONFIG, MEMORY, LEASES, ADMISSION   a peer changed a machine rule
          VOTE PASSED ID | VOTE ID REJECTED   the outcome of a vote
          auto: AUTO-GRANTED|AUTO-REFUSED|AUTO-SKIPPED ...   the server's auto grant
+         auto: AUTO-STALLED CLASS ID ...   your entry waited too long for you; the queue now passes over it
          pool: POOL-EXPIRED ...  your lease expired over an hour ago and still holds a resource
          pool: RECYCLE-DESTROYED|RECYCLE-DESTROY-FAILED ...  a recycle failed: the resource was deleted,
                or its delete failed too and it is marked failed
        and, each 2 s:
-         HEAD CLASS ID ...      an entry of C became the first ready entry: acquire it
+         HEAD CLASS ID ...      an entry of C became the head (the first ready entry that is not stalled): acquire it
          VOTE-REQUEST ID by X: TEXT ...   each open vote that waits for C's vote (also those opened
                                 before watch started): check your facts, then vote agree or object
          PR <ref> <state>       each of C's PRs (prs-<C>.txt, register/heartbeat --pr and C's members'
@@ -386,7 +390,7 @@ from moplib import (
     read_cmd, run, worktree_pids, drain, pool_spec, pool_env, pool_run, pool_info, find_resource, RESOURCE_NAME, parse_prefer, prefer_matches,
     set_state, stop_resource, begin_op, end_op, op_current, op_live, BUSY_STATES, POOL_STUCK_MINUTES, delete_claimed,
     mark_failed, health_run, host_hold, host_held, failed_restart, failed_restart_end, FAIL_DELETE, CLEAN_TIMEOUT, FIND_TIMEOUT, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
-    SCOUT_CLASSES, scout_path, scout_state, scout_stale,
+    SCOUT_CLASSES, scout_path, scout_state, scout_stale, stalled, queue_head, blocked_by, STALL_MINUTES,
 )
 
 
@@ -628,7 +632,7 @@ def config_cmd(args):
         else:
             c = reg.setdefault(args.name, {"description": "", "defaultGiB": 0, "defaultCpus": 0, "maxMinutes": 0, "settle": {}})
             for flag, field in (("description", "description"), ("default_gib", "defaultGiB"), ("default_cpus", "defaultCpus"),
-                                ("max_minutes", "maxMinutes")):
+                                ("max_minutes", "maxMinutes"), ("stall_minutes", "stallMinutes")):
                 if getattr(args, flag) is not None:
                     c[field] = getattr(args, flag)
             if args.auto_acquire is not None:
@@ -1574,9 +1578,12 @@ def brief(state):
                 lines.append(f"           covers: {h['commands'][:120]}")
         q = state["queue"][c]
         ready = [x for x in q if not x.get("hold")]
-        prio = f", priority {ready[0]['priority']}" if ready and ready[0].get("priority") else ""
-        head = f"head {ready[0]['id']} ({ready[0]['coordinator']}{prio})" if ready else "no ready entry"
-        lines.append(f"{c} queue {len(ready)} ready, {len(q) - len(ready)} on hold — {head}")
+        first = queue_head(q)
+        prio = f", priority {first['priority']}" if first and first.get("priority") else ""
+        head = f"head {first['id']} ({first['coordinator']}{prio})" if first else "no ready entry"
+        stalls = [x for x in ready if stalled(x)]
+        lines.append(f"{c} queue {len(ready)} ready, {len(q) - len(ready)} on hold — {head}"
+                     + "".join(f"; STALLED {x['id']} ({x['coordinator']}): {x['stall']['reason']}" for x in stalls))
     for c, hold in state.get("admission", {}).items():
         lines.append(f"{c} ADMISSION HOLD by {hold['by']} since {hold['at'][11:16]}Z — {hold['reason']}")
     b = state["budget"]
@@ -1678,9 +1685,9 @@ def acquire_checks(args, state, machine):
     why = over_limit(args.cls, entry.get("project") or project_key(args.worktree)[0], args.minutes)
     if why:
         return 2, why
-    ready = [q for q in queue if not q.get("hold")]
-    if ready and ready[0]["id"] != args.id:
-        return 3, json.dumps({"queued_ahead": ready[0]})
+    ahead = blocked_by(queue, args.id)
+    if ahead:
+        return 3, json.dumps({"queued_ahead": ahead})
     cap = machine["maxSlots"].get(args.cls)
     if cap and len(holders) >= cap:
         return 3, json.dumps({"max_slots": cap, "held": holders})
@@ -2416,13 +2423,15 @@ def round_leases(me):
             lines.append(f"{c} held {h['id']} " + (f"EXPIRED {-left} min ago" if left < 0 else f"{left} min left")
                          + (f" resource={h['resource']}" if h.get("resource") else "") + f" — {h['holder'][:60]}")
         ready = [q for q in state["queue"][c] if not q.get("hold")]
+        first = queue_head(state["queue"][c])
         for q in state["queue"][c]:
             if q["coordinator"] != me:
                 continue
             where = f"ready #{ready.index(q) + 1}" if q in ready else ("review" if q.get("review") else "on hold")
-            lines.append(f"{c} queued {q['id']} {where}{' HEAD' if ready and ready[0] is q else ''} — {q['holder'][:60]}")
-        if ready and ready[0]["coordinator"] != me:
-            lines.append(f"{c} head {ready[0]['id']} ({ready[0]['coordinator']})")
+            mark = " HEAD" if first is q else f" STALLED ({q['stall']['reason']})" if stalled(q) else ""
+            lines.append(f"{c} queued {q['id']} {where}{mark} — {q['holder'][:60]}")
+        if first and first["coordinator"] != me:
+            lines.append(f"{c} head {first['id']} ({first['coordinator']})")
     b = state["budget"]
     lines.append(f"budget {b['freeGiB']} of {b['limitGiB']} GiB free · {b['freeCpus']} of {b['limitCpus']} cores free")
     print("\n".join(lines))
@@ -3015,13 +3024,13 @@ def follow(paths):
 
 
 def own_heads(me):
-    """{CLASS: entry} for each class whose first ready queue entry is me's (by the
-    entry's coordinator field, so a transferred member's old ID prefix does not matter)."""
+    """{CLASS: entry} for each class whose head (queue_head: the first ready entry that is not
+    stalled) is me's (by the entry's coordinator field, so a transferred member's old ID prefix does not matter)."""
     state, heads = load(), {}
     for c in class_names():
-        ready = [q for q in state["queue"][c] if not q.get("hold")]
-        if ready and ready[0]["coordinator"] == me:
-            heads[c] = ready[0]
+        q = queue_head(state["queue"][c])
+        if q and q["coordinator"] == me:
+            heads[c] = q
     return heads
 
 
@@ -3152,53 +3161,131 @@ def auto_grants():
         nap(10)
 
 
+def coordinator_wait(q, c, machine, roster):
+    """(kind, text) when queue entry q of class c waits for its own coordinator, so the auto grant cannot take it;
+    else None. Host, budget, slot, settle and admission refusals are not coordinator waits: they pass by
+    themselves, and passing over a large entry for them would starve it."""
+    if q.get("review"):
+        return "review", "marked for review; grant it with acquire, or clear the review"
+    if not q.get("minutes") or not q.get("worktree"):
+        return "incomplete", "needs minutes and a worktree; set them with wait, then acquire"
+    if not auto_entry(q, machine, roster, c):
+        return "manual", "its class and stream are not on auto; grant it with acquire"
+    key = q.get("project") or project_key(q["worktree"])[0]
+    why = over_limit(c, key, q["minutes"])
+    if why:
+        return "limit", why
+    if not registry(machine)[c].get("pool"):
+        why = undersized(c, key, q.get("gib"), machine["sizeMargin"])
+        if why:
+            return "undersized", f"{why}; or grant it with acquire --accept-size"
+    return None
+
+
+def mark_stalls(c):
+    """Under the lock, walk the ready entries of class c from the front and mark each one that waits for its own
+    coordinator (coordinator_wait) with the reason and since when. The mark is stalled once the entry waited the
+    class's stallMinutes, or at once when its coordinator is not live; 0 turns stalls off. The walk stops at the
+    first entry that is not stalled: that entry is the head (queue_head). A stalled entry keeps its place, and
+    acquire and the auto grant pass over it (blocked_by), so one coordinator cannot hold up the queue. The mark
+    goes when the reason clears; it restarts when the reason or the entry changes, or when the coordinator is live
+    again before the time is up. Each new stall sends its coordinator one AUTO-STALLED."""
+    sends = []
+    lock()
+    try:
+        machine, roster, state = load_machine(), load_roster(), load()
+        limit = registry(machine)[c].get("stallMinutes", STALL_MINUTES)
+        t, changed = now(), False
+        for q in state["queue"][c]:
+            if q.get("hold"):
+                continue
+            wait = coordinator_wait(q, c, machine, roster) if limit else None
+            mark = q.get("stall")
+            if not wait:
+                if mark:
+                    q.pop("stall")
+                    changed = True
+                    log(f"stall clear {c} {q['coordinator']} {q['id']}")
+                break
+            kind, why = wait
+            entry = list(entry_tuple(q))
+            if not mark or mark["kind"] != kind or mark["entry"] != entry:
+                mark = q["stall"] = {"kind": kind, "reason": why, "since": t.isoformat(), "entry": entry, "stalled": False}
+                changed = True
+            elif mark["reason"] != why:
+                mark["reason"], changed = why, True
+            waited = (t - dt.datetime.fromisoformat(mark["since"])).total_seconds() / 60
+            gone = not live(roster["coordinators"].get(q["coordinator"]))
+            now_stalled = gone or waited >= limit
+            if now_stalled != mark["stalled"]:
+                mark["stalled"], changed = now_stalled, True
+                if now_stalled:
+                    how = "its coordinator is not live" if gone else f"it waited {int(waited)} min for its coordinator"
+                    log(f"stall {c} {q['coordinator']} {q['id']} kind={kind} {'not-live' if gone else f'waited={int(waited)}'}")
+                    sends.append((q["coordinator"], f"AUTO-STALLED {c} {q['id']}: {how}: {why}. It keeps its place, "
+                                  "but the auto grant now passes over it to the entries behind it until you act"))
+                else:
+                    log(f"stall lifted {c} {q['coordinator']} {q['id']}: coordinator live again")
+            if not now_stalled:
+                break
+        if changed:
+            save(state, machine)
+    finally:
+        unlock()
+    for me, msg in sends:
+        say("auto", msg, me)
+
+
 def auto_class(c, ctx):
-    """Grant the head entry of class c of each registered coordinator (live or not: the opt-in is
-    the class or stream setting, not a heartbeat) by running acquire, for classes or
-    streams with autoAcquire on, until c leaves the registry. The entry's coordinator gets AUTO-GRANTED,
-    AUTO-REFUSED or AUTO-SKIPPED in its inbox when the outcome changes. Exit 2 (over the limit) and 6
-    (undersized) wait for the coordinator: this never splits a run or accepts a size. Exit 7 means the
-    entry changed during the host check; the final check under the lock revalidates the entry, its hold
-    and review state and the auto opt-in. Other refusals retry on the next pass."""
+    """Run auto_step for class c every 2 s until c leaves the registry."""
     RUN.__dict__.update(ctx)  # output to the server log, as in the thread that started this one
     seen = None
     while True:
         try:
-            machine, roster, state = load_machine(), load_roster(), load()
-            if c not in class_names(machine):
+            if c not in class_names(load_machine()):
                 return
-            ready = [q for q in state["queue"][c] if not q.get("hold")]
-            q = ready[0] if ready else None
-            if not q or q["coordinator"] not in roster["coordinators"] or not auto_entry(q, machine, roster, c):
-                seen = None
-                nap(2)
-                continue
-            me, key = q["coordinator"], (q["id"], q.get("minutes"), q.get("gib"), q.get("cpus"))
-            if q.get("review"):
-                if seen != (key, "review"):
-                    say("auto", f"AUTO-SKIPPED {c} {q['id']}: marked for review; grant it with acquire", me)
-                    seen = (key, "review")
-            elif seen and seen[0] == key and seen[1] in (2, 6):
-                pass
-            elif not q.get("minutes") or not q.get("worktree"):
-                if seen != (key, "incomplete"):
-                    say("auto", f"AUTO-REFUSED {c} {q['id']}: entry needs minutes and worktree; set them with wait, then acquire", me)
-                    seen = (key, "incomplete")
-            else:
-                ns = argparse.Namespace(cls=c, coordinator=me, holder=q["holder"], id=q["id"], worktree=q["worktree"],
-                                        minutes=q["minutes"], gib=q.get("gib"), cpus=q.get("cpus"), accept_size=False,
-                                        commands=q.get("commands"), measure=True, auto_expect=entry_tuple(q))
-                with captured() as buf:
-                    code = acquire_cmd(ns)
-                if code == 0:
-                    say("auto", f"AUTO-GRANTED {c} {q['id']}", me)
-                    seen = None
-                elif seen != (key, code):
-                    say("auto", f"AUTO-REFUSED {c} {q['id']} exit {code}: {buf.getvalue().strip()[:300]}", me)
-                    seen = (key, code)
+            seen = auto_step(c, seen)
         except Exception as exc:  # keep granting; the server log shows the failure
             print(f"auto grants {c} failed: {exc!r}", file=sys.stderr, flush=True)
         nap(2)
+
+
+def auto_step(c, seen):
+    """One pass of the auto grant for class c: mark stalls, then grant the head entry (queue_head) of each
+    registered coordinator (live or not: the opt-in is the class or stream setting, not a heartbeat) by running
+    acquire, for classes or streams with autoAcquire on. The entry's coordinator gets AUTO-GRANTED,
+    AUTO-REFUSED or AUTO-SKIPPED in its inbox when the outcome changes. Exit 2 (over the limit) and 6
+    (undersized) wait for the coordinator: this never splits a run or accepts a size, but after stallMinutes
+    mark_stalls passes over the entry. Exit 7 means the entry changed during the host check; the final check
+    under the lock revalidates the entry, its hold and review state and the auto opt-in. Other refusals retry
+    on the next pass. Returns the new seen (the last outcome told, so it is told once)."""
+    mark_stalls(c)
+    machine, roster, state = load_machine(), load_roster(), load()
+    q = queue_head(state["queue"][c])
+    if not q or q["coordinator"] not in roster["coordinators"] or not auto_entry(q, machine, roster, c):
+        return None
+    me, key = q["coordinator"], (q["id"], q.get("minutes"), q.get("gib"), q.get("cpus"))
+    if q.get("review"):
+        if seen != (key, "review"):
+            say("auto", f"AUTO-SKIPPED {c} {q['id']}: marked for review; grant it with acquire", me)
+        return key, "review"
+    if seen and seen[0] == key and seen[1] in (2, 6):
+        return seen
+    if not q.get("minutes") or not q.get("worktree"):
+        if seen != (key, "incomplete"):
+            say("auto", f"AUTO-REFUSED {c} {q['id']}: entry needs minutes and worktree; set them with wait, then acquire", me)
+        return key, "incomplete"
+    ns = argparse.Namespace(cls=c, coordinator=me, holder=q["holder"], id=q["id"], worktree=q["worktree"],
+                            minutes=q["minutes"], gib=q.get("gib"), cpus=q.get("cpus"), accept_size=False,
+                            commands=q.get("commands"), measure=True, auto_expect=entry_tuple(q))
+    with captured() as buf:
+        code = acquire_cmd(ns)
+    if code == 0:
+        say("auto", f"AUTO-GRANTED {c} {q['id']}", me)
+        return None
+    if seen != (key, code):
+        say("auto", f"AUTO-REFUSED {c} {q['id']} exit {code}: {buf.getvalue().strip()[:300]}", me)
+    return key, code
 
 
 def pool_upkeep():
@@ -3738,6 +3825,8 @@ def main(argv=None):
     sc.add_argument("--default-gib", type=float, help="expected peak; 0 = not memory-bound")
     sc.add_argument("--default-cpus", type=float, help="expected peak cores; 0 = not CPU-bound")
     sc.add_argument("--max-minutes", type=int)
+    sc.add_argument("--stall-minutes", type=int, help="minutes the head entry may wait for its own coordinator (undersized, "
+                    "over the limit, review, incomplete or not on auto) before the auto grant passes over it (default %d; 0 = never)" % STALL_MINUTES)
     sc.add_argument("--settle", action="append", help="OTHER=SECONDS: after a grant of this class, OTHER waits (0 removes)")
     sc.add_argument("--pool-create", help="makes a class a pool of named resources: a shell command that creates one and prints "
                     'a JSON object {"name": ..., ...}; "" removes it')

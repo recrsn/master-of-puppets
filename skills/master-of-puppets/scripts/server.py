@@ -453,6 +453,14 @@ def render_page(host):
     for cls, hold in (leases.get("admission") or {}).items():
         need(("admission", cls), "serious", f"{cls} admission hold",
              title=f"{cls} admission hold · {hold.get('reason', '')}", coord=hold.get("by", ""), when=parse(hold["at"]))
+    for cls in classes:
+        for q in queue.get(cls, []):
+            if moplib.stalled(q):
+                st = q["stall"]
+                need(("stall", cls, q["id"]), "serious", f"Stalled {cls} request",
+                     id=q["id"], title=f"Stalled {cls} request · {q.get('holder', '')}",
+                     status=f"Passed over by the auto grant: {st.get('reason', '')}", coord=q.get("coordinator", ""),
+                     when=parse(st.get("since")) if st.get("since") else None)
     for name, c in coords.items():
         if not coord_live(c) and c.get("status") != "idle":
             hb = f"Last heartbeat {ago(parse(c['heartbeat']), now)}" if c.get("heartbeat") else "No heartbeat"
@@ -521,7 +529,7 @@ def render_page(host):
                      when=last_update(coord, name), stream=m.get("stream", ""))
 
     def group_of(key, n):
-        if key[0] in ("host", "lease", "admission", "coord", "scout"):
+        if key[0] in ("host", "lease", "admission", "stall", "coord", "scout"):
             return "alarm"
         if n["asks"]:
             return "decision"
@@ -534,7 +542,7 @@ def render_page(host):
     def need_order(item):
         """Alarms worst first; inside every group, oldest change first."""
         n = item[1]
-        return (SEV_ORDER[n["sev"]] if item[0][0] in ("host", "lease", "admission", "coord", "scout") else 0,
+        return (SEV_ORDER[n["sev"]] if item[0][0] in ("host", "lease", "admission", "stall", "coord", "scout") else 0,
                 n["when"] is None, n["when"] or now)
 
     groups = []
@@ -723,9 +731,10 @@ def render_page(host):
                 buttons = (qbutton("up", cls, q["id"], "Move up") if pos > 1 and not q.get("hold") else "") + qbutton("unwait", cls, q["id"], "Cancel")
                 prio = f"priority {q['priority']} · " if q.get("priority") else ""
                 start = eta[cls][q["id"]][1]
-                dur = "hold" if q.get("hold") else f"~{local(start)}"
-                out.append(("–" if q.get("hold") else str(pos), q, dur, "t3", requested(est_minutes(cls, q), q),
-                            f"{prio}{eta_text(cls, q['id'])}", "", buttons))
+                stall = q["stall"].get("reason", "") if moplib.stalled(q) else ""
+                dur = "hold" if q.get("hold") else "stalled" if stall else f"~{local(start)}"
+                out.append(("–" if q.get("hold") else str(pos), q, dur, "warn" if stall else "t3", requested(est_minutes(cls, q), q),
+                            f"{prio}" + (f"stalled, passed over: {stall}" if stall else eta_text(cls, q["id"])), "", buttons))
             return out
 
         desk_lanes = ""

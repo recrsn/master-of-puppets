@@ -312,6 +312,36 @@ accepts a size:
   LEASE SIZE reason, then `acquire --accept-size` yourself;
 - an entry without minutes or worktree.
 
+### Stalls
+
+A deviation waits for you only for a time, so one busy coordinator cannot
+hold up the whole queue. The server walks each auto class's ready entries
+from the front. An entry waits for its own coordinator when it is over the
+limit (exit 2), undersized (exit 6), marked for review, without minutes or a
+worktree, or in a class and stream that are both off auto. After the class's
+`stallMinutes` (default 20), or at once when its coordinator is not live, the
+entry is **stalled**:
+
+- It keeps its place. Its coordinator gets one
+  `INBOX auto: AUTO-STALLED CLASS ID: <how>: <reason> ...`.
+- The auto grant, and every `acquire`, pass over it to the first entry behind
+  it that is not stalled. That entry's coordinator gets `HEAD`.
+- Its own coordinator can still `acquire` it, and the stall goes as soon as
+  the reason clears (for example a re-request at the observed peak, or
+  `ready` after a review). It is then the head again, ahead of every entry
+  behind it, so it is not starved.
+- `status`, `leases` and the dashboard show it as STALLED, and the dashboard
+  lists it under Needs you.
+
+Host, budget, slot, settle and admission refusals never stall an entry: they
+pass by themselves, and passing a large entry over for them would starve it.
+A stall never splits a run and never accepts a size. Set the time with
+`coordinator.py config set-class CLASS --stall-minutes N`; 0 turns stalls off.
+
+A coordinator that wants to grant a class by hand turns auto off for it; its
+head entries then stall after `stallMinutes` too, when another coordinator's
+stream has the class on auto.
+
 A member's request ends in one of three outcomes: `GRANTED`, `HELD <reason>`
 (wait for the coordinator) or `DENIED <reason>`.
 

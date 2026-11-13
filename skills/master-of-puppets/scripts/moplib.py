@@ -42,6 +42,7 @@ INBOX = os.path.join(DIR, "inbox.jsonl")
 FILES = ("moplib.py", "coordinator.py", "puppet.py")  # the live helpers that install copies
 OBSOLETE = ("lease.py",)  # helpers that earlier versions installed; install removes them
 SOURCE = os.path.join(DIR, "source.json")  # the skill copy that install last copied from
+STALL_MINUTES = 20  # default stallMinutes: how long the head entry may wait for its own coordinator before the auto grant passes over it
 CLASS_NAME = re.compile(r"^[A-Z][A-Z0-9_-]{0,23}$")
 DEFAULT_REGISTRY = {
     "BUILD": {"description": "builds, typecheck, lint/format, tests, codegen", "defaultGiB": 0, "defaultCpus": 0, "maxMinutes": 0, "settle": {}},
@@ -367,7 +368,31 @@ def registry(machine=None):
     takes the default registry's fields it lacks (a custom class: defaultCpus 0)."""
     machine = machine or load_machine()
     stored = machine.get("classes") or DEFAULT_REGISTRY
-    return {n: json.loads(json.dumps({"defaultCpus": 0, **DEFAULT_REGISTRY.get(n, {}), **c})) for n, c in stored.items()}
+    return {n: json.loads(json.dumps({"defaultCpus": 0, "stallMinutes": STALL_MINUTES, **DEFAULT_REGISTRY.get(n, {}), **c}))
+            for n, c in stored.items()}
+
+
+def stalled(entry):
+    """True when the auto grant passes over this queue entry: it waited too long for its own coordinator."""
+    return bool((entry.get("stall") or {}).get("stalled"))
+
+
+def queue_head(queue):
+    """The entry the next grant goes to: the first ready entry (not on hold) that is not stalled."""
+    return next((q for q in queue if not q.get("hold") and not stalled(q)), None)
+
+
+def blocked_by(queue, entry_id):
+    """The ready entry ahead of entry_id that it must wait for, or None when every ready entry ahead of it is
+    stalled. A stalled entry keeps its place but blocks nobody, and its own coordinator can still take it."""
+    for q in queue:
+        if q.get("hold"):
+            continue
+        if q["id"] == entry_id:
+            return None
+        if not stalled(q):
+            return q
+    return None
 
 
 def class_names(machine=None):
