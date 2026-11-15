@@ -46,18 +46,29 @@ session that should coordinate.
 Send one message to the coordinator:
 
 ```
-JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs <n> (base <b>) ... — <phase> — <planned heavy commands> — parent none
+JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs <n> (base <b>) ... — <phase> — <planned heavy commands> — parent none — <ephemeral|long-running>
 ```
 
-The last field is always `parent none`: you answer to the coordinator, even
+The parent field is always `parent none`: you answer to the coordinator, even
 when another member's session started yours.
+
+The last field is your lifetime:
+
+- `ephemeral` (the usual case): you exist for this one task. When it is done,
+  you send LEAVE (section 7).
+- `long-running`: the user gave you a standing role (for example "answer all
+  questions about X, do not leave"). You take task after task, go idle between
+  them, and LEAVE only when the user tells you to (section 7).
+
+Pick `long-running` only when the user's instructions say so. Otherwise send
+`ephemeral`. The coordinator refuses a JOIN without this field.
 
 When your task is background work (a sweep, or a run that a schedule
 started), start `<task>` with `sweep:` or `scheduled:` in JOIN. The
 coordinator can then put regular work first.
 
 Send it, and every later message (UPDATE, MERGED, USER SYNC, STATUS replies,
-TASK REQUEST, LEASE SIZE, LEASE RELEASED, LEAVE), by the direct route
+TASK REQUEST, LEASE SIZE, LEASE RELEASED, IDLE, LEAVE), by the direct route
 for your coordinator's tool (`protocol.md`, "Routes"). Never use `coordinator.py say`
 and never write shared inbox records, even with `--no-direct`. When your
 session id changes, send JOIN again (`protocol.md`, "Routes").
@@ -119,8 +130,9 @@ replies below; they do not require a matching user-facing update. For reports
 to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#reporting-to-the-user).
 
 - `UPDATE — <name> — <phase> — <newest fact>` on each change, and at least
-  every 30 minutes while you work. The coordinator checks on silent members
-  each round, but your report is the record. It goes on the dashboard: keep
+  every 30 minutes while you work. While you are idle (section 7), send
+  none. The coordinator checks on silent members each round, but your report
+  is the record. It goes on the dashboard: keep
   the phase to 5 words and the fact to one plain sentence of 20 words. Write
   PRs as `#123`. No SHAs, test counts, paths or commands.
 - `MERGED — #<n> — <merge sha>` for each merged PR.
@@ -271,10 +283,24 @@ answer only as section 3 says. Follow "Start" there. Run each start once. Then s
 tracks the task. After a handoff of your own task, send LEAVE when your tree
 is clean and your branch is pushed.
 
-## 7. Leave
+## 7. Leave, or go idle
 
 Your work is done when every PR of your task is MERGED, or the user drops the
-task. Then stop your services, release any lease, send `LEAVE — <name>`.
+task. Then stop your services and release any lease.
+
+**Long-running member** (your JOIN said `long-running`): do not LEAVE. Send
+`IDLE — <name> — <what wakes you>`, for example `IDLE — gw — a new question
+from the user`. The coordinator checks that every PR of yours is MERGED or
+CLOSED, your tree is clean and pushed, and you hold no lease or queue entry.
+
+- `IDLE ACCEPTED`: you are idle. Send no UPDATE, and stop your watchers. The
+  coordinator does not flag you as silent.
+- `IDLE NOT ACCEPTED — <reason>`: you stay active. Do what the reason names.
+- Any direction from the coordinator, or new work from the user, wakes you.
+  Send `UPDATE` with the new task and phase; that makes you active again.
+- LEAVE only when the user tells you to. Then follow the steps below.
+
+**Ephemeral member**: send `LEAVE — <name>`.
 Wait for the reply. `LEAVE ACCEPTED` ends your membership; only then archive.
 `LEAVE NOT ACCEPTED — <reason>` means you stay a member: do what the reason
 names, or ask the user. When no reply comes within 30 minutes, send `STATUS?

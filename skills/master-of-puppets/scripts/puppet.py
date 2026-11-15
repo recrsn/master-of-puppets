@@ -135,7 +135,7 @@ def request(args):
             return 3
         if me is None:
             print(f"{args.name} is not a member of {args.coordinator}. Send it your JOIN line by its direct route "
-                  "(puppet skill, section 2: JOIN — name — tool id — worktree — task — PRs — phase — commands — parent), "
+                  "(puppet skill, section 2: JOIN — name — tool id — worktree — task — PRs — phase — commands — parent — ephemeral|long-running), "
                   "wait for WELCOME, then request again")
             return 3
         prefix = f"{args.coordinator}-q-{args.name}-"

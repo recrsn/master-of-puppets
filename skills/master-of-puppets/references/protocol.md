@@ -40,7 +40,7 @@ observed peak unless you tell me why the run is smaller.
 
 | Message | Coordinator action |
 | --- | --- |
-| `JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs ... — phase — commands — parent <parent\|none>` | `coordinator.py join --text "<the line>" [--local <local_ id>]`: member add and the WELCOME text to send. A task marked `scheduled:` or `sweep:` is background work (`references/leases.md`, "Priority") |
+| `JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs ... — phase — commands — parent <parent\|none> — <ephemeral\|long-running>` | `coordinator.py join --text "<the line>" [--local <local_ id>]`: member add and the WELCOME text to send. A JOIN without the lifetime field is refused: tell the member the format. A task marked `scheduled:` or `sweep:` is background work (`references/leases.md`, "Priority") |
 | `SCOUT JOIN — <name> — <tool> <session id> — <worktree\|none> — <class> — <targets> — <end\|long-running> — tick <n> min — parent <parent\|none>` | `coordinator.py join --text "<the line>" [--local <local_ id>]`: member add --role scout and the scout WELCOME (`references/scouts.md`) |
 | `ALERT — <scout> — P0\|P1\|P2 — <fingerprint> — <line>` | `note` it; act or find the owner; acknowledge with `note --text "ACK <fingerprint> ..."`. P0: to the user at once, quoted (`references/scouts.md`) |
 | `UPDATE — <scout> — <fingerprint> — <change>`, `GAP — <scout> — P1\|P2 — ...`, `DONE — <scout> — ...` | `note`; a P1 GAP that blinds members is a host problem to fix or take to the user; after DONE, accept the scout's LEAVE (`leave --no-release-check`) |
@@ -53,6 +53,7 @@ observed peak unless you tell me why the run is smaller.
 | `CONFIG <what> by user: ...`, or `MEMORY <scope> <id> ...` naming `by user` (a save on the dashboard's Config or Rules page) | approve it automatically: apply it; never ask, revert or relay it (SKILL.md, "Memory") |
 | `VOTE-REQUEST <id> by <peer>: ...` in `watch` (a peer's `vote propose`) | check your own facts, then `vote agree --id <id>` or `vote object --id <id> --text`; never ask the user (`references/leases.md`, "Votes") |
 | `EXTEND <CLASS> <id> <n> min ...` in `watch` (sent by the member's `puppet.py extend`) | your decision: `coordinator.py extend`, or tell it to release (`references/leases.md`, "Extending") |
+| `IDLE — <name> — <what wakes it>` (long-running members only) | Reply in the same turn: `coordinator.py idle --name <name> --wake "<what wakes it>"` (checks the idle rules, sets status idle, sends `IDLE ACCEPTED`), or `idle --name <name> --reject --reason "<what is left>"` (sends `IDLE NOT ACCEPTED`). To wake it, send the direction and `member update --name <name> --status active` (or a new `--task`, `--pr` or `--phase`) |
 | `LEAVE — <name>` | Reply in the same turn: `coordinator.py leave --name <name> --validated "<check>"` (checks the done rules, removes the member, sends `LEAVE ACCEPTED`), or `leave --name <name> --reject --reason "<what is left>"` (sends `LEAVE NOT ACCEPTED`) |
 | `HANDOFF REQUEST — <name> — to <coordinator\|any> — PRs <n> — note <path>` | `PAUSE` its PRs, then offer (`references/handoff.md`) |
 

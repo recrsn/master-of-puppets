@@ -231,6 +231,18 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
   commit, add a decision (`<id>: commit and open the PR?`) so the user sees it
   under Needs you. Never mark a member done, or tell it LEAVE is fine, while it
   has uncommitted changes or an open PR.
+- **Lifetime**: the JOIN's last field. An `ephemeral` member LEAVEs when its
+  task is done. A `long-running` member stays and goes idle between tasks.
+- **IDLE** (long-running members only): reply in the same turn. Run
+  `coordinator.py idle --name <name> --wake "<what wakes it>"`: it checks that
+  each PR is MERGED or CLOSED, the worktree is clean and pushed, and the member
+  holds no lease or queue entry; then it sets the member idle and sends `IDLE
+  ACCEPTED`. When a rule fails it changes nothing; reply with `idle --name
+  <name> --reject --reason "<what is left>"`. An idle member is not silent and
+  does not keep you awake. To give it work, send the direction and run
+  `member update --name <name> --status active` (a new `--task`, `--pr` or
+  `--phase` also wakes it). Never tell a long-running member to LEAVE unless
+  the user said so.
 - **LEAVE**: reply to every LEAVE in the same turn, with an acceptance or a
   reason. Silence leaves the member idle, and it may archive before you
   answer. Run `coordinator.py leave --name <name> --validated "<the production
@@ -359,8 +371,9 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
 
 ## When your work is done
 
-Go idle when no work can move: every member is done, has left, or is paused
-because the user parked its work. Parked work stays yours: you keep its PRs
+Go idle when no work can move: every member is done, has left, is idle (a
+long-running member between tasks), or is paused because the user parked its
+work. Parked work stays yours: you keep its PRs
 and paused members, and the dashboard lists them under Parked. Park and
 unpark with `coordinator.py park --name <member> [--until YYYY-MM-DD]`
 and `coordinator.py unpark`; the user can do both from the dashboard, and you then get

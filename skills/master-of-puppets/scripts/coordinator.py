@@ -191,7 +191,7 @@ Roster and members (coordinators write; members send messages, and request and r
        whose TASK REQUEST it answers. The task answers to C, not to that member
   join --text "JOIN — ..." [--local local_ID] [--repo owner/repo] [--project-root P] [--dry-run]
        parses a member's JOIN line (name, tool and id, worktree, task, PRs, phase, commands,
-       parent), or a SCOUT JOIN line (name, tool and id, worktree|none, target class, targets,
+       parent, ephemeral|long-running), or a SCOUT JOIN line (name, tool and id, worktree|none, target class, targets,
        end condition, tick, parent), runs member add --status active, then prints its WELCOME. --local: the Claude
        desktop id that the dashboard links to (the JOIN carries the inner Claude Code id)
   welcome --name NAME [--project-root P]
@@ -201,6 +201,10 @@ Roster and members (coordinators write; members send messages, and request and r
        [--pr N ...] [--repo owner/repo] [--status] [--phase] [--kind] [--latest] [--session URL]
        [--stream SLUG] [--priority N] [--parent MEMBER]   (--stream "" clears it)
        [--role puppet|scout] [--target-class CLASS] [--targets TEXT] [--tick MIN] [--end TEXT]
+       [--life ephemeral|long-running]
+       --life: from the JOIN. An ephemeral member LEAVEs when its task is done; a long-running one
+       stays and goes idle between tasks (see idle). On an idle member, --status active, --task,
+       --pr or --phase wakes it (status active)
        --role scout: a read-only watcher (references/scouts.md); it needs --target-class. Scout
        names are unique on the machine. member stale reports a scout with no tick for 2 ticks,
        or one that is paused or has an open P0, from its scouts/NAME.json
@@ -272,6 +276,13 @@ Shared records (read-only; puppet.py has them too)
        with --validated naming the production check; then member remove, a ledger record (kind
        leave) and the reply, delivered directly where the helper can and printed for SendMessage.
        Exit 1 when a rule fails (nothing changes): then reply with --reject
+  idle --name NAME --wake TEXT | idle --name NAME --reject --reason TEXT
+       the reply to every IDLE of a long-running member, in the same turn. Accept checks the idle
+       rules: the member is long-running, each of its PRs is MERGED or CLOSED, its worktree has no
+       uncommitted or unpushed commits, and it holds no lease or queue entry. Then status idle:
+       not silent, not moving (C may go idle), the row "Idle" with --wake (what wakes it), a ledger
+       record (kind idle) and IDLE ACCEPTED. Exit 1 when a rule fails (nothing changes): then reply
+       with --reject. Wake it with member update --status active, or a new --task, --pr or --phase
   grant --id ID [--accept-size]
        acquire for a queued request, from its id: class, holder, worktree, minutes, size and
        commands come from the request. Only the request's coordinator grants it
@@ -981,7 +992,7 @@ def roster_cmd(args):
                 cur["focus"] = args.focus
             if args.status == "idle":
                 mlist = roster["members"].get(args.name, [])
-                moving = [m["name"] for m in mlist if m.get("status") not in ("done", "paused")]
+                moving = [m["name"] for m in mlist if m.get("status") not in ("done", "paused", "idle")]
                 if moving:
                     print(json.dumps({"not_idle": {"members": moving}}))
                     return 3
@@ -1028,7 +1039,10 @@ def roster_cmd(args):
         alive = {n: c["focus"] for n, c in coords.items() if live(c)}
         print(json.dumps({"no_live_coordinator": args.coordinator, "live": alive}))
         return 3
-    wakes = args.cmd == "enroll" or (args.cmd == "member" and (args.mcmd == "add" or (args.mcmd == "update" and args.status in ("active", "pending"))))
+    idle_wake = (args.cmd == "member" and args.mcmd == "update" and args.status is None
+                 and (args.task is not None or args.pr is not None or args.phase is not None)
+                 and any(x["name"] == args.name and x.get("status") == "idle" for x in members))  # new work wakes an idle member
+    wakes = args.cmd == "enroll" or idle_wake or (args.cmd == "member" and (args.mcmd == "add" or (args.mcmd == "update" and args.status in ("active", "pending"))))
     if wakes and cur.get("status") == "idle":
         cur["status"] = "active"
         cur.pop("sleptAt", None)
@@ -1063,7 +1077,7 @@ def roster_cmd(args):
         cutoff = now() - dt.timedelta(minutes=args.minutes)
         rows = []
         for x in members:
-            if x.get("status") == "done":
+            if x.get("status") in ("done", "idle"):
                 continue
             if x.get("role") == "scout":
                 if x.get("status") == "pending":
@@ -1138,9 +1152,15 @@ def roster_cmd(args):
         return 3
     for flag, field in (("tool", "tool"), ("session_id", "sessionId"), ("worktree", "worktree"), ("task", "task"), ("status", "status"),
                         ("stream", "stream"), ("repo", "repo"), ("parent", "parent"), ("target_class", "targetClass"),
-                        ("targets", "targets"), ("tick", "tickMin"), ("end", "end")):
+                        ("targets", "targets"), ("tick", "tickMin"), ("end", "end"), ("life", "life")):
         if getattr(args, flag, None) is not None:
             m[field] = getattr(args, flag)
+    if idle_wake:
+        m["status"] = "active"
+    if m.get("status") != "idle" and m.pop("idleSince", None):
+        m.pop("wake", None)
+        log(f"wake {args.coordinator} {args.name}")
+        note(args.coordinator, f"{args.name} is active again")
     if role == "scout":
         m["role"] = "scout"
     else:
@@ -2555,27 +2575,34 @@ def round_cmd(args):
 JOIN_SEP = re.compile(r"\s+[—–]\s+|\s+--\s+")
 
 
+MEMBER_LIVES = ("ephemeral", "long-running")  # the JOIN's last field: LEAVE when done, or stay and go idle
+JOIN_FORMAT = "JOIN — name — tool id — worktree — task — PRs ... — phase — commands — parent P — ephemeral|long-running"
+
+
 def parse_join(text):
     """The fields of a JOIN line (puppet skill, section 2): name, tool, sessionId, worktree, task, prs, base,
-    phase, commands, parent. Fields are split on " — "; a task with a dash in it keeps it, because the
+    phase, commands, parent, life (ephemeral or long-running). Fields are split on " — "; a task with a dash in it keeps it, because the
     fields after the task are counted from the end. Raises ValueError on a line that is not a JOIN."""
     parts = [p.strip() for p in JOIN_SEP.split(text.strip())]
     if parts[0].upper() == "SCOUT JOIN":
         return parse_scout_join(parts)
-    if len(parts) < 9 or parts[0].upper() != "JOIN":
-        raise ValueError("not a JOIN line: JOIN — name — tool id — worktree — task — PRs ... — phase — commands — parent P")
+    if len(parts) < 10 or parts[0].upper() != "JOIN":
+        raise ValueError(f"not a JOIN line: {JOIN_FORMAT}")
     tool, _, sid = parts[2].partition(" ")
     if tool not in MEMBER_TOOLS:
         raise ValueError(f"unknown tool {tool!r}; known: {', '.join(MEMBER_TOOLS)}")
-    prs_field, parent = parts[-4], parts[-1]
+    life = re.sub(r"\s+", "-", parts[-1].lower())
+    if life not in MEMBER_LIVES:
+        raise ValueError(f"the last field must be ephemeral or long-running: {JOIN_FORMAT}")
+    prs_field, parent = parts[-5], parts[-2]
     if not re.match(r"(?i)prs?\b", prs_field) or not parent.lower().startswith("parent"):
-        raise ValueError("the fourth field from the end must be PRs ... and the last parent <name|none>")
+        raise ValueError(f"the fifth field from the end must be PRs ... and the one before the last parent <name|none>: {JOIN_FORMAT}")
     base = re.search(r"\(base ([^)\s]+)\)", prs_field)
     prs = [] if re.match(r"(?i)prs?\s+none\b", prs_field) else [int(n) for n in re.findall(r"#?\b(\d+)\b", re.sub(r"\(base [^)]*\)", "", prs_field))]
     parent = parent.split(None, 1)[1].strip() if len(parent.split()) > 1 else "none"
     return {"name": parts[1], "tool": tool, "sessionId": sid.strip(), "worktree": parts[3].split()[0],
-            "task": " — ".join(parts[4:-4]), "prs": prs, "base": base.group(1) if base else None,
-            "phase": parts[-3], "commands": parts[-2], "parent": None if parent.lower() == "none" else parent}
+            "task": " — ".join(parts[4:-5]), "prs": prs, "base": base.group(1) if base else None,
+            "phase": parts[-4], "commands": parts[-3], "parent": None if parent.lower() == "none" else parent, "life": life}
 
 
 def parse_scout_join(parts):
@@ -2621,7 +2648,8 @@ def join_cmd(args):
         argv += ["--end", j["end"]] if j["end"] else []
     else:
         argv = ["member", "add", "--name", j["name"], "--tool", j["tool"], "--session-id", j["sessionId"],
-                "--worktree", j["worktree"], "--task", j["task"], "--phase", j["phase"][:60], "--status", "active"]
+                "--worktree", j["worktree"], "--task", j["task"], "--phase", j["phase"][:60], "--status", "active",
+                "--life", j["life"]]
         if j["prs"]:
             argv += ["--pr", *map(str, j["prs"])]
     if j["parent"]:
@@ -2666,6 +2694,9 @@ def welcome_text(me, name, project_root=None):
     else:
         lines = [f"WELCOME {name} — {me} coordinates {c.get('focus') or 'its stack'}. "
                  f"You are a member for {m.get('task') or 'your task'} (PRs {prs}).", "Follow the puppet skill."]
+        if m.get("life") == "long-running":
+            lines.append("You are long-running: between tasks send IDLE — <name> — <what wakes you> (puppet skill, section 7), "
+                         "and LEAVE only when the user tells you to.")
     if not scout and os.path.exists(os.path.join(DIR, "pr-rules.md")):
         lines.append(f"Shared PR rules: {os.path.join(DIR, 'pr-rules.md')}")
     rules = []
@@ -3053,6 +3084,92 @@ def auto_entry(entry, machine, roster, cls):
     name = entry["holder"].partition(" ")[0]
     m = next((x for x in roster["members"].get(entry["coordinator"], []) if x["name"] == name), None)
     return bool(m and (roster["streams"].get(m.get("stream")) or {}).get("autoAcquire"))
+
+
+def idle_problems(coord, m):
+    """Why member m of coord may not go idle: not long-running, a PR not MERGED or CLOSED, uncommitted or
+    unpushed work in its worktree, or a lease or queue entry of its own. [] when it may."""
+    if m.get("role") == "scout":
+        return ["a scout does not go idle; it keeps ticking or sends DONE"]
+    if m.get("life") != "long-running":
+        return ["the member is ephemeral (its JOIN did not say long-running): it sends LEAVE when its task is done"]
+    problems = []
+    prs = m.get("prs") or []
+    if prs and not m.get("repo"):
+        problems.append("the member has PRs but no repo; member update --repo owner/repo")
+    refs = [(m["repo"], n) for n in prs] if m.get("repo") else []
+    got = pr_digests(refs) if refs else {}
+    for ref in refs:
+        d = got[ref]
+        if "error" in d:
+            problems.append(f"#{ref[1]}: {d['error']}")
+        elif d["state"] not in ("MERGED", "CLOSED"):
+            problems.append(f"#{ref[1]} is {d['state']}: finish it, or hand it off, first")
+    wt = m.get("worktree")
+    if wt and os.path.isdir(wt):
+        if run(["git", "-C", wt, "status", "--porcelain"]).strip():
+            problems.append(f"uncommitted changes in {wt}")
+        ahead = run(["git", "-C", wt, "rev-list", "--count", "@{upstream}..HEAD"]).strip()
+        if ahead.isdigit() and int(ahead):
+            problems.append(f"{ahead} unpushed commit(s) in {wt}")
+    state = load()
+    mine = [f"{c} {e['id']}" for c in class_names() for e in state[c] + state["queue"][c]
+            if e.get("coordinator") == coord and e.get("holder", "").partition(" ")[0] == m["name"]]
+    if mine:
+        problems.append(f"lease or queue entries: {', '.join(mine)}; release them or ask {coord} to drop them")
+    return problems
+
+
+def idle_cmd(args):
+    """The reply to a long-running member's IDLE, always. --reject (with --reason) keeps the member active and
+    tells it why. Accept checks idle_problems first, then sets status idle (idleSince, wake): an idle member is
+    not silent (member stale, the dashboard), not moving (C may go idle) and sends no UPDATE. Then the row
+    "Idle", a ledger record (kind idle) and IDLE ACCEPTED. A new direction wakes it (member update: --status
+    active, or --task, --pr or --phase). Exit 1 when a rule fails (nothing changes)."""
+    me, roster = args.coordinator, load_roster()
+    m = next((x for x in roster["members"].get(me, []) if x["name"] == args.name), None)
+    if not m:
+        print(f"{args.name} is not a member of {me}")
+        return 3
+    if args.reject:
+        if not args.reason:
+            print("idle --reject needs --reason: what is left before the member may go idle")
+            return 2
+        reply = f"IDLE NOT ACCEPTED — {args.name} — {args.reason}. Stay active and finish it."
+        record(me, "idle", f"IDLE of {args.name} not accepted: {args.reason}", name=args.name, accepted=False)
+    else:
+        if not (args.wake or "").strip():
+            print("idle needs --wake: what wakes the member, from its IDLE line")
+            return 2
+        problems = idle_problems(me, m)
+        if problems:
+            print("IDLE not accepted yet; nothing changed:")
+            print("\n".join(f"  {x}" for x in problems))
+            print(f"Reply now anyway: idle --name {args.name} --reject --reason \"<what is left>\"")
+            return 1
+        lock()
+        try:
+            roster = load_roster()
+            m = next((x for x in roster["members"].get(me, []) if x["name"] == args.name), None)
+            if not m:
+                print(f"{args.name} is not a member of {me}")
+                return 3
+            m["status"], m["idleSince"], m["wake"] = "idle", now().isoformat(), args.wake.strip()
+            m["updatedAt"] = now().isoformat()
+            save_roster(roster)
+        finally:
+            unlock()
+        upsert_task(me, args.name, {"phase": "Idle", "kind": "ok", "latest": f"Wakes on: {args.wake.strip()}"[:200]})
+        log(f"idle {me} {args.name}")
+        note(me, f"{args.name} is idle; wakes on: {args.wake.strip()}")
+        reply = (f"IDLE ACCEPTED — {args.name}. You are idle: no UPDATE until you get work. Any direction from {me} "
+                 f"wakes you; then send UPDATE as usual.")
+        record(me, "idle", f"IDLE of {args.name} accepted; wakes on: {args.wake.strip()}", name=args.name, accepted=True)
+    print(reply)
+    if m.get("sessionId") and m.get("tool") in ("claude", "codex"):
+        print(deliver(args.name, m["tool"], m["sessionId"], reply))
+    print(f"send it yourself if the line above does not say delivered: SendMessage to {m.get('session') or m.get('sessionId') or 'the member'}")
+    return 0
 
 
 def leave_cmd(args):
@@ -3808,6 +3925,12 @@ def main(argv=None):
             rx.add_argument("--about", help="what the words decide")
         rx.add_argument("action", nargs="?", choices=("list",), help="list the records")
         rx.add_argument("-n", type=int, help="list: the last N")
+    iv = sub.add_parser("idle", help="reply to a long-running member's IDLE: accept (checks the idle rules, then status idle) or --reject")
+    iv.set_defaults(_self=("coordinator",))
+    iv.add_argument("--name", required=True)
+    iv.add_argument("--wake", help="accept: what wakes the member, from its IDLE line")
+    iv.add_argument("--reject", action="store_true", help="keep the member active; --reason says what is left")
+    iv.add_argument("--reason")
     lv = sub.add_parser("leave", help="reply to a member's LEAVE: accept (checks the done rules, then member remove) or --reject")
     lv.set_defaults(_self=("coordinator",))
     lv.add_argument("--name", required=True)
@@ -4026,6 +4149,7 @@ def main(argv=None):
         mx.add_argument("--targets", help="scout: the targets, for example monitor ids, a release or PR numbers")
         mx.add_argument("--tick", type=float, help="scout: minutes between its checks; stale after 2 ticks with no tick")
         mx.add_argument("--end", help="scout: its end condition; omit for a long-running scout")
+        mx.add_argument("--life", choices=MEMBER_LIVES, help="the JOIN's last field: ephemeral (LEAVE when done) or long-running (idle between tasks)")
     mt = msub.add_parser("transfer")
     mt.set_defaults(_self=("coordinator",))
     mt.add_argument("--name", required=True)
@@ -4128,6 +4252,8 @@ def main(argv=None):
         return grant_cmd(args)
     if args.cmd == "leave":
         return leave_cmd(args)
+    if args.cmd == "idle":
+        return idle_cmd(args)
     if args.cmd == "resource":
         if args.rcmd != "list" and not args.name:
             p.error("resource add|mark|remove needs --name")

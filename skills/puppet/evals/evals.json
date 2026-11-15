@@ -24,7 +24,7 @@
       "files": [],
       "assertions": [
         "The coordinator and name come from the kickoff line; the session does not ask the user which coordinator to join",
-        "A JOIN message to claude-stack-a names flaky-split-3f2a, the worktree /work/app-flaky and the task, and ends with parent none",
+        "A JOIN message to claude-stack-a names flaky-split-3f2a, the worktree /work/app-flaky and the task, and ends with parent none — ephemeral",
         "commands.sh runs puppet.py sizes --worktree /work/app-flaky (for BUILD) before puppet.py request, and plan.md sizes --minutes from it and from the test command",
         "commands.sh runs puppet.py request BUILD --coordinator claude-stack-a --name flaky-split-3f2a (with an id that starts with claude-stack-a-q-flaky-split-3f2a-, or none so that request prints one), the exact test command, an estimate and the worktree, after all edits are done",
         "messages.md has no LEASE REQUEST message, and commands.sh passes no --priority or --front to puppet.py request",

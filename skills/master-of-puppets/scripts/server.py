@@ -507,7 +507,7 @@ def render_page(host):
             if m.get("role") == "scout":
                 continue
             last = last_update(coord, m.get("name"))
-            if m.get("status") in ("done", "paused") or not last or now - last <= dt.timedelta(minutes=STALE_MINUTES):
+            if m.get("status") in ("done", "paused", "idle") or not last or now - last <= dt.timedelta(minutes=STALE_MINUTES):
                 continue
             if m.get("status") == "pending":
                 need(("member", coord, m["name"]), "warning", f"Not joined · enrolled {ago(last, now)}", id=m["name"],
