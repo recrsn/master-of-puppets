@@ -79,6 +79,12 @@ it). Re-alert only on escalation, for example P2 to P1 or a doubled rate.
 - **P0:** possible missed malware, a leaked secret, production access misuse, or permission laundering.
 - **P1:** a released regression, a blocked pipeline or a stalled feed, a credential expiry that blinds members, or a stalled lease queue.
 - **P2:** drift, noise or flakes.
+- **A stall is work that came in and did not move, never quiet output.** Many
+  systems work on demand: no input, no output, and that is healthy. Alert on
+  an explicit signal only: an input arrived and no matching start followed
+  within the system's own limit, a cursor or checkpoint stopped while input
+  waits, the consumers of a queue are 0, or a backlog grows. "No results in N
+  minutes" is not a stall unless you also see input that waits.
 
 Routing:
 - Every P0 goes to both the Security Coordinator and the owning coordinator. For `compliance`, the owning coordinator is the member's coordinator.

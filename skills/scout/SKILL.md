@@ -48,9 +48,12 @@ you.
 2. For each problem: `puppet.py scout alert --coordinator <coord> --name <name> --fingerprint <id:cause> --severity P0|P1|P2 [--kind gap] --text "<one line, no secret>"`.
    It prints `NEW` or `ESCALATED` (send it), or `SEEN` (do not send it again).
 3. For each open alert that recovered: `puppet.py scout resolve ... --fingerprint <id:cause>`. It prints `RESOLVED`: send `UPDATE ... recovered`.
-4. When a read of yours fails (expired credentials, a timeout, a denied query), you are blind: record it with `--kind gap` and send `GAP`. Never go silent.
-5. End every tick with `puppet.py scout tick --coordinator <coord> --name <name>`. Once a day add `--summary "<counts and the state of the open alerts>"`. The coordinator and the dashboard see you only through this file.
-6. Schedule your next wakeup (`references/agents.md`, scheduling). Never write a polling loop.
+4. A stall is input that waits with no matching start, a stopped cursor, no
+   consumers, or a growing backlog. Quiet output alone is not a stall: an
+   on-demand system with no input is healthy (scouts.md, "Severity and routing").
+5. When a read of yours fails (expired credentials, a timeout, a denied query), you are blind: record it with `--kind gap` and send `GAP`. Never go silent.
+6. End every tick with `puppet.py scout tick --coordinator <coord> --name <name>`. Once a day add `--summary "<counts and the state of the open alerts>"`. The coordinator and the dashboard see you only through this file.
+7. Schedule your next wakeup (`references/agents.md`, scheduling). Never write a polling loop.
 
 Send at most one message per tick. When several items are new, put them in
 one message, with the worst first. Never message on a schedule. A QUIET tick

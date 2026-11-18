@@ -213,7 +213,9 @@ busy, then runs `create` (with the preference in its environment) when the pool
 has room, and only then takes a non-matching one. `--resource` grants exactly
 that resource, starting it when stopped. When it is unknown, held, busy or
 failed, `acquire` exits 3 with `resource_unavailable`; it never takes another
-resource and never runs `create`. `coordinator.py wait` takes the same two
+resource and never runs `create`. A resource that left the pool never comes
+back, so for that one the request drops the pin (log `pin-dropped`) and takes
+any eligible resource; the coordinator and the member get `PIN-DROPPED`. `coordinator.py wait` takes the same two
 options.
 
 Idle cleanup runs inside the dashboard server, once a minute, for every pool
@@ -353,6 +355,14 @@ A stall never splits a run and never accepts a size. Set the time with
 A coordinator that wants to grant a class by hand turns auto off for it; its
 head entries then stall after `stallMinutes` too, when another coordinator's
 stream has the class on auto.
+
+### Expiry
+
+At a lease's expiry, the server tells its holder directly, once per expiry
+(log `expiry-told`): `LEASE EXPIRED <CLASS> <id> ...` with the exact `extend`
+and `release` commands. An extension sets a new expiry, and the holder is
+told again at that one. `round` shows each expired lease with its age and
+when the holder was told.
 
 ### Reclaim
 
@@ -542,8 +552,11 @@ The budgets predict; the host check observes. Both must pass, and
 4. On release: the member's `puppet.py release <CLASS> --id <id> --result pass|fail|partial --note "..." [--port <n> ...]`
    writes one event line, the shared record of the release:
    `release <CLASS> <id> ran <n> min peak <g> GiB <c> cores result=<r> drained=<n> coordinator=<c> note="..."`.
-   `drained` counts what the run left in the lease's worktree (agent session
-   processes and bare shells do not count). Read it with
+   `drained` counts what the run left in the lease's worktree. Agent session
+   processes do not count: the agent programs, every process they start with
+   no shell between them (MCP servers and helpers, also through a launcher
+   such as `uv` or `npx`), bare shells and the helpers. A run starts through
+   a shell, so it counts, and so does a loop that a member left running. Read it with
    `coordinator.py events --id <id>`. When `drained` is not 0, run
    `coordinator.py drain-check --worktree <path> [--port <n> ...] [--process <pattern> ...]`
    for the list; grant the next E2E only when it exits 0, else ask the holder

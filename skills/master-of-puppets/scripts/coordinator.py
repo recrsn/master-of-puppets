@@ -276,6 +276,12 @@ Shared records (read-only; puppet.py has them too)
        with --validated naming the production check; then member remove, a ledger record (kind
        leave) and the reply, delivered directly where the helper can and printed for SendMessage.
        Exit 1 when a rule fails (nothing changes): then reply with --reject
+  sessions [--send]
+       compares C's members with the app's live Claude sessions (claude agents --json): STALE (a
+       member's session is not running; a live untracked session in its worktree is the likely new id),
+       IDLE-WITH-WORK (the app shows an active member idle while it has uncommitted or unpushed work or
+       an open PR: one resume message, sent with --send), NOT-CHECKED (Codex members: no listing) and
+       UNTRACKED (live sessions in no roster). round runs it without --send
   idle --name NAME --wake TEXT | idle --name NAME --reject --reason TEXT
        the reply to every IDLE of a long-running member, in the same turn. Accept checks the idle
        rules: the member is long-running, each of its PRs is MERGED or CLOSED, its worktree has no
@@ -406,7 +412,7 @@ from moplib import (
     set_state, stop_resource, begin_op, end_op, op_current, op_live, BUSY_STATES, POOL_STUCK_MINUTES, delete_claimed,
     mark_failed, health_run, host_hold, host_held, failed_restart, failed_restart_end, FAIL_DELETE, CLEAN_TIMEOUT, FIND_TIMEOUT, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
     SCOUT_CLASSES, scout_path, scout_state, scout_stale, stalled, queue_head, blocked_by, STALL_MINUTES,
-    RECLAIM_MINUTES, reclaim_minutes, clean_run, record_health, clear_short,
+    RECLAIM_MINUTES, reclaim_minutes, clean_run, record_health, clear_short, tell_member,
 )
 
 
@@ -1897,6 +1903,16 @@ def pool_acquire_cmd(args):
                        or not auto_entry(entry, machine, load_roster(), cls)):
             print(json.dumps({"auto_stale": args.id}))
             return 7
+        gone = queued and queued.get("wantResource") and not find_resource(state, cls, queued["wantResource"])
+        if gone:  # the pinned resource left the pool: it never comes back, so take any eligible one
+            pinned = queued.pop("wantResource")
+            save(state, machine)
+            log(f"pin-dropped {cls} {args.id} resource={pinned} (left the pool)")
+            dropped = (f"PIN-DROPPED {cls} {args.id}: {pinned} left the pool, so the request now takes any eligible "
+                       f"resource. Do not rely on files that were on {pinned}.")
+            say("pool", dropped, args.coordinator)
+            threading.Thread(target=tell_member, args=("pool", args.coordinator,
+                             (queued.get("holder") or "").partition(" ")[0], dropped)).start()  # not under the lock; not a daemon, so a CLI run waits for it
         res, why = pool_pick(state, cls, spec, queued)
         if why in ("settling", "exhausted", "none_free", "unavailable", "blocked", "short"):
             listing = [{"name": r["name"], "state": r["state"]} for r in state["resources"][cls]]
@@ -2498,7 +2514,8 @@ def round_leases(me):
             if h["coordinator"] != me:
                 continue
             left = int((dt.datetime.fromisoformat(h["expiresAt"]) - t).total_seconds() // 60)
-            lines.append(f"{c} held {h['id']} " + (f"EXPIRED {-left} min ago" if left < 0 else f"{left} min left")
+            told = f", holder told at {h['toldAt'][11:16]}Z" if left < 0 and h.get("toldFor") == h["expiresAt"] else ""
+            lines.append(f"{c} held {h['id']} " + (f"EXPIRED {-left} min ago{told}" if left < 0 else f"{left} min left")
                          + (f" resource={h['resource']}" if h.get("resource") else "") + f" — {h['holder'][:60]}")
         ready = [q for q in state["queue"][c] if not q.get("hold")]
         first = queue_head(state["queue"][c])
@@ -2594,6 +2611,106 @@ def round_stale(minutes, max_hours=None):
     return code
 
 
+SESSION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+def app_sessions():
+    """The live Claude sessions on this machine, {sessionId: record with name, cwd, status (busy or idle) and
+    pid}, from `claude agents --json`. None when it fails. Codex has no such listing."""
+    try:
+        out = subprocess.run(["claude", "agents", "--json"], capture_output=True, text=True, timeout=30,
+                             stdin=subprocess.DEVNULL).stdout
+        data = json.loads(out)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    rows = data if isinstance(data, list) else (data.get("agents") or []) if isinstance(data, dict) else []
+    return {a["sessionId"]: a for a in rows if isinstance(a, dict) and a.get("sessionId")}
+
+
+def unfinished(m):
+    """What member m has left: uncommitted or unpushed work in its worktree, and its open PRs (from the
+    server's PR poller). [] when nothing is known to be left."""
+    work, wt = [], m.get("worktree")
+    if wt and os.path.isdir(wt):
+        dirty = [x for x in run(["git", "-C", wt, "status", "--porcelain"]).splitlines() if x.strip()]
+        if dirty:
+            work.append(f"{len(dirty)} uncommitted paths")
+        ahead = run(["git", "-C", wt, "rev-list", "--count", "@{upstream}..HEAD"]).strip()
+        if ahead.isdigit() and int(ahead):
+            work.append(f"{ahead} unpushed commits")
+    prs = (read_json(PRS_STATE) or {}).get("prs") or {}
+    for n in m.get("prs") or []:
+        rec = prs.get(f"{m.get('repo')}#{n}") or {}
+        if rec.get("state") == "OPEN":
+            work.append(f"PR #{n} open")
+    return work
+
+
+def session_report(me, send=False):
+    """Lines that compare the roster with the app's live sessions (app_sessions): STALE (a member's session is
+    not running, with any untracked live session in its worktree as the likely new id), IDLE-WITH-WORK (the
+    app shows an active member idle while unfinished() finds work: one resume message, delivered with send),
+    and UNTRACKED (live sessions in no roster). Returns (lines, untracked) or (None, None) when the app's
+    sessions cannot be read."""
+    live = app_sessions()
+    if live is None:
+        return None, None
+    roster = load_roster()
+    known = {c.get("sessionId") for c in roster["coordinators"].values()}
+    known |= {x.get("sessionId") for mlist in roster["members"].values() for x in mlist}
+    lines = []
+    for m in roster["members"].get(me, []):
+        if m.get("status") in ("done", "idle"):
+            continue
+        if m.get("tool") != "claude":
+            if m.get("tool") == "codex":
+                lines.append(f"NOT-CHECKED {m['name']}: Codex has no session listing")
+            continue
+        sid = str(m.get("sessionId") or "")
+        if not SESSION_ID.match(sid):  # an app id (local_...) or none: no listing has it, and no direct message reaches it
+            lines.append(f"NOT-CHECKED {m['name']}: its recorded id {sid[:12] or '(none)'} is not a session id; "
+                         f"ask it to send JOIN again (its JOIN carries the session id)")
+            continue
+        a = live.get(sid)
+        if a is None:
+            new = [x for x, rec in live.items() if x not in known and m.get("worktree")
+                   and os.path.realpath(rec.get("cwd") or "") == os.path.realpath(m["worktree"])]
+            lines.append(f"STALE {m['name']}: session {sid[:8]} is not running"
+                         + (f"; the one untracked session in its worktree is {new[0]} "
+                            f"(member update --name {m['name']} --session-id {new[0]})" if len(new) == 1 else ""))
+            continue
+        if a.get("status") == "idle" and m.get("status") in ("active", "pending"):
+            work = unfinished(m)
+            if work:
+                msg = (f"STATUS? — {m['name']}: your session is idle with unfinished work ({'; '.join(work)}). "
+                       f"Continue {m.get('task') or 'your task'}, or tell me what blocks you.")
+                lines.append(f"IDLE-WITH-WORK {m['name']}: {'; '.join(work)}")
+                lines.append("  " + (tell_member(me, me, m["name"], msg) if send else f"resume (sessions --send, or send it): {msg}"))
+    untracked = [x for sid, x in live.items() if sid not in known]
+    return lines, untracked
+
+
+def sessions_cmd(args):
+    lines, untracked = session_report(args.coordinator, args.send)
+    if lines is None:
+        print("claude agents --json failed: cannot read the app's sessions")
+        return 1
+    lines += [f"UNTRACKED {x['sessionId']} {x.get('status', '?')} {str(x.get('name') or '')[:40]} — {x.get('cwd')}" for x in untracked]
+    print("\n".join(lines) if lines else "roster matches the app's sessions")
+    return 0
+
+
+def round_sessions(me):
+    lines, untracked = session_report(me)
+    if lines is None:
+        print("claude agents --json failed")
+        return 1
+    if untracked:
+        lines.append(f"{len(untracked)} live sessions in no roster (coordinator.py sessions lists them)")
+    print("\n".join(lines) if lines else "ok")
+    return 0
+
+
 def round_cmd(args):
     """One call per heartbeat round: heartbeat, C's leases, silent members, new inbox lines since the last
     round, open votes, the digest of C's PRs and the latest release run. Each section has its own timeout;
@@ -2606,11 +2723,13 @@ def round_cmd(args):
         + (["--status", args.status] if args.status else [])
     sections = [("heartbeat", lambda: main(hb)), ("leases", lambda: round_leases(me)),
                 (f"members silent {args.stale_minutes} min", lambda: round_stale(args.stale_minutes, args.open_hours if args.open else None)),
+                ("sessions", lambda: round_sessions(me)),
                 (f"inbox since {since[:19] + 'Z' if since else 'ever'}", lambda: round_inbox(me, since)),
                 ("votes", lambda: main(["vote", "list"])), ("prs", lambda: round_prs(me, args.open, args.open_hours))]
     if args.release_repo:
         sections.append(("release", lambda: release_state(args.release_repo, args.release_workflow)))
     worst = 0
+    version_warning()
     for label, fn in sections:
         out, code = timed(fn, args.timeout)
         print(f"== {label}{'' if not code else f' (exit {code})'}")
@@ -3430,10 +3549,33 @@ def reclaim_expired(c, checked):
         msg = (f"AUTO-RECLAIMED {c} {h['id']}: expired {int(over)} min ago with no process in its worktree, so the server "
                f"released it as fail and the queue moves on. Do not run under it; request again with a new id. "
                + " ".join(buf.getvalue().split())[:200])
-        member = h["holder"].partition(" ")[0]
-        for to in dict.fromkeys((h["coordinator"], member)):
-            say("auto", msg, to)
+        say("auto", msg, h["coordinator"])
+        tell_member("auto", h["coordinator"], h["holder"].partition(" ")[0], msg)
     return done
+
+
+def expiry_notice(c):
+    """Tell the holder of each lease of class c that has just expired, once per expiry (toldAt, toldFor):
+    extend or release. The coordinator sees the same lease in watch (EXPIRED) and in round."""
+    t, due = now(), []
+    lock()
+    try:
+        state, machine = load(), load_machine()
+        for h in state[c]:
+            if dt.datetime.fromisoformat(h["expiresAt"]) <= t and h.get("toldFor") != h["expiresAt"]:
+                h["toldFor"], h["toldAt"] = h["expiresAt"], t.isoformat()
+                due.append(dict(h))
+        if due:
+            save(state, machine)
+    finally:
+        unlock()
+    for h in due:
+        member = h["holder"].partition(" ")[0]
+        msg = (f"LEASE EXPIRED {c} {h['id']} at {h['expiresAt'][11:16]}Z. Start no new command. Ask for more time "
+               f"(puppet.py extend {c} --coordinator {h['coordinator']} --name {member} --id {h['id']} --minutes <n> "
+               f"--reason \"<what still runs>\"), or release it now (puppet.py release {c} --id {h['id']} ...).")
+        log(f"expiry-told {c} {h['coordinator']} {h['id']} holder={member}")
+        tell_member("auto", h["coordinator"], member, msg)
 
 
 def auto_class(c, ctx):
@@ -3444,6 +3586,7 @@ def auto_class(c, ctx):
         try:
             if c not in class_names(load_machine()):
                 return
+            expiry_notice(c)
             reclaim_expired(c, checked)
             seen = auto_step(c, seen)
         except Exception as exc:  # keep granting; the server log shows the failure
@@ -3958,6 +4101,9 @@ def main(argv=None):
             rx.add_argument("--about", help="what the words decide")
         rx.add_argument("action", nargs="?", choices=("list",), help="list the records")
         rx.add_argument("-n", type=int, help="list: the last N")
+    se = sub.add_parser("sessions", help="compare your members with the app's live sessions: stale ids, idle members with unfinished work, untracked sessions")
+    se.set_defaults(_self=("coordinator",))
+    se.add_argument("--send", action="store_true", help="send each IDLE-WITH-WORK member its resume message")
     iv = sub.add_parser("idle", help="reply to a long-running member's IDLE: accept (checks the idle rules, then status idle) or --reject")
     iv.set_defaults(_self=("coordinator",))
     iv.add_argument("--name", required=True)
@@ -4248,7 +4394,7 @@ def main(argv=None):
         left = identity_flags(extra, args, p)
         if left:
             p.error(f"unrecognized arguments: {' '.join(left)}")
-    if args.cmd in ("roster", "whoami", "register", "heartbeat", "status"):
+    if args.cmd == "register":  # and once per round (round_cmd): not on every command
         version_warning()
     for attr in ("cls", "pcls"):
         name = getattr(args, attr, None)
@@ -4284,6 +4430,8 @@ def main(argv=None):
         return grant_cmd(args)
     if args.cmd == "leave":
         return leave_cmd(args)
+    if args.cmd == "sessions":
+        return sessions_cmd(args)
     if args.cmd == "idle":
         return idle_cmd(args)
     if args.cmd == "resource":

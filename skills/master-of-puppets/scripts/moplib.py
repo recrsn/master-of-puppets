@@ -1308,10 +1308,10 @@ def worktree_pids(tree):
 def session_pids():
     """Processes that belong to agent sessions, not to a run: this process (in the server: the
     calling client) and its ancestors, its own process group (the pipeline of the command that runs it; each
-    agent shell command gets its own group), agent programs (claude, codex), their
-    direct children that are not shells (MCP servers and helpers), and every bare shell.
-    A heuristic: a run that an earlier command started is a shell child or deeper, in
-    another process group, so it still counts."""
+    agent shell command gets its own group), agent programs (claude, codex), every process that an agent
+    program started with no shell between them (MCP servers and helpers, also through a launcher such as
+    uv or npx), and every bare shell. A run always starts through a shell (an agent's shell command), so a
+    shell's child or deeper still counts, and so does a loop that a member left running."""
     procs, group = {}, cenv("MOP_CLIENT_PGID") or str(os.getpgid(0))
     for line in run(["ps", "-axo", "pid=,ppid=,pgid=,comm="]).splitlines():
         f = line.split(None, 3)
@@ -1321,9 +1321,20 @@ def session_pids():
     while pid in procs and pid not in skip:
         skip.add(pid)
         pid = procs[pid][0]
+    def agent_started(pid):  # an agent program is an ancestor, with no shell on the way
+        seen = set()
+        while pid in procs and pid not in seen:
+            seen.add(pid)
+            ppid = procs[pid][0]
+            parent = procs.get(ppid, ("", "", ""))[2]
+            if parent in AGENTS:
+                return True
+            if parent in SHELLS or not parent:
+                return False
+            pid = ppid
+        return False
     for pid, (ppid, pgid, comm) in procs.items():
-        parent = procs.get(ppid, ("", "", ""))[2]
-        if pgid == group or comm in AGENTS or comm in SHELLS or (parent in AGENTS and comm not in SHELLS):
+        if pgid == group or comm in AGENTS or comm in SHELLS or (comm not in SHELLS and agent_started(pid)):
             skip.add(pid)
     return skip
 
@@ -1488,6 +1499,18 @@ def deliver(name, tool, session_id, text):
     if not session_id:
         return f"{name}: no session id (inbox only)"
     return f"{name}: {send_codex(session_id, text) if tool == 'codex' else send_claude(session_id, text)}"
+
+
+def tell_member(sender, coord, name, message):
+    """Tell member name of coordinator coord: an inbox record to it, then direct delivery to its session
+    (members do not read the shared inbox). Returns the delivery line."""
+    say(sender, message, name)
+    m = next((x for x in load_roster()["members"].get(coord, []) if x["name"] == name), None)
+    if not m:
+        return f"{name}: not a member of {coord} (inbox only)"
+    if m.get("tool") not in ("claude", "codex"):
+        return f"{name}: tool {m.get('tool')} takes no messages (inbox only)"
+    return deliver(name, m.get("tool"), m.get("sessionId"), message)
 
 
 def notify(to, message):

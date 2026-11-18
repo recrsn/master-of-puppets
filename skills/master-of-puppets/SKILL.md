@@ -360,6 +360,13 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    lines and record observations with `note`, then send `STATUS?`. Do not
    refresh member state from watcher observations: `member update` resets its
    freshness timestamp. Record each actual reply with `member update`.
+   The round's `sessions` section compares your members with the app's live
+   sessions: `STALE` (a session that is not running), `IDLE-WITH-WORK` (an
+   active member whose session is idle while it has uncommitted or unpushed
+   work or an open PR) and `NOT-CHECKED` (a Codex member, or a recorded id
+   that is not a session id: ask for a new JOIN). For `IDLE-WITH-WORK`, send
+   the one resume message it prints, or run `coordinator.py sessions --send`.
+   Never conclude that a member is done from its last message or from CI.
    A cloud task member cannot reply: follow `references/coderabbit-cloud.md`, "Track".
    Scouts show in the same list when they have not ticked for 2 ticks, are
    paused, or have an open P0. Do not send a scout `STATUS?`: read its state
