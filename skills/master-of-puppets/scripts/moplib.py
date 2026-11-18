@@ -383,8 +383,10 @@ def reclaim_minutes(cls, machine=None):
 
 
 def stalled(entry):
-    """True when the auto grant passes over this queue entry: it waited too long for its own coordinator."""
-    return bool((entry.get("stall") or {}).get("stalled"))
+    """True when the auto grant passes over this queue entry: it waited too long for its own coordinator, or
+    (createdShort) a pool resource made for it was under its minFreeGiB, so it waits for one that fits
+    (clear_short) and blocks nobody meanwhile."""
+    return bool((entry.get("stall") or {}).get("stalled")) or entry.get("createdShort") is not None
 
 
 def queue_head(queue):
@@ -645,7 +647,7 @@ def task_priority(roster, coord, holder):
 
 def queue_entry(state, roster, cls, id, coordinator=None, holder=None, minutes=None, gib=None, cpus=None,
                 commands=None, worktree=None, priority=None, front=False, by=None, changed_by=None,
-                prefer=None, resource=None):
+                prefer=None, resource=None, min_free=None):
     """Add queue entry id to class cls, or change the given fields of an existing one, and
     re-order the queue. The caller holds the lock and saves. changed_by names the
     coordinator in a priority change's event. Returns (exit, text):
@@ -680,6 +682,9 @@ def queue_entry(state, roster, cls, id, coordinator=None, holder=None, minutes=N
             existing["prefer"] = prefer
         if resource:
             existing["wantResource"] = resource
+        if min_free:
+            existing["minFreeGiB"] = min_free
+            existing.pop("createdShort", None)  # a new floor: a new resource may meet it
         if priority is not None and priority != existing.get("priority", 0):
             existing["priority"] = priority
             log(f"priority {cls} {id} {priority}" + (f" by={changed_by}" if changed_by else ""))
@@ -711,6 +716,8 @@ def queue_entry(state, roster, cls, id, coordinator=None, holder=None, minutes=N
             entry["prefer"] = prefer
         if resource:
             entry["wantResource"] = resource
+        if min_free:
+            entry["minFreeGiB"] = min_free
         if front:
             entry["priority"] = max([priority] + [q.get("priority", 0) for q in queue])
             queue.insert(0, entry)
@@ -910,6 +917,25 @@ def op_current(state, cls, name, token):
     removed while the command ran, and the caller must not write to it."""
     res = find_resource(state, cls, name)
     return res if res and (res.get("op") or {}).get("token") == token else None
+
+
+def record_health(res, facts):
+    """Keep a healthy check's free disk and memory on the resource (freeGiB, memAvailGiB, checkedAt), so a pick
+    can skip a resource under a request's minFreeGiB without a check, and resource list shows them."""
+    for key in ("freeGiB", "memAvailGiB"):
+        if isinstance((facts or {}).get(key), (int, float)):
+            res[key] = facts[key]
+    res["checkedAt"] = now().isoformat()
+
+
+def clear_short(state, cls, free):
+    """A resource of cls passed its health check with free GiB free on disk: each queued entry that waits
+    for a resource of at least that size (createdShort) is ready again and goes first."""
+    if not isinstance(free, (int, float)):
+        return
+    for q in state["queue"].get(cls, []):
+        if q.get("createdShort") is not None and q.get("minFreeGiB", 0) <= free:
+            q.pop("createdShort")
 
 
 def end_op(res, state):
@@ -1155,6 +1181,9 @@ def health_released(cls, name, token, info, lease_id, coordinator, worktree=None
         elif outcome in ("ok", "none", "host"):
             if outcome != "host":
                 res.pop("restartedAt", None)
+            if outcome == "ok":
+                record_health(res, detail)
+                clear_short(state, cls, res.get("freeGiB"))
             end_op(res, "free")  # also stamps the idle clock for the server's pool upkeep
             held = outcome == "host" and host_hold(state, cls, detail)
         elif outcome == "stopped":

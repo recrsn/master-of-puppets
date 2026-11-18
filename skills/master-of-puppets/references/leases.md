@@ -78,8 +78,14 @@ creates new ones without a coordinator step:
   `{"failed": ...}` line, the resource is marked failed (reason `health`) and
   not granted; `acquire` exits 8 and the next try (the server's auto acquire
   retries at once) picks another one or creates one. The facts go on the
-  holder's `RESOURCE` line. `scripts/examples/vm-pool-health` is the
-  command for a Vmctl pool; it changes nothing on the VM. It first reads
+  holder's `RESOURCE` line, and a healthy check's `freeGiB` and `memAvailGiB`
+  stay on the resource (`checkedAt`), at a grant and at a release.
+  `scripts/examples/vm-pool-health` is the
+  command for a Vmctl pool; it changes nothing on the VM. When its ssh fails,
+  it reads `vmctl env status` again: `Shutdown` prints `{"stopped": ...}`
+  (kept, and the next grant starts it), not unreachable. Any other ssh failure
+  ends with the line `ssh to <alias> exit <n>: <error>`, without the IAP
+  tunnel's NumPy advice, so the stored reason is the real one. It first reads
   `vmctl env status`. Only a known unhealthy state fails the check (reason
   `health`, so the upkeep deletes it): a deletion request, an env Vmctl no
   longer has, or progressStatus `FAILED` on a stopped env. `FAILED` with
@@ -113,8 +119,12 @@ creates new ones without a coordinator step:
   takes it). With `--pool-clean CMD`, the clean command runs first, to free
   disk a run left behind: best effort, at most 600 s, and a failure goes on
   to the health check. It logs `resource cleaned ... before=B GiB after=A
-  GiB`, so the log shows whether the floor fits. `scripts/examples/vm-pool-clean`
-  saves a dirty checkout under `refs/recycle/`, resets it to origin/main,
+  GiB`, so the log shows whether the floor fits. The clean command also runs
+  on each new resource, after its create and before the grant's health check
+  (log `resource cleaned ... (after create)`). `scripts/examples/vm-pool-clean`
+  first runs `docker builder prune -af`: a new Vmctl VM carries about 42 GB of
+  unused build cache, which leaves only 10-15 GiB free on `/`; the prune
+  touches no running container. Then it saves a dirty checkout under `refs/recycle/`, resets it to origin/main,
   runs `git clean -ffdx`, `pnpm store prune`, and removes `~/.cache/turbo`
   and `node_modules/.cache`. Healthy: free again, so a test failure keeps a
   good VM. Under a floor: marked failed (reason `health`) at once, not at the next grant.
@@ -192,6 +202,19 @@ committed to `refs/recycle/<time>-<lease>` on the VM, so it stays recoverable
 there until the VM is destroyed; the reset goes ahead regardless (the user's
 rule, 5 Nov: "vmctl is temporary, we recycle to save on startup time. always
 git reset them and destory them if not possible").
+
+**Disk floor per request.** `puppet.py request ... --min-free-gib N` (and
+`coordinator.py wait --min-free-gib N`) grants only a resource with at least N
+GiB free on `/`. The pick skips a resource whose last healthy check had less;
+one never checked is checked at the grant. When the grant's check finds less
+than N, the clean command runs and the check runs again; still under N, the
+resource is not granted (exit 8, log `resource short`), stays free with its
+size recorded, and the next pick takes another one or creates one. A resource
+created for the request that is still under N after its clean stays free in
+the pool for other requests; the request creates no more resources
+(`resources_short`), its coordinator gets `POOL-SHORT`, and it is passed over
+like a stalled entry: it keeps its place and blocks nobody. When any resource
+passes a health check with N GiB free, it is ready again and goes first.
 
 Picking: a request may carry `puppet.py request ... --prefer KEY=VALUE`
 (repeatable; for example `--prefer size=large`) or `--resource <name>`.

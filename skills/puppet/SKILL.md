@@ -158,6 +158,10 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
      unit of work finish in one lease, for example the full build and its
      tests. Do not cut a unit of work to fit a shorter time. A suggested time
      in WELCOME is what past runs took; it is a reference, not a target.
+   - `--min-free-gib <n>` (pool classes, such as VM): the free disk on the
+     resource that your run needs. The pool grants only a resource with that
+     much free, and cleans one first when it is under. Give it instead of
+     releasing a grant for disk alone.
    - `--gib` and `--cpus` (when you know them): the peak memory and cores of
      the run. Leave one out and your coordinator charges its own figure.
    It prints your position. Your coordinator sees the request and decides.

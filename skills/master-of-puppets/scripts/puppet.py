@@ -19,7 +19,7 @@ Usage: python3 -I puppet.py <command> ...
        the project's recorded run minutes, peak GiB and peak cores per class, the figures
        your coordinator charges and checks against, and the size margin: size from these
   request CLASS --coordinator C --name NAME [--id ID] --minutes N --commands TEXT --worktree P
-          [--prefer KEY=VALUE ...] [--resource NAME]   (pool classes)
+          [--prefer KEY=VALUE ...] [--resource NAME] [--min-free-gib N]   (pool classes)
           [--gib N] [--cpus N] [--what TEXT]
        queue your own lease request; prints its position. You size the run: --minutes always,
        --gib and --cpus (peak memory and cores) when you know them; your coordinator charges
@@ -156,14 +156,14 @@ def request(args):
         if args.resource and not RESOURCE_NAME.match(args.resource):
             print(f"{args.resource} is not a valid resource name")
             return 2
-        if (prefer or args.resource) and not pool_spec(args.cls):
-            print(f"{args.cls} has no pool; --prefer and --resource apply to pool classes")
+        if (prefer or args.resource or args.min_free_gib) and not pool_spec(args.cls):
+            print(f"{args.cls} has no pool; --prefer, --resource and --min-free-gib apply to pool classes")
             return 2
         queued = any(q["id"] == args.id for q in state["queue"][args.cls])
         holder = f"{args.name} {args.what or args.commands}" if args.what or not queued else None
         code, text = queue_entry(state, roster, args.cls, args.id, args.coordinator, holder, args.minutes,
                                  args.gib, args.cpus, args.commands, args.worktree, by=args.name,
-                                 prefer=prefer, resource=args.resource)
+                                 prefer=prefer, resource=args.resource, min_free=args.min_free_gib)
         if code == 0:
             save(state, machine)
         print(text)
@@ -214,7 +214,7 @@ def recycle_granted(cls, lease_id, requeue):
             queue_entry(state, load_roster(), cls, lease_id, coord, held["holder"],
                         max(1, round((expires - granted).total_seconds() / 60)),
                         commands=held.get("commands"), worktree=held.get("worktree"), front=True,
-                        prefer=held.get("prefer"))  # not wantResource: that resource is gone
+                        prefer=held.get("prefer"), min_free=held.get("minFreeGiB"))  # not wantResource: that resource is gone
         save(state, machine)
         log(f"release {cls} {lease_id} ran 0 min result=fail drained=0 coordinator={coord} "
             f"note={json.dumps(f'recycle of {name} {outcome} at grant: {detail}')}")
@@ -485,6 +485,8 @@ def main(argv=None):
     rq.add_argument("--prefer", action="append", metavar="KEY=VALUE",
                     help="pool class: take a resource whose info matches first (for example size=large); the create command gets MOP_PREFER_<KEY>")
     rq.add_argument("--resource", help="pool class: exactly this resource; exit 3 at acquire if it is held, busy or failed; never another one, never a new one")
+    rq.add_argument("--min-free-gib", type=float, help="pool class: grant only a resource with at least this much free disk; "
+                    "one under it is cleaned (the pool's clean command) and checked again first")
     rq.add_argument("--what", help="short label for the dashboard; default: the commands")
     ag = sub.add_parser("await-grant")
     ag.add_argument("cls", metavar="CLASS", nargs="?", help="default: the class that queues or holds --id")

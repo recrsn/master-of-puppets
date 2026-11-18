@@ -80,7 +80,7 @@ Leases
   leases on|off                   machine-wide; only on the user's word
   status [--brief] | capacity
   wait CLASS --holder NAME --id ID [--minutes N] [--gib N] [--cpus N] [--commands TEXT] [--worktree P]
-       [--prefer KEY=VALUE ...] [--resource NAME]   (pool classes)
+       [--prefer KEY=VALUE ...] [--resource NAME] [--min-free-gib N]   (pool classes)
        [--priority N] [--front]
        for an existing ID every flag is optional and only the given fields change.
        exit 2 when --minutes is over the class limit or --gib/--cpus over the whole budget: split the run.
@@ -407,7 +407,7 @@ from moplib import (
     set_state, stop_resource, begin_op, end_op, op_current, op_live, BUSY_STATES, POOL_STUCK_MINUTES, delete_claimed,
     mark_failed, health_run, host_hold, host_held, failed_restart, failed_restart_end, FAIL_DELETE, CLEAN_TIMEOUT, FIND_TIMEOUT, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
     SCOUT_CLASSES, scout_path, scout_state, scout_stale, stalled, queue_head, blocked_by, STALL_MINUTES,
-    RECLAIM_MINUTES, reclaim_minutes,
+    RECLAIM_MINUTES, reclaim_minutes, clean_run, record_health, clear_short,
 )
 
 
@@ -1820,7 +1820,10 @@ def pool_pick(state, cls, spec, entry=None):
     An entry that names a resource (wantResource) gets exactly that one, or unavailable: no other
     resource, no create. An entry with prefer takes a matching resource first (free, then
     stopped), then waits for a busy one, then creates one (it gets the preference), and only
-    then takes a non-matching one."""
+    then takes a non-matching one.
+    An entry with minFreeGiB takes only a resource whose last healthy check (record_health) had that much free
+    disk, or one never checked; the grant checks it again. It creates one when none qualifies, except after a
+    resource created for it was still under the floor (createdShort): then it waits (short)."""
     entry = entry or {}
     pool = state["resources"][cls]
     held = {h.get("resource") for h in state[cls]}
@@ -1828,10 +1831,15 @@ def pool_pick(state, cls, spec, entry=None):
     def free(r):
         return not r.get("op") and r["name"] not in held
 
+    need = entry.get("minFreeGiB")
+
+    def fits(r):
+        return not need or not isinstance(r.get("freeGiB"), (int, float)) or r["freeGiB"] >= need
+
     def first(states, match=None):
         for want in states:
             for r in pool:
-                if r["state"] == want and free(r) and (match is None or match(r)):
+                if r["state"] == want and free(r) and fits(r) and (match is None or match(r)):
                     return r
         return None
 
@@ -1857,6 +1865,8 @@ def pool_pick(state, cls, spec, entry=None):
         return None, "settling"
     if spec.get("max") and len(pool) >= spec["max"]:
         return None, "exhausted"
+    if need and entry.get("createdShort") and spec.get("create"):
+        return None, "short"
     if blocked and spec.get("create"):
         return None, "blocked"
     return None, "create" if spec.get("create") else "none_free"
@@ -1889,7 +1899,7 @@ def pool_acquire_cmd(args):
             print(json.dumps({"auto_stale": args.id}))
             return 7
         res, why = pool_pick(state, cls, spec, queued)
-        if why in ("settling", "exhausted", "none_free", "unavailable", "blocked"):
+        if why in ("settling", "exhausted", "none_free", "unavailable", "blocked", "short"):
             listing = [{"name": r["name"], "state": r["state"]} for r in state["resources"][cls]]
             if why == "unavailable":
                 print(json.dumps({"resource_unavailable": entry["wantResource"], "resources": listing}))
@@ -1939,14 +1949,24 @@ def pool_acquire_cmd(args):
             made = got  # the create failed after it made this resource: keep it, failed, so the upkeep deletes it
         elif ok:
             ok, err = False, "create printed no JSON object with a valid name"
+    if action == "create" and ok:  # a fresh resource can carry the image's leftovers (Vmctl: docker build cache)
+        post_clean(cls, name, new_info, args.id, args.worktree, "after create")
     # Every grant checks free disk and memory first, an assign too: a free resource can be full from its last holder.
     health, facts = health_run(cls, name, new_info, args.id, args.worktree) if ok else ("none", None)
+    need, short = entry.get("minFreeGiB"), None
+    if health == "ok" and need and isinstance(facts.get("freeGiB"), (int, float)) and facts["freeGiB"] < need:
+        if action != "create" and post_clean(cls, name, new_info, args.id, args.worktree, "under the request's floor"):
+            health, facts = health_run(cls, name, new_info, args.id, args.worktree)
+        if health == "ok" and isinstance(facts.get("freeGiB"), (int, float)) and facts["freeGiB"] < need:
+            short = facts
     unhealthy = health in ("failed", "unreachable")
     kept = health in ("stopped", "host")  # never granted, never failed: stopped is started at a later grant
     restart = health == "restart"  # the env failed, the resource's checks pass: stop it once (failed_restart)
     stopped, stop_err = failed_restart(cls, name, new_info, token) if restart else (None, None)
     if unhealthy or kept or restart:
         ok, err = False, f"health check {health}: {facts}"
+    elif short:
+        ok, err = False, f"only {short['freeGiB']:g} GiB free on {name}, under the request's {need:g} GiB"
     held, event, low = False, None, None
     lock()
     try:
@@ -1989,6 +2009,18 @@ def pool_acquire_cmd(args):
                     res.pop("prior", None)
                     mark_failed(res, "unreachable" if health == "unreachable" else "health", facts)
                     log(f"resource failed {cls} {name} for={args.id} reason={health} detail={json.dumps(facts)}")
+                elif short:  # healthy for the pool, too small for this request: free, and the next pick skips it
+                    res.update(name=name, info=new_info)
+                    res.pop("prior", None)
+                    record_health(res, short)
+                    end_op(res, "free")
+                    if action == "create" and entry is not None:
+                        entry["createdShort"] = short["freeGiB"]  # do not create more for this floor
+                    log(f"resource short {cls} {name} for={args.id} free={short['freeGiB']:g} GiB need={need:g} GiB")
+                    if action == "create":
+                        say("pool", f"POOL-SHORT {cls} {args.id}: a new resource has only {short['freeGiB']:g} GiB free after "
+                                    f"its clean, under the request's {need:g} GiB; it waits for a resource that fits "
+                                    f"(lower --min-free-gib, or free disk on one)", args.coordinator)
                 elif kept:  # a stopped resource waits for a start; on a host fault the resource was not checked
                     res.update(name=name, info=new_info)
                     res.pop("prior", None)
@@ -2020,6 +2052,9 @@ def pool_acquire_cmd(args):
         res.pop("prior", None)
         res.pop("restartedAt", None)  # healthy again after a restart
         res.update(name=name, info=new_info)
+        if health == "ok":
+            record_health(res, facts)
+            clear_short(state, cls, res.get("freeGiB"))
         end_op(res, "free")
         key = (entry or queued or {}).get("project") or project_key(args.worktree)[0]
         t = now()
@@ -2029,6 +2064,7 @@ def pool_acquire_cmd(args):
             "project": key, "gib": 0, "cpus": 0, "commands": args.commands or (queued or {}).get("commands"),
             "resource": name, "resourceInfo": {**(new_info or {}), **(facts if health == "ok" else {})},
             **({"prefer": prefer} if prefer else {}),  # a re-queue after a failed recycle keeps it
+            **({"minFreeGiB": need} if need else {}),
             "grantedAt": t.isoformat(), "expiresAt": (t + dt.timedelta(minutes=args.minutes)).isoformat(),
         })
         save(state, machine)
@@ -2060,12 +2096,28 @@ def claim_free_midcreate(args, cls, spec, queued):
         unlock()
 
 
+def post_clean(cls, name, info, lease_id, worktree, why):
+    """Run the class's clean command on resource name (it holds an op token: busy, so nothing else takes it),
+    without the lock, and log the result. Returns True when the clean ran and succeeded."""
+    cleaned = clean_run(cls, name, info, lease_id, worktree)
+    if cleaned is None:
+        return False
+    if cleaned[0]:
+        log(f"resource cleaned {cls} {name} before={cleaned[1].get('freeBeforeGiB')} GiB after={cleaned[1].get('freeAfterGiB')} GiB "
+            f"({why}) for={lease_id}")
+        return True
+    log(f"resource clean-failed {cls} {name} ({why}) error={json.dumps(cleaned[1])} for={lease_id}")
+    return False
+
+
 def finish_create(maker, box, cls, placeholder, token, lease_id):
     """Wait for a create that a grant left for a free resource, then put the new resource in the pool, free
     (or drop the placeholder when the create failed). Writes only the state and the events log."""
     maker.join()
     ok, out, err = box.get("r") or (False, "", "no result")
     name, info = pool_info(out)
+    if ok and name:
+        post_clean(cls, name, info, lease_id, None, "after create")
     lock()
     try:
         state, machine = load(), load_machine()
@@ -3866,6 +3918,7 @@ def main(argv=None):
     w.add_argument("--front", action="store_true", help="re-queue at the head (only for a run aborted by the coordinator)")
     w.add_argument("--prefer", action="append", metavar="KEY=VALUE", help="pool class: take a resource whose info matches first; the create command gets MOP_PREFER_<KEY>")
     w.add_argument("--resource", help="pool class: grant exactly this resource, or exit 3; never another one, never a new one")
+    w.add_argument("--min-free-gib", type=float, help="pool class: grant only a resource with at least this much free disk (cleaned and checked again when under)")
     for name in ("unwait", "up", "move"):
         u = sub.add_parser(name)
         u.add_argument("cls", metavar="CLASS")
@@ -4292,7 +4345,8 @@ def main(argv=None):
                 return 2
             code, text = queue_entry(state, roster, args.cls, args.id, args.coordinator, args.holder, args.minutes,
                                      args.gib, args.cpus, args.commands, args.worktree, args.priority, args.front,
-                                     changed_by=args.coordinator, prefer=prefer, resource=args.resource)
+                                     changed_by=args.coordinator, prefer=prefer, resource=args.resource,
+                                     min_free=args.min_free_gib)
             if code == 0:
                 save(state, machine)
             print(text)
