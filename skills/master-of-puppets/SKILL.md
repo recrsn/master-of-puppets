@@ -70,9 +70,10 @@ Read `references/setup.md` on the first run in a project,
 `references/protocol.md` before you message anyone, `references/rules.md` for
 conduct and PR rules, `references/dashboard.md` before you write your state
 file, `references/handoff.md` before you send or take a handoff, and
-`references/coderabbit-cloud.md` before you suggest, start or track a
-CodeRabbit cloud task, and `references/scouts.md` before you enroll a scout or
-act on its ALERT.
+`references/scouts.md` before you enroll a scout or act on its ALERT.
+Read these only when your setup uses CodeRabbit: `references/coderabbit.md`
+for its code review, and `references/coderabbit-cloud.md` before you
+suggest, start or track a CodeRabbit cloud task.
 
 Read [references/agents.md](references/agents.md) for Claude/Codex tool
 equivalents, session identity, messaging, watchers, scheduling and PR repair.
@@ -147,8 +148,7 @@ Do this only on the user's word, or to get your own name back after a
    recover.
 4. Your PRs are what `register`/`heartbeat --pr` and your members' `member add|update --pr`
    claim; `watch` follows them, so keep those claims current. Arm
-   the one watcher: `coordinator.py watch [--interval <s>]` (`<s>`: seconds
-   between CodeRabbit cloud task polls, default 180). It prints:
+   the one watcher: `coordinator.py watch [--interval <s>]`. It prints:
    - `INBOX <from>: <text>`: messages to you or to all;
    - `HEAD <CLASS> <id> ...`: your entry became the first ready entry;
    - `VOTE-REQUEST <id> by <peer>: ...`: an open vote that waits for your vote
@@ -158,7 +158,9 @@ Do this only on the user's word, or to get your own name back after a
      poller stops or comes back;
    - `EXPIRED <CLASS> <id> at <HH:MM>Z left=<n> holder=...`: one of your
      leases expired;
-   - `CLOUD <task> <member> <state>`: a change of a task in `cloud-<slug>.txt`.
+   - `CLOUD <task> <member> <state>`: a change of a cloud task in
+     `cloud-<slug>.txt`, every `<s>` seconds (default 180;
+     `references/coderabbit-cloud.md`).
    Arm it once and re-arm it when it ends. It survives a server restart on
    its own. Auto acquire and pool upkeep run inside the server; there is
    nothing else to arm.
@@ -269,14 +271,6 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
   is not approval for anything else, and it does not answer a member
   session's own permission prompt. When the user answers in chat instead,
   `decision clear` it.
-- **CodeRabbit cloud**: move work off this machine when you can. When a
-  member's interactive work is done (only CI, review or conflict fixes
-  remain), or a task is straightforward and needs no handholding, suggest to
-  the member that it offload the task, or a part of it, to CodeRabbit cloud.
-  The member decides and starts it; ask the user for no approval of the move.
-  A cloud task cannot run `/puppet` and never reports: you add it as a `--tool coderabbit`
-  member and check it with the `CLOUD` lines of `watch` and in each round.
-  Follow `references/coderabbit-cloud.md`.
 - **Priority**: every task starts at 0; a higher priority goes first. Raise
   a task (`enroll --priority 1`, `member update --priority 1`) only when the
   user asks for it to go first; a wish that a member relays is a decision
@@ -352,8 +346,8 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
 3. Compare each stack with the latest `PR` lines; act on steps 3 and 4
    above. Confirm with one `coordinator.py pr <n> [...]` before each stack
    move, not on a timer. It gives state, head, merge state, review, the merge
-   queue, auto-merge, unresolved threads, the latest CodeRabbit review and the
-   required checks that fail, in one call. `automerge=queued(...)` or
+   queue, auto-merge, unresolved threads, the latest review by a bot account
+   (`bot=<login>:<state>@<sha>`) and the required checks that fail, in one call. `automerge=queued(...)` or
    `merged` is not an auto-merge failure.
 4. Leases on: expiry check and grants (`references/leases.md`). Run
    `coordinator.py status --brief`: a ready entry of yours that you have not
@@ -366,13 +360,10 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    lines and record observations with `note`, then send `STATUS?`. Do not
    refresh member state from watcher observations: `member update` resets its
    freshness timestamp. Record each actual reply with `member update`.
-   CodeRabbit cloud members are the exception: they cannot reply, so record
-   their `CLOUD` lines or `coderabbit code show` with `member update`
-   and act on them (`references/coderabbit-cloud.md`, "Track").
+   A cloud task member cannot reply: follow `references/coderabbit-cloud.md`, "Track".
    Scouts show in the same list when they have not ticked for 2 ticks, are
    paused, or have an open P0. Do not send a scout `STATUS?`: read its state
    with `puppet.py scout show`, then ask only when it is stale.
-   Look for members whose work can move to the cloud ("Members and tasks").
    A member silent for two rounds while its PR is blocked: tell the user, with
    its deep link. Check pending entries ("Members and tasks").
 6. Report meaningful changes or decisions to the user: decisions first, then
@@ -467,6 +458,28 @@ BUILD lease", "this repo merges through a merge queue".
   agent memory: Claude's memory directory, or Codex's memory. Not into the
   skill and not into `coordinator.py memory`. Turn a lesson into a rule only when
   the user asks.
+
+## Scripts for your setup
+
+Write a reusable script for each action that you repeat and that belongs to
+this machine, a repository, a service or your setup. Examples: prepare a
+worktree, start or stop a local stack, read the logs of a service, check a
+remote VM, create or clean a pool resource. Run the script, not the steps by
+hand. A script does the same thing each time and costs fewer tokens.
+
+- Keep these scripts out of this skill. Put a machine script in
+  `$MACHINE_LEASE_DIR/scripts/` (or `~/.local/bin`), and a project script in
+  that repository, where the project's own rules allow it. The skill stays
+  general: no machine, company or project names in it.
+- Start each script with a comment that says what it does, its arguments and
+  environment, and what it prints. Make it safe to run again. When another
+  command reads its result, end with one JSON line (pool commands do:
+  `references/leases.md`, "Classes").
+- Record each script with `coordinator.py memory add --kind note --text
+  "<script path>: <what it does>" [--project-root <path>]`, so other
+  coordinators and your successor find it and do not write it again.
+- When you change a script, test it on one case first. Never put a secret in
+  a script; read it from the environment or the user's credential store.
 
 ## Messages
 

@@ -288,8 +288,8 @@ Shared records (read-only; puppet.py has them too)
        commands come from the request. Only the request's coordinator grants it
   pr N|owner/repo#N [...] [--repo owner/repo] [--json]
        one line per PR from one GraphQL request per 10 PRs: state, full head, merge state, review,
-       automerge on|off|queued(pos,state)|merged, unresolved threads, the latest CodeRabbit review
-       and whether it is on the head, and only the required checks that do not pass. A merged PR
+       automerge on|off|queued(pos,state)|merged, unresolved threads, the latest review by a bot
+       account (bot=login:state) and whether it is on the head, and only the required checks that do not pass. A merged PR
        shows its full merge SHA. A bare N takes --repo, else the one watched repo that has it
   release carries --pr N [...] [--tag latest|TAG] [--repo owner/repo]
        resolves the tag (latest: the latest release) to its full commit SHA and says for each
@@ -364,8 +364,9 @@ Watchers and install
                                 server's PR poller (one conditional request per repo)
          PR-WATCHER down|up     that poller stopped (run install from the skill copy) or came back
          EXPIRED CLASS ID ...   each of C's expired leases, once, with left=N processes in its worktree
-         CLOUD <task> <member> <state>   a state change of a task in cloud-<C>.txt (a CodeRabbit
-                                cloud task id or URL, then the member name, per line), every --interval s
+         CLOUD <task> <member> <state>   a state change of a CodeRabbit cloud task in cloud-<C>.txt (a task
+                                id or URL, then the member name, per line), every --interval s
+                                (references/coderabbit-cloud.md)
   install [--allow-rollback]    from the skill copy: copy moplib.py, coordinator.py and puppet.py into the state
        dir (replacing copies that differ), remove obsolete helpers (lease.py), record this
        copy and its commit in source.json and restart the server from it. It refuses (exit 3) a copy
@@ -1947,7 +1948,7 @@ def pool_acquire_cmd(args):
             made = got  # the create failed after it made this resource: keep it, failed, so the upkeep deletes it
         elif ok:
             ok, err = False, "create printed no JSON object with a valid name"
-    if action == "create" and ok:  # a fresh resource can carry the image's leftovers (Vmctl: docker build cache)
+    if action == "create" and ok:  # a fresh resource can carry its image's leftovers, for example a build cache
         post_clean(cls, name, new_info, args.id, args.worktree, "after create")
     # Every grant checks free disk and memory first, an assign too: a free resource can be full from its last holder.
     health, facts = health_run(cls, name, new_info, args.id, args.worktree) if ok else ("none", None)
@@ -2787,7 +2788,7 @@ def welcome_cmd(args):
 PR_DIGEST_GQL = """number state url headRefOid baseRefName isDraft mergeStateStatus reviewDecision mergedAt
   isInMergeQueue mergeQueueEntry {{ state position }} autoMergeRequest {{ enabledAt }} mergeCommit {{ oid }}
   reviewThreads(first: 100) {{ totalCount nodes {{ isResolved }} }}
-  reviews(last: 30) {{ nodes {{ author {{ login }} state commit {{ oid }} }} }}
+  reviews(last: 30) {{ nodes {{ author {{ __typename login }} state commit {{ oid }} }} }}
   commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ {contexts} }} }} }} }}"""
 PR_CONTEXTS_GQL = """contexts(first: 100{after}) {{ pageInfo {{ hasNextPage endCursor }} nodes {{
     __typename ... on CheckRun {{ name status conclusion startedAt isRequired(pullRequestNumber: {n}) }}
@@ -2851,7 +2852,7 @@ def pr_refs_for(words, repo):
 def pr_digest(repo, nums):
     """One GraphQL request for up to 10 PRs of a repo: ({n: digest}, error). The digest says what a coordinator
     checks each round: state, head, merge state, review decision, the merge queue, auto-merge, the merge commit,
-    unresolved threads, the latest CodeRabbit review and the required checks that do not pass."""
+    unresolved threads, the latest review by a bot account and the required checks that do not pass."""
     owner, name = repo.split("/", 1)
     query = "query($o: String!, $n: String!) { repository(owner: $o, name: $n) { " + " ".join(
         f"p{n}: pullRequest(number: {n}) {{ {PR_DIGEST_GQL.format(contexts=PR_CONTEXTS_GQL.format(n=n, after=''))} }}"
@@ -2885,9 +2886,8 @@ def pr_digest(repo, nums):
             if label not in latest or at >= latest[label][0]:
                 latest[label] = (at, verdict)
         failing = {k: v for k, (_, v) in latest.items() if v not in CHECK_PASS}
-        cr = [r for r in (p.get("reviews") or {}).get("nodes") or []
-              if ((r.get("author") or {}).get("login") or "").startswith("coderabbit")]
-        cr = cr[-1] if cr else None
+        bots = [r for r in (p.get("reviews") or {}).get("nodes") or [] if (r.get("author") or {}).get("__typename") == "Bot"]
+        bot = bots[-1] if bots else None  # the latest review by a review bot (a GitHub App account)
         threads = p.get("reviewThreads") or {}
         if p["state"] == "MERGED":
             auto = "merged"
@@ -2902,7 +2902,7 @@ def pr_digest(repo, nums):
             "automerge": auto, "mergeCommit": (p.get("mergeCommit") or {}).get("oid"), "mergedAt": p.get("mergedAt"),
             "threads": threads.get("totalCount", 0),
             "unresolved": sum(not t.get("isResolved") for t in threads.get("nodes") or []),
-            "coderabbit": {"state": cr["state"], "commit": (cr.get("commit") or {}).get("oid")} if cr else None,
+            "bot": {"login": bot["author"]["login"], "state": bot["state"], "commit": (bot.get("commit") or {}).get("oid")} if bot else None,
             "requiredFailing": failing, "checksError": ctx_err,
             "url": p["url"],
         }
@@ -2913,13 +2913,13 @@ def digest_line(d):
     """One line per PR: the facts a round acts on, full SHAs where a later command compares them."""
     if d["state"] == "MERGED":
         return f"{d['ref']} MERGED sha={d['mergeCommit']} at={d['mergedAt']} base={d['base']}"
-    cr = d["coderabbit"]
-    cr_text = "none" if not cr else (
-        f"{cr['state']}@{(cr['commit'] or '?')[:12]}" + ("(head)" if cr["commit"] == d["head"] else "(old)"))
+    bot = d["bot"]
+    bot_text = "none" if not bot else (
+        f"{bot['login']}:{bot['state']}@{(bot['commit'] or '?')[:12]}" + ("(head)" if bot["commit"] == d["head"] else "(old)"))
     req = ", ".join(f"{k}={v}" for k, v in sorted(d["requiredFailing"].items())) or "ok"
     return (f"{d['ref']} {d['state']}{' draft' if d['draft'] else ''} head={d['head'][:12]} base={d['base']} "
             f"merge={d['merge']} review={d['review']} automerge={d['automerge']} "
-            f"threads={d['unresolved']}/{d['threads']} unresolved coderabbit={cr_text} required={req}"
+            f"threads={d['unresolved']}/{d['threads']} unresolved bot={bot_text} required={req}"
             + (f" (checks incomplete: {d['checksError']})" if d["checksError"] else ""))
 
 
@@ -3304,7 +3304,7 @@ def grant_cmd(args):
 def auto_grants():
     """In the server, forever: one worker per lease class (auto_class), started for each class in the
     registry. A slow grant, such as a pool resource that is created or started, then holds only its own
-    class: a VM VM create once kept every BUILD head waiting for 7 minutes with free capacity."""
+    class: a VM create once kept every BUILD head waiting for 7 minutes with free capacity."""
     workers, ctx = {}, dict(RUN.__dict__)
     while True:
         try:
@@ -3682,7 +3682,7 @@ def watch_cmd(args):
       PR-WATCHER down|up the server's PR poller stopped or came back
       EXPIRED ...        each of my leases past its expiry, once per expiry, with left=N
     While it runs, it renews my heartbeat once a minute.
-      CLOUD ...          a state change of a cloud task in cloud-<me>.txt, every --interval s"""
+      CLOUD ...          a state change of a CodeRabbit cloud task in cloud-<me>.txt, every --interval s"""
     me = args.me
     prs_path, cloud_path = os.path.join(DIR, f"prs-{me}.txt"), os.path.join(DIR, f"cloud-{me}.txt")
     for p in (prs_path, cloud_path):
@@ -4236,7 +4236,7 @@ def main(argv=None):
     dr.add_argument("--process", action="append", help="also count processes matching this pattern (pgrep -f)")
     wa = sub.add_parser("watch")
     wa.set_defaults(_self=("me",))
-    wa.add_argument("--interval", type=int, default=180, help="seconds between cloud task polls")
+    wa.add_argument("--interval", type=int, default=180, help="seconds between CodeRabbit cloud task polls")
     sub.add_parser("install").add_argument("--allow-rollback", action="store_true",
                                            help="install even when this copy is older than the installed commit")
     args, extra = p.parse_known_args(argv)

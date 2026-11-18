@@ -169,7 +169,7 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
      unit of work finish in one lease, for example the full build and its
      tests. Do not cut a unit of work to fit a shorter time. A suggested time
      in WELCOME is what past runs took; it is a reference, not a target.
-   - `--min-free-gib <n>` (pool classes, such as VM): the free disk on the
+   - `--min-free-gib <n>` (pool classes, such as a VM pool): the free disk on the
      resource that your run needs. The pool grants only a resource with that
      much free, and cleans one first when it is under. Give it instead of
      releasing a grant for disk alone.
@@ -208,7 +208,7 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
    returns the exit code of its last command, so a TIMEOUT can look like exit
    0. Never decide from a text match on the output. If you must read the
    text, only a final line that starts with `GRANTED ` is a grant.
-   - Pool class with a recycle command (for example VM): before `GRANTED`
+   - Pool class with a recycle command (for example a VM pool): before `GRANTED`
      it resets the resource (`RECYCLING`, then `RECYCLED`). `RECYCLE-FAILED`
      (destroyed) or `RECYCLE-UNREACHABLE` (kept, marked failed) means you do
      not get that resource: your entry is queued again at the front
@@ -278,25 +278,11 @@ too: it reports to the coordinator, never to you.
 Subagents (Claude `Agent`, Codex `collaboration.spawn_agent`) are not
 sessions: they stay inside your task and need no request.
 
-**CodeRabbit cloud tasks** are not sessions: a cloud task cannot run `/puppet`,
-so it has no enrollment line, and your coordinator tracks it from your
-`CLOUD TASK` message. You may start one on your own judgment for your own
-task, or for a self-contained part of it (a cloud task can take code changes
-end to end). You need no user
-request and no dashboard decision. Do not start one for parked work, or for
-work that the user said to keep local. Keep the task local when it needs the
-user's judgment often, local services, E2E or other leases, production or
-shared-infrastructure access, or secrets. Run the preflight first
-(`coderabbit code ls --agent --repo <worktree>`); if it fails, stay local.
-A coordinator's message to offload is a suggestion: you decide. The other
-limits in
-[coderabbit-cloud.md](../master-of-puppets/references/coderabbit-cloud.md)
-stay: the user answers for a plan approval, a billed `/implement`,
-`authorize_github` and the delivery of a patch. Your coordinator relays that
-answer only as section 3 says. Follow "Start" there. Run each start once. Then send
-`CLOUD TASK — <name> — <taskId> — <url> — <task> — PRs <n>`; the coordinator
-tracks the task. After a handoff of your own task, send LEAVE when your tree
-is clean and your branch is pushed.
+**CodeRabbit cloud tasks** (only when your setup uses CodeRabbit): a cloud
+task is not a session and has no enrollment line. Before you start one, read
+[coderabbit-cloud.md](../master-of-puppets/references/coderabbit-cloud.md),
+"Members": when you may start one, the preflight, the limits, and the
+`CLOUD TASK` message you send.
 
 ## 7. Leave, or go idle
 
@@ -325,7 +311,7 @@ Do not leave with uncommitted changes or an open PR. If the coordinator says
 you are done while you have either, reply with what is left (for example
 `UPDATE — <name> — Ready to commit — no PR yet`) and stay a member.
 The exceptions are handoffs: after HANDOFF COMPLETE (section 8), or after
-your task moved to a CodeRabbit cloud task (section 6), send LEAVE with the
+your task moved to a cloud task (section 6), send LEAVE with the
 PR still open. The successor owns it.
 
 ## 8. Hand off your task

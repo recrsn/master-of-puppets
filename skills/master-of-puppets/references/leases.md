@@ -59,8 +59,8 @@ exits 3 and the server's auto acquire retries. After `GRANTED`, the member sees
 costly and the next grant may come soon. The server's pool upkeep stops it
 after `--pool-stop-after-minutes M` idle (default 0 = never) and the next grant starts it again.
 A failed `start` exits 8 and marks the resource failed (reason `start`); a
-failed `create` exits 8 and leaves none, and its refusal names Vmctl's own
-error. Manage the pool with
+failed `create` exits 8 and leaves none, and its refusal names the create
+command's own error. Manage the pool with
 `coordinator.py resource list|add|mark|remove <NAME> [--name R] [--state free|stopped|failed] [--info JSON] [--delete]`:
 `add` registers an existing resource, `mark` repairs a state, `remove --delete`
 runs the delete command. Free or held is derived from the leases.
@@ -80,40 +80,37 @@ creates new ones without a coordinator step:
   retries at once) picks another one or creates one. The facts go on the
   holder's `RESOURCE` line, and a healthy check's `freeGiB` and `memAvailGiB`
   stay on the resource (`checkedAt`), at a grant and at a release.
-  `scripts/examples/vm-pool-health` is the
-  command for a Vmctl pool; it changes nothing on the VM. When its ssh fails,
-  it reads `vmctl env status` again: `Shutdown` prints `{"stopped": ...}`
-  (kept, and the next grant starts it), not unreachable. Any other ssh failure
-  ends with the line `ssh to <alias> exit <n>: <error>`, without the IAP
-  tunnel's NumPy advice, so the stored reason is the real one. It first reads
-  `vmctl env status`. Only a known unhealthy state fails the check (reason
-  `health`, so the upkeep deletes it): a deletion request, an env Vmctl no
-  longer has, or progressStatus `FAILED` on a stopped env. `FAILED` with
-  `Available` goes on to the VM checks. When they fail, it is failed. When
-  they pass, it prints `{"restart": ...}`: the pool runs the stop command
-  once (log `vmctl-failed-restarted`, the resource is `stopped` with
-  `restartedAt`), and the next grant that picks it starts it and checks it
-  again. `FAILED` again after that restart, or a failed stop, retires it (log
-  `vmctl-failed-deleted`). A pass clears `restartedAt`. No alert for the
-  restart; after a retire, every coordinator gets `POOL-LOW` when the usable
-  resources fall under the pool's `min` (`config set-class --pool-min N`).
-  envState `Shutdown` alone
-  (Vmctl stops an env after some idle hours, also while it is held) prints
-  `{"stopped": ...}`: the resource is marked `stopped`, never deleted for it,
-  and the next grant that picks it runs the pool's start command. `READY` or
-  `BUILDING` with `Available` goes on to the disk, memory and SSH checks:
-  Vmctl shows `BUILDING` when the app services are down (a member stopped
-  them, or the clean removed the build output), and checks do not need the
-  app services. An error from Vmctl, a malformed response or an unknown state
-  counts as unreachable: kept, never deleted for it.
+  The health command changes nothing on the resource. Its other results:
+  - `{"failed": ...}` (exit non-zero): a known unhealthy state, for example
+    the provider deletes the resource or no longer has it. Marked failed
+    (reason `health`), and the upkeep deletes it.
+  - `{"restart": ...}`: the provider reports the resource failed, but the
+    command's own checks pass. The pool runs the stop command once (log
+    `failed-restarted`, the resource is `stopped` with `restartedAt`), and
+    the next grant that picks it starts it and checks it again. `restart`
+    again after that, or a failed stop, retires it (log `failed-retired`). A
+    pass clears `restartedAt`. No alert for the restart; after a retire, every
+    coordinator gets `POOL-LOW` when the usable resources fall under the
+    pool's `min` (`config set-class --pool-min N`).
+  - `{"stopped": ...}`: the provider stopped the resource (for example after
+    some idle hours, also while it is held). Marked `stopped`, never deleted
+    for it, and the next grant that picks it runs the pool's start command.
+    A health command whose connection fails should ask the provider again
+    first: a resource stopped since its first read is stopped, not
+    unreachable.
+  - Any other failure (no JSON line, a connection error, a timeout) counts as
+    unreachable: kept, never deleted for it. End the error output with one
+    line that names the real cause (for example `ssh to <host> exit 255:
+    <error>`), without warnings that a tool prints on every run: the pool
+    stores the last part of that output as the reason.
 - **Host faults.** When the health command prints `{"hostError": ...}`
-  (exit 4), the fault is on this Mac, not on the resource: for Vmctl, an
-  error text that asks for `gcloud auth login`. The resource is not marked
+  (exit 4), the fault is on this Mac, not on the resource, for example
+  expired credentials of the provider's CLI. The resource is not marked
   (free again at a release, untouched at a grant), the grant is refused, and
   the pool sets an admission hold on the class (`by pool`, with the reason),
   once. The dashboard shows the hold as a serious alert, and every
-  coordinator gets `HOST-FAULT <class>: <reason>`. After the fix (`gcloud
-  auth login`), a coordinator runs `admission clear <class>`.
+  coordinator gets `HOST-FAULT <class>: <reason>`. After the fix (for
+  example a new login), a coordinator runs `admission clear <class>`.
 - **Health at every release.** `puppet.py release` (pass, fail or partial)
   runs the health command while the resource is `checking` (busy, so no grant
   takes it). With `--pool-clean CMD`, the clean command runs first, to free
@@ -121,12 +118,12 @@ creates new ones without a coordinator step:
   to the health check. It logs `resource cleaned ... before=B GiB after=A
   GiB`, so the log shows whether the floor fits. The clean command also runs
   on each new resource, after its create and before the grant's health check
-  (log `resource cleaned ... (after create)`). `scripts/examples/vm-pool-clean`
-  first runs `docker builder prune -af`: a new Vmctl VM carries about 42 GB of
-  unused build cache, which leaves only 10-15 GiB free on `/`; the prune
-  touches no running container. Then it saves a dirty checkout under `refs/recycle/`, resets it to origin/main,
-  runs `git clean -ffdx`, `pnpm store prune`, and removes `~/.cache/turbo`
-  and `node_modules/.cache`. Healthy: free again, so a test failure keeps a
+  (log `resource cleaned ... (after create)`): a new resource can carry its
+  image's leftovers, such as an unused build cache. A clean command for a VM
+  with a checkout typically prunes build caches, saves a dirty checkout under
+  a ref such as `refs/recycle/<time>-<lease>`, resets the checkout to the
+  base branch, runs `git clean`, and removes tool caches. It ends with one
+  JSON line, `{"freeBeforeGiB": B, "freeAfterGiB": A, ...}`. Healthy: free again, so a test failure keeps a
   good VM. Under a floor: marked failed (reason `health`) at once, not at the next grant.
   Unreachable: marked failed and kept, and the coordinator gets
   `HEALTH-UNREACHABLE`. With a recycle command, the recycle runs instead (it
@@ -146,18 +143,15 @@ creates new ones without a coordinator step:
   `resource list` shows these as `quarantined`; a coordinator marks them
   again (`--state failed` to delete, `--state free` to return).
 - **New resources.** With no free or stopped resource left, `acquire` creates
-  one. Vmctl picks the zone; its CLI has no zone flag. A stopped VM keeps its
-  zone, so a start that fails for capacity marks it failed, the upkeep deletes
-  it, and the next grant creates a VM where Vmctl has room. A create command
-  that fails after it made a resource prints the resource's JSON and exits
-  non-zero: the pool keeps it, failed (reason `create`), and the upkeep
-  deletes it, so no VM is left behind. `scripts/examples/vm-pool-create`
-  does this; it reads the env id from Vmctl's stdout JSON, else from its
-  stderr progress lines (`id` or `environmentId`). When Vmctl names no env,
-  the refusal lists your envs on main with that size made since the
-  create started. The helper claims none of them, because a parallel create
-  or an env you made by hand looks the same: check each, then `resource add`
-  it or delete it.
+  one. A start that fails (for example for capacity where a stopped VM
+  lives) marks it failed, the upkeep deletes it, and the next grant creates a
+  new one. A create command that fails after it made a resource prints the
+  resource's JSON and exits non-zero: the pool keeps it, failed (reason
+  `create`), and the upkeep deletes it, so no VM is left behind. When the
+  provider's output names no resource, the create command's error should list
+  the resources made since the create started, and claim none of them: a
+  parallel create or one made by hand looks the same. Check each, then
+  `resource add` it or delete it.
 - **Guard.** With 2 resources failed as `unreachable`, `acquire` creates no
   more and exits 3 with `resources_blocked`: the server's ssh is likely
   broken, and every new VM would fail the same way. Fix ssh, then mark them
@@ -189,19 +183,14 @@ the command; installing the helpers does not turn it on. The events log records
 When a grant has to create a resource and another one comes free while the
 create runs, the grant takes the free one (checked every 10 s) and the create
 finishes in the background into the pool, free. A recycle at grant may print
-more facts in its JSON line (the Vmctl command prints `sshAlias` and
-`uptimeS`); they go on the holder's `RESOURCE` line.
-`scripts/examples/vm-pool-recycle` is the command for a Vmctl pool:
-over `vmctl env ssh-config` and ssh it fetches `origin main`, forces `main`
-to `origin/main`, runs `git clean -ffdx -e node_modules` in
-`/workspaces/app`, gives the checkout to the ssh login user, and checks
-that `git status --porcelain` is empty and `/` has at least 10 GiB free.
-`node_modules` stays, so the next holder's install is fast; build output,
-`.env*` files and nested repositories go. Before the reset, a dirty checkout is
-committed to `refs/recycle/<time>-<lease>` on the VM, so it stays recoverable
-there until the VM is destroyed; the reset goes ahead regardless (the user's
-rule, 5 Nov: "vmctl is temporary, we recycle to save on startup time. always
-git reset them and destory them if not possible").
+more facts in its JSON line (for example an ssh alias and the uptime); they
+go on the holder's `RESOURCE` line. A recycle command for a VM with a
+checkout typically fetches the base branch, forces the checkout to it, runs
+`git clean` (it may keep installed dependencies, so the next install is
+fast), and checks that the tree is clean and the disk has room. Before the
+reset it commits a dirty checkout to a ref such as
+`refs/recycle/<time>-<lease>` on the VM, so it stays recoverable there until
+the VM is destroyed; the reset goes ahead regardless.
 
 **Disk floor per request.** `puppet.py request ... --min-free-gib N` (and
 `coordinator.py wait --min-free-gib N`) grants only a resource with at least N
@@ -249,7 +238,7 @@ since the create began (`MOP_SINCE`; one `{"name": ...}` line each) and
 sends the lease's coordinator `CREATE-LOST` with the names not in the pool.
 It claims none, because a parallel create or one made by hand looks the
 same: check each, then `resource add` it or delete it.
-`scripts/examples/vm-pool-find` lists your Vmctl envs on main. The events log records each reset and deletion.
+The events log records each reset and deletion.
 For a lease that expired over an hour ago and still holds a resource, the
 lease's coordinator gets `INBOX pool: POOL-EXPIRED ...` in `watch`: ask the
 holder to release. Upkeep never takes a resource back.

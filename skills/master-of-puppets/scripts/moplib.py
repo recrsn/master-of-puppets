@@ -885,14 +885,14 @@ def failed_restart_end(state, cls, res, stopped, detail):
     if stopped:
         res["restartedAt"] = now().isoformat()
         end_op(res, "stopped")
-        return "vmctl-failed-restarted", None
+        return "failed-restarted", None
     res.pop("restartedAt", None)
     mark_failed(res, "health", detail)
     floor = (pool_spec(cls) or {}).get("min") or 0
     usable = sum(r["state"] != "failed" and not r["name"].startswith("pending-") for r in state["resources"][cls])
     low = (f"POOL-LOW {cls}: {usable} usable of minimum {floor} after {res['name']} was retired for a failed env "
            f"({detail})") if usable < floor else None
-    return "vmctl-failed-deleted", low
+    return "failed-retired", low
 
 
 def mark_failed(res, reason, detail=""):
@@ -1201,7 +1201,7 @@ def health_released(cls, name, token, info, lease_id, coordinator, worktree=None
         log(f"resource {event} {cls} {name} detail={json.dumps(detail)}" + (f" stop={json.dumps(stop_err)}" if stopped is not True and stop_err else "") + f" {tail}")
         if low:
             say("pool", low)
-        if event == "vmctl-failed-restarted":
+        if event == "failed-restarted":
             return f"{name}'s env failed but the VM checks pass ({detail}); stopped for a restart, and the next grant starts it"
         return f"{name}'s env failed again after a restart ({detail}); retired, and the pool deletes it"
     if outcome == "host":
