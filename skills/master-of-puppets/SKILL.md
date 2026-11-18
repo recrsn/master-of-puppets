@@ -297,30 +297,39 @@ Message members by the direct routes in `references/protocol.md`, "Routes";
 2. **Make the active PR mergeable.** Owner: publishes passing evidence for the
    applicable checks (`references/rules.md`) and binds the PR (puppet skill,
    section 3). Coordinator: confirm that evidence and the
-   configured base branch, then `gh pr ready <n>` if draft and enable
-   auto-merge with the project's merge method (`gh pr merge <n> --auto --<mergeMethod>`;
-   for `auto`, no method flag).
-   Do not enable auto-merge while the base is another PR branch.
+   configured base branch, then `gh pr ready <n>` if draft, and send the
+   owner `OK for auto-merge — #<n> — <mergeMethod>`. The OK means the work is
+   done and meets the agreed requirements. Send it once per PR. The owner then
+   enables plain auto-merge (`gh pr merge <n> --auto --<mergeMethod>`; for
+   `auto`, no method flag), never with `--match-head-commit`.
+   Do not send the OK while the base is another PR branch.
+   Auto-merge stays on across pushes that only fix review findings or CI:
+   do not ask for it to be turned off, and do not send the OK again. Before a
+   push that changes scope or behavior beyond the agreed requirements, the
+   owner turns auto-merge off and asks again; read the change (`coordinator.py
+   pr delta <n>`) and send the OK again when it still meets them.
 3. **React to the `PR` lines of `watch`.** `merge=DIRTY`: the owner syncs the
    branch with `origin/<base>` and resolves. Failing checks or
    review comments: the owner's Auto-fix (Claude) or repair work (Codex)
    handles them; stuck over two rounds,
    ask for the exact job, revision, test and first causal error.
-   `automerge=off` on an active PR: find the cause before you set it again.
+   `automerge=off` on an active PR that has your OK: ask the owner why. A
+   scope or behavior change comes with a new request for the OK; any other
+   cause, the owner enables it again.
 4. **On MERGED**: confirm with `coordinator.py pr <n>` (it prints the full
    merge SHA) and `note` the SHA. Read the next PR's `baseRefName`; if it is not the base
    branch, run `gh pr edit <next> --base <base>`. Send its owner `ACTIVE` with
    "sync your branch with origin/<base>, resolve, push". When its base is the
    base branch, return to step 2: confirm the owner's applicable evidence
-   before enabling auto-merge. A base
+   before you send the OK for auto-merge. A base
    change alone is not readiness. Never merge a stacked PR into its parent.
 5. Repeat to the top. Then ask owners to stop services, release leases and
    leave; drop the PRs with `heartbeat --pr ...`.
 
-Your own hands: `gh pr ready`, `gh pr edit --base`, `gh pr merge --auto` (and
-`--disable-auto`), and reading PR state. Record each diff you read with
-`coordinator.py pr read <n>`; `pr delta <n>` shows what changed since, and
-`pr auto <n>` enables auto-merge only at a head you read. Record the user's
+Your own hands: `gh pr ready`, `gh pr edit --base`, `gh pr merge
+--disable-auto` (to stop a merge, for example on PAUSE), and reading PR state.
+The owner enables auto-merge after your OK. Record each diff you read with
+`coordinator.py pr read <n>`; `pr delta <n>` shows what changed since. Record the user's
 words that you relay with `relay --quote ... --via ...`, and a waiver with
 `waiver --pr <n> --quote ...`; `relay list` and `waiver list` find them. Owners do every commit, push, merge
 of main into a branch, conflict fix and review reply. Do not bind members' PRs

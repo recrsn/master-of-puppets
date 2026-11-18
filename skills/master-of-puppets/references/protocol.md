@@ -62,6 +62,7 @@ observed peak unless you tell me why the run is smaller.
 | Situation | Message |
 | --- | --- |
 | Active PR | `ACTIVE — #<n>. Goal: MERGED. Next: <one step>.` |
+| Work done and meets the agreed requirements (once per PR) | `OK for auto-merge — #<n> — <squash\|merge\|rebase\|auto>`: the owner enables plain `gh pr merge <n> --auto`, no `--match-head-commit`, and keeps it on across review and CI fixes |
 | Paused PR | `PAUSE — #<n> waits for #<m>. No merges from main, no fixes, Claude Auto-fix off / Codex repair heartbeat paused on #<n>.` |
 | Bottom merged | `ACTIVE — #<n>: #<m> merged (<sha>). I retargeted #<n> to main. Merge origin/main into your branch, resolve, push.` |
 | Heartbeat round | `STATUS? — phase, PR state, blockers, anything the user decided.` |

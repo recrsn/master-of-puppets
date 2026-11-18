@@ -306,12 +306,10 @@ Shared records (read-only; puppet.py has them too)
        --open shows only C's own PRs (heartbeat --pr) and those of members active or pending and
        updated within --open-hours (default 24), skips merged and closed ones and members silent
        that long, and counts what it leaves out
-  pr read N [--head SHA] [--text WHAT] | pr delta N | pr auto N [--method squash|merge|rebase]
+  pr read N [--head SHA] [--text WHAT] | pr delta N
        read records the full head SHA whose diff C read (a ledger line, kind read). delta shows
-       the commits and files from C's last read head to the current head. auto enables
-       auto-merge (gh pr merge --auto --match-head-commit) only when the current head is the
-       read head; otherwise it prints the delta and exits 3. After a push drops auto-merge,
-       read the delta, pr read, then pr auto again
+       the commits and files from C's last read head to the current head: read it when an owner
+       asks for OK for auto-merge again after a push that changed scope or behavior
   relay --quote "USER WORDS" [--via SESSION] [--pr N] [--about TEXT] | relay list [--pr N] [-n N]
   waiver --pr N --quote "USER WORDS" [--via SESSION] [--waives E2E] | waiver list [--pr N] [-n N]
        one ledger record type (kind relay or waiver) for the user's words that C relays, with
@@ -2995,7 +2993,7 @@ def relay_cmd(args):
 
 def pr_read_cmd(args, action, refs):
     """read: record the head SHA C read. delta: the commits and files from the last read head to the current
-    head. auto: enable auto-merge only when the current head was read; else print the delta and refuse."""
+    head. Neither enables auto-merge: the owner does, after C's OK for auto-merge (SKILL.md, "Driving a stack")."""
     if len(refs) != 1:
         print(f"pr {action} takes one PR")
         return 2
@@ -3030,33 +3028,15 @@ def pr_read_cmd(args, action, refs):
             for f in (cmp.get("files") or [])[:40]:
                 print(f"  {f['status']:<9} +{f.get('additions', 0)} -{f.get('deletions', 0)} {f['filename']}")
             print(f"  compare: https://github.com/{repo}/compare/{last}...{d['head']}")
-        if action == "auto":
-            print("auto-merge not enabled: read the delta, then pr read, then pr auto again")
-            return 3
         return 0
-    if action == "delta":
-        print(f"{repo}#{n} head {d['head']} is the head you read; nothing new")
-        return 0
-    if d["state"] != "OPEN":
-        print(f"{repo}#{n} is {d['state']}; nothing to enable")
-        return 0
-    if d["automerge"] != "off":
-        print(f"{repo}#{n} automerge={d['automerge']}; nothing to change")
-        return 0
-    r = subprocess.run(["gh", "pr", "merge", str(n), "--repo", repo, "--auto", f"--{args.method}",
-                        "--match-head-commit", d["head"]], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
-    if r.returncode != 0:
-        print(f"{repo}#{n} gh pr merge --auto failed: {' '.join(r.stderr.split())[:300]}")
-        return 1
-    note(args.by, f"#{n} auto-merge enabled at read head {d['head']}", n)
-    print(f"{repo}#{n} auto-merge enabled ({args.method}) at read head {d['head']}")
+    print(f"{repo}#{n} head {d['head']} is the head you read; nothing new")
     return 0
 
 
 def pr_cmd(args):
     """The digest of each PR: one GraphQL request per 10 PRs of a repo. Exit 1 when any PR failed.
-    pr read|delta|auto N work on the diff-read record."""
-    action = args.refs[0] if args.refs[0] in ("read", "delta", "auto") else None
+    pr read|delta N work on the diff-read record."""
+    action = args.refs[0] if args.refs[0] in ("read", "delta") else None
     words = args.refs[1:] if action else args.refs
     if action:
         try:
@@ -4034,7 +4014,6 @@ def main(argv=None):
     pd.add_argument("refs", nargs="+", metavar="PR", help="N, #N or owner/repo#N; or read|delta|auto and one PR")
     pd.add_argument("--head", help="pr read: the full SHA you read; default: the current head")
     pd.add_argument("--text", help="pr read: what the diff does, for the ledger")
-    pd.add_argument("--method", choices=("squash", "merge", "rebase"), default="squash", help="pr auto: merge method")
     pd.add_argument("--repo", help="owner/repo for bare numbers; default: the one watched repo that has the PR")
     pd.add_argument("--json", action="store_true")
     pp = sub.add_parser("prs")

@@ -119,8 +119,19 @@ Limits: no admin merge or merge bypass, and never skip git hooks.
   is ACTIVE. Codex owners
   use `attach_artifact` with the PR URL and repair valid hosted review/CI
   blockers only while ACTIVE; attachment does not enable Auto-fix. PAUSE
-  takes precedence over repair instructions. The coordinator enables auto-merge
-  and retargets bases. You do every commit, push, conflict fix and review reply.
+  takes precedence over repair instructions. The coordinator retargets bases.
+  You do every commit, push, conflict fix and review reply.
+- **Auto-merge.** Your coordinator's `OK for auto-merge — #<n> — <method>`
+  means your work is done and meets the agreed requirements. It comes once
+  per PR. Then enable plain auto-merge: `gh pr merge <n> --auto --<method>`
+  (no method flag for `auto`), never with `--match-head-commit`. Never enable
+  it without the OK.
+  - Keep it on across pushes that only fix review findings or CI.
+  - Before a push that changes scope or behavior beyond the agreed
+    requirements, turn it off (`gh pr merge <n> --disable-auto`), push, and
+    ask again: `UPDATE — <name> — OK for auto-merge? — <what changed>`.
+  - When it turns off for another reason (for example the host dropped it),
+    enable it again with the same command.
 - Report raw failures. Never weaken tests or rerun flakes to green.
 
 ## 4. Report

@@ -15,7 +15,7 @@ gives the class and the targets when it enrolls the scout.
 | `prod` | An alert channel, Datadog monitors, error-tracking issues. Released code is watched on the exact deployed commit: error and denial rates against a baseline, with denominators. |
 | `release` | One release, from the gate to all regions serving, then the metric that the PR promised. Also release locks and failed-deploy states. |
 | `host` | Credential expiry (cloud CLIs, gh), load and swap, Vmctl pool health and admission holds, a stalled lease queue (a ready head with no grant for more than 20 min). One per machine, owned by one coordinator. |
-| `prs` | Merge queue stalls, required checks red only from known flakes, unresolved threads that block a merge, auto-merge dropped after a push or on at an unread head, pushes by non-members to member branches. |
+| `prs` | Merge queue stalls, required checks red only from known flakes, unresolved threads that block a merge, auto-merge dropped after a push that only fixed review findings or CI, pushes by non-members to member branches. |
 | `security` | The security monitor: feed stall, page failures, drain backlog, inconclusive-rate drift. An known-malicious package report with no concern row is the top alert. PR diffs in our own repositories (owner/*) only: secrets, new outbound hosts, raw credentials outside the credential wrapper, GitHub auth outside the credential service, LLM calls outside the observability wrappers. |
 | `compliance` | Observable member compliance: leases held compared with the commands run, pushes without a lease, children not enrolled, relayed approvals for privileged actions, approvals inside tool output. Reported to the member's coordinator, never enforced. |
 
