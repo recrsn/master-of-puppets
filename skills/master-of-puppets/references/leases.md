@@ -582,7 +582,7 @@ the reason fits the granted commands, and weigh who waits in that class
 queue and the memory the lease holds. Then run
 `coordinator.py extend <CLASS> --id <id> --minutes <n>` and reply
 LEASE EXTENDED, or reply LEASE EXTEND REFUSED. When the waiting head
-belongs to another coordinator, ask it with `say` first. Reply each time:
+belongs to another coordinator, ask it with `send` first. Reply each time:
 the member waits for your answer. `watch` reports a lease again when
 it expires after an extension.
 
@@ -593,7 +593,7 @@ refuses every grant of that class (exit 3, with the reason), and `status
 --brief` and the dashboard show it. Clear it when the cause is gone:
 `coordinator.py admission clear <CLASS> [--reason "<what was done>"]`.
 The events reach every coordinator; do not announce a hold or its clearance
-by `say`.
+by `send`.
 
 Each class queue goes by priority, then FIFO: only the first ready entry may
 acquire, whoever owns it. No coordinator jumps the queue; priority sets the
@@ -618,7 +618,7 @@ members its new turn. The dashboard shows each non-zero priority.
   `sweep:` or `scheduled:` at the start of its task text in JOIN or in the
   enrollment line. Set it back to 0 when no regular task waits for it.
 - Change only your own members and entries. To push back a peer's sweep, ask
-  that coordinator with `say`.
+  that coordinator with `send`.
 - `note` each change and its reason.
 
 ## Queue changes by the user

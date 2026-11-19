@@ -18,7 +18,7 @@ If the file does not exist, no coordinator runs on this machine: tell the user.
 Read [agents.md](../master-of-puppets/references/agents.md) for session ids,
 and the "Routes" section of
 [protocol.md](../master-of-puppets/references/protocol.md) for how to message
-your coordinator. Never use `coordinator.py say`.
+your coordinator. Never use `coordinator.py send`.
 
 ## 1. Join
 

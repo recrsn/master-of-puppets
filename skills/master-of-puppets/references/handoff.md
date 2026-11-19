@@ -103,7 +103,7 @@ Members use the puppet skill, section 8. Coordinators do the rest.
    - for each member that moves: `coordinator.py member transfer --name <member> --to <receiver> --note <path>`.
      The command puts `TRANSFER` in the receiver's inbox. Send no other message.
    - only when no member moves (PRs or streams alone):
-     `coordinator.py say --to <receiver> --message "HANDOFF — <what> — PRs <n> — streams <slug> — note <path>"`
+     `coordinator.py send --to <receiver> --text "HANDOFF — <what> — PRs <n> — streams <slug> — note <path>"`
 
    The user asked for the handoff, so the offer is the release. The old member
    is paused, so nobody works the PR while it has no owner. To withdraw an
@@ -127,7 +127,7 @@ Members use the puppet skill, section 8. Coordinators do the rest.
      successor.
 
    No: give the stream back first (`stream update --name <stream> --owner <sender>`;
-   only the stream's owner can move it), then `say` `HANDOFF DECLINED — <reason>`.
+   only the stream's owner can move it), then `send` `HANDOFF DECLINED — <reason>`.
    The sender claims its PRs again with `heartbeat --pr` and tells its user.
 4. **Join.** On the successor's JOIN: `member add --pr <n> --stream <stream>`
    and WELCOME. The ledger and events show it; send no SUCCESSOR JOINED.

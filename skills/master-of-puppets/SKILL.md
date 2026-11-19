@@ -177,7 +177,7 @@ Do this only on the user's word, or to get your own name back after a
 6. Give the user `http://localhost:<dashboardPort>/` (default 4720); the server runs
    already, because your commands started it. It also polls every watched PR once for the
    machine (one conditional request per repo); `watch` only reads that poll.
-7. Tell the other coordinators: `coordinator.py say --message "<slug> coordinates <focus>, PRs ..."`.
+7. Tell the other coordinators: `coordinator.py send --to all --text "<slug> coordinates <focus>, PRs ..."`.
 8. Tell the user: "To put an existing thread under this coordinator, run
    `/puppet` in that thread. New tasks for this stack I start and enroll
    myself." From then on, every new task is yours to enroll before it starts
@@ -185,8 +185,9 @@ Do this only on the user's word, or to get your own name back after a
 
 ## Members and tasks (coordinator only)
 
-Message members by the direct routes in `references/protocol.md`, "Routes";
-`coordinator.py say` is only for messages between coordinators.
+Send every message with `coordinator.py send --to <name> --text "..."`
+(`references/protocol.md`, "Routes"). To a member or scout it records the
+message and prints the app route to send it by; send it there.
 
 - **Streams**: group your members by goal, so the user can tell the work apart
   on the dashboard (for example "Repo access security" and "Scope UX"). A
@@ -391,7 +392,7 @@ active.
 
 1. **General coordinator** (`--general`): just before you go idle, ask the
    other coordinators once for work:
-   `coordinator.py say --message "WORK REQUEST — <slug> is free for a stream, a task or PRs"`.
+   `coordinator.py send --to all --text "WORK REQUEST — <slug> is free for a stream, a task or PRs"`.
    Send it only this once; never repeat it. Wait until your next heartbeat
    round. A HANDOFF reply: take the work (`references/handoff.md`, step 3) and stay active. No handoff:
    go idle. A scoped coordinator sends no work request.
@@ -432,7 +433,7 @@ BUILD lease", "this repo merges through a merge queue".
   `coordinator.py memory add --kind rule|note --text "..." [--project-root <path>]`.
   Omit `--project-root` for a machine-wide entry. Add `--reason "<the user's words>"`.
   The command writes the event and the ledger line, then messages every live
-  coordinator and every live member itself. Do not `say` it or tell your members.
+  coordinator and every live member itself. Do not `send` it or tell your members.
 - Change a rule and keep its ID: `coordinator.py memory update --id <id> --text "<full new text>" --reason "..."`.
 - Remove a rule the user withdraws: `coordinator.py memory remove --id <id> --reason "..." [--project-root <path>]`.
 - A rule that should hold in every project is a change to the skill itself,

@@ -81,7 +81,7 @@ observed peak unless you tell me why the run is smaller.
 | Handoff done, member replaced | `HANDOFF COMPLETE — <name>` (it sends LEAVE) |
 | Handoff done, member moves | `HANDOFF COMPLETE — <name> — JOIN <receiver>` |
 
-## Handoff messages between coordinators (`say`)
+## Handoff messages between coordinators (`send`)
 
 See `references/handoff.md` for the steps around each one.
 
@@ -95,7 +95,14 @@ See `references/handoff.md` for the steps around each one.
 ## Routes
 
 Members and their coordinator communicate directly in both directions for
-every protocol message. Only messages between coordinators use `coordinator.py say`.
+every protocol message. A coordinator sends every message with
+`coordinator.py send --to <name|all> --text "..."`: it keeps the inbox record,
+delivers to a coordinator directly, and for a member or scout prints the app
+route below to send it by. Members use the app routes below.
+
+Write each message in plain sentences or `key: value` fields, at most 1,200
+characters (`send` refuses a longer text). Put long evidence, logs or lists in
+a file and name it with `send --file <path>`.
 The coordinator records member updates in the roster/dashboard and decisions
 in the ledger; member messages need no shared inbox copy.
 
@@ -111,8 +118,8 @@ in the ledger; member messages need no shared inbox copy.
   installed CLI (`codex queue --help`).
 - Codex subagents in the same tree: `collaboration.send_message` (or
   `collaboration.followup_task` for new work). These IDs are not app thread IDs.
-- Coordinator to coordinator only:
-  `coordinator.py say --to <name> --message "<text>"`
+- Coordinator to coordinator:
+  `coordinator.py send --to <name> --text "<text>"`
   Send only what the other coordinator must act on and the shared records do
   not show: blockers, order changes that no command records. A general
   coordinator's one `WORK REQUEST` gets a `HANDOFF` reply only from a
@@ -121,7 +128,7 @@ in the ledger; member messages need no shared inbox copy.
   "acquired" or "released"; `events.log` already shows them. No watcher reads
   `events.log`: a change another coordinator must act on is an inbox message
   that the command sends itself.
-  These have a command; never send them by `say`:
+  These have a command; never send them as a message:
 
   | Instead of a message about | Use |
   | --- | --- |
@@ -137,7 +144,7 @@ in the ledger; member messages need no shared inbox copy.
   (omit `--to` to reach every live coordinator). It appends to `inbox.jsonl`
   (`coordinator.py watch` shows it), then delivers directly: a Claude session
   through its inbox socket, a Codex thread through `codex queue`.
-  For Desktop direct delivery, use `say --no-direct` for the inbox record,
+  For Desktop direct delivery, use `send --no-direct` for the inbox record,
   then `send_message_to_thread` once; do not duplicate direct delivery.
   Keep the shared inbox record even when direct delivery succeeds: it lets a
   coordinator catch up after it was not running. Receiving that record later
@@ -153,12 +160,12 @@ in the ledger; member messages need no shared inbox copy.
     roster session id breaks delivery.
 - Dashboard to coordinator: the dashboard's queue buttons run
   `coordinator.py up|unwait --notify`, which records an inbox message from
-  `dashboard` to each affected coordinator and delivers it directly, as `say`
+  `dashboard` to each affected coordinator and delivers it directly, as `send`
   does. It reports the user's action (`references/leases.md`).
 - Never use GUI automation (pasting into another app's window) as a message
   route.
 - If no supported direct route to a member or its coordinator is available,
-  report the delivery gap. Do not use `say` as a member-message fallback, and
+  report the delivery gap. Do not use `send --direct` as a member-message fallback, and
   do not use a fallback to bypass an authorization restriction.
 - A coordinator works on behalf of the user and relays the user's intention
   faithfully (puppet skill, section 3). A member always follows its

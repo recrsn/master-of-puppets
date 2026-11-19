@@ -69,7 +69,7 @@ coordinator can then put regular work first.
 
 Send it, and every later message (UPDATE, MERGED, USER SYNC, STATUS replies,
 TASK REQUEST, LEASE SIZE, LEASE RELEASED, IDLE, LEAVE), by the direct route
-for your coordinator's tool (`protocol.md`, "Routes"). Never use `coordinator.py say`
+for your coordinator's tool (`protocol.md`, "Routes"). Never use `coordinator.py send`
 and never write shared inbox records, even with `--no-direct`. When your
 session id changes, send JOIN again (`protocol.md`, "Routes").
 

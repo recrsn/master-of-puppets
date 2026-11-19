@@ -324,14 +324,16 @@ Shared records (read-only; puppet.py has them too)
        open PRs of members and prs-<C>.txt watch lists whose changed files match (a glob
        or a directory prefix), with their owners; --repo also covers coordinator PRs
 
-Peer-coordinator messaging
-  say --message TEXT [--to NAME] [--no-direct]
-       appends to inbox.jsonl, then delivers directly: a Claude session through its inbox
-       socket (protocol: github.com/PeterSR/claude-code-socket-transport, reverse-engineered,
-       not an Anthropic interface), a Codex thread through `codex queue`. --to names a
-       registered coordinator; without it, every live peer coordinator. Only registered
-       coordinators use say. A receiver that bypasses
-       permission prompts holds a socket message for the user's approval.
+Messaging
+  send --to NAME|all --text TEXT [--file PATH] [--direct] [--no-direct]
+       one command for every message from C. NAME is a coordinator, or one of C's own members or
+       scouts; all is every live, awake coordinator. Every message gets an inbox record (watch shows
+       it). A coordinator then gets it directly: a Claude session through its inbox socket (protocol:
+       github.com/PeterSR/claude-code-socket-transport, reverse-engineered, not an Anthropic
+       interface), a Codex thread through `codex queue`. For a member or scout it prints the exact
+       app route to send it by (SendMessage target or Codex thread id): a script's socket message can
+       be held for the user's approval in a member session. --direct also tries the socket. A text
+       over 1200 characters is refused: put the details in a file and pass --file.
   vote propose --text TEXT [--class CLASS [--project-root P] [--default-gib N] [--default-cpus N] [--max-minutes N]]
        a question every live coordinator votes on, without the user; every live peer's watch
        prints VOTE-REQUEST ID .... It passes when every live coordinator agrees, or 30 min after it was made
@@ -726,30 +728,63 @@ def config_cmd(args):
 # ---------------------------------------------------------------- peer messaging
 
 
-def say_cmd(args):
-    """Append to inbox.jsonl (the record every coordinator watches), then deliver directly:
-    Peer Claude coordinators through their inbox socket, Codex through `codex queue`."""
-    roster = load_roster()
+SEND_MAX = 1200  # characters: a longer message goes in a file, named with --file
+
+
+def native_route(m):
+    """The app route that reaches member m: a Claude SendMessage target or a Codex thread id."""
+    if m.get("tool") == "codex":
+        return f"send_message_to_thread with threadId {m.get('sessionId')} (or codex queue --thread {m.get('sessionId')})"
+    return f"SendMessage to {m.get('session') or m.get('sessionId') or '(no session recorded: ask it to send JOIN again)'}"
+
+
+def send_cmd(args):
+    """One command for every message from a coordinator. --to names a coordinator, one of the sender's own
+    members or scouts, or all (every live, awake coordinator). The message gets an inbox record (watch shows
+    it; it lets a recipient catch up), then:
+      a coordinator: direct delivery (a Claude session's inbox socket, a Codex thread through codex queue);
+      a member or scout: the exact app route to send it by, because a script's socket message can be held
+      for the user's approval in a member session; --direct also tries the socket, best effort.
+    A text over SEND_MAX characters is refused: put the details in a file and pass --file with a short text."""
+    roster, me, to = load_roster(), args.sender, args.to
     coords = roster["coordinators"]
-    if args.sender not in coords or (args.to and args.to not in coords):
-        print("say is coordinator-to-coordinator only; use native direct messaging for members")
+    text = " ".join(args.text.split()) if "\n" not in args.text else args.text.strip()
+    if args.file:
+        if not os.path.isfile(args.file):
+            print(f"--file {args.file} does not exist")
+            return 2
+        text += f" Details: {os.path.abspath(args.file)}"
+    if len(text) > SEND_MAX:
+        print(f"the text has {len(text)} characters, over {SEND_MAX}: write the details to a file (for example "
+              f"{os.path.join(DIR, 'notes', '<topic>.md')}) and send a short text with --file <path>")
         return 2
-    say(args.sender, args.message, args.to)
-    print("inbox: appended")
+    if me not in coords:
+        print(f"{me} is not a registered coordinator; members message their coordinator by its app route "
+              "(protocol.md, \"Routes\")")
+        return 3
+    member = next((x for x in roster["members"].get(me, []) if x["name"] == to), None)
+    if to != "all" and to not in coords and member is None:
+        other = next((c for c, mlist in roster["members"].items() if any(x["name"] == to for x in mlist)), None)
+        print(f"{to} is a member of {other}: message {other} instead" if other else
+              f"no coordinator or member of yours is named {to}; coordinators: {', '.join(sorted(coords))}")
+        return 3
+    say(me, text, None if to == "all" else to)
+    print("inbox: recorded")
+    framed = f"[{me} via coordinator.py send] {text}"
+    if member is not None:
+        if member.get("status") == "done":
+            print(f"{to} is done; nothing delivered")
+            return 3
+        print(f"now send it to {to} by its app route: {native_route(member)}")
+        if args.direct and member.get("tool") in ("claude", "codex"):
+            print("direct (best effort): " + deliver(to, member.get("tool"), member.get("sessionId"), framed))
+        return 0
     if args.no_direct:
         return 0
-    targets = []
-    if args.to:
-        c = roster["coordinators"].get(args.to)
-        if c:
-            targets.append((args.to, c.get("tool"), c.get("sessionId")))
-        if not targets:
-            print(f"direct: no roster entry with a session id for {args.to} (inbox only)")
-    else:
-        targets = [(n, c.get("tool"), c.get("sessionId")) for n, c in roster["coordinators"].items() if n != args.sender and live(c) and not asleep(c)]
-    text = f"[{args.sender} via coordinator.py say] {args.message}"
-    for name, tool, sid in targets:
-        print(deliver(name, tool, sid, text))
+    targets = ([(to, coords[to])] if to != "all" else
+               [(n, c) for n, c in coords.items() if n != me and live(c) and not asleep(c)])
+    for name, c in targets:
+        print(deliver(name, c.get("tool"), c.get("sessionId"), framed))
     return 0
 
 
@@ -4255,11 +4290,13 @@ def main(argv=None):
     vl = vsub.add_parser("list", help="open votes, who has not agreed, and your vote; passes those that are due")
     vl.set_defaults(_self=("by",))
     vl.add_argument("--all", action="store_true", help="also passed and rejected votes")
-    m = sub.add_parser("say")
+    m = sub.add_parser("send", help="one message: to a coordinator, one of your members or scouts, or all live coordinators")
     m.set_defaults(_self=("sender",))
-    m.add_argument("--message", required=True)
-    m.add_argument("--to", help="coordinator or member name; omit to reach every live coordinator")
-    m.add_argument("--no-direct", action="store_true", help="append to inbox.jsonl only")
+    m.add_argument("--to", required=True, help="a coordinator, one of your members or scouts, or all")
+    m.add_argument("--text", required=True, help=f"plain sentences, at most {SEND_MAX} characters; details go in --file")
+    m.add_argument("--file", help="a file with the details; its path is added to the message")
+    m.add_argument("--direct", action="store_true", help="to a member: also try the session socket (best effort)")
+    m.add_argument("--no-direct", action="store_true", help="to coordinators: the inbox record only")
     me = sub.add_parser("memory")
     mesub = me.add_subparsers(dest="mcmd", required=True)
     add_read_commands(sub, memory=mesub)
@@ -4403,8 +4440,8 @@ def main(argv=None):
 
     if args.cmd in READS and (args.cmd != "memory" or args.mcmd == "list"):
         return read_cmd(args)
-    if args.cmd == "say":
-        return say_cmd(args)
+    if args.cmd == "send":
+        return send_cmd(args)
     if args.cmd == "note":
         note(args.by, args.text, args.pr)
         return 0
