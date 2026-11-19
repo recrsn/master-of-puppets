@@ -54,9 +54,10 @@ uses them. Below, `coordinator.py` means
 `python3 -I <skill>/scripts/coordinator.py install` (run from the skill copy)
 copies the three files, replacing copies that differ, records the skill copy
 and restarts the server from it. Leases, queues and records stay as they are,
-and open watchers reconnect, so an install needs no vote. `roster`, `whoami`,
-`register`, `heartbeat` and `status` print a warning when the live copies
-differ from the server's skill copy. Then tell the user and do not install:
+and open watchers reconnect, so an install needs no vote and shows no diff
+first: read `git log` in the skill copy before you install. `register` and
+each `round` print a warning when the live copies differ from the server's
+skill copy. Then tell the user and do not install:
 the skill copy may be work in progress, and an install changes every
 coordinator's helpers. Install only when the user says so.
 
