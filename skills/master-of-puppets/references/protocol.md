@@ -101,6 +101,16 @@ every protocol message. A coordinator sends every message with
 delivers to a coordinator directly, and for a member or scout prints the app
 route below to send it by. Members use the app routes below.
 
+A member answers a coordinator's request for a status, investigation result,
+recommendation or other deliverable by sending it to the coordinator before
+the member's turn ends, even when the request arrived as a user message in the
+member's thread with no protocol keyword. Route: the verified originating
+thread of the request when known, else the coordinator's verified roster route
+from the list below. A final reply in the member's own thread does not reach
+the coordinator. The answer keeps the requested format and action limits (for
+example, a discard recommendation for a worktree is not permission to delete
+it). The member checks the send result and reports any delivery failure.
+
 Write each message in plain sentences or `key: value` fields, at most 1,200
 characters (`send` refuses a longer text). Put long evidence, logs or lists in
 a file and name it with `send --file <path>`.

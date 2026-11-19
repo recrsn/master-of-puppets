@@ -151,6 +151,17 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
   coordinator must know every decision.
 - Answer `STATUS?` with phase, PR state, blockers and anything the user
   decided.
+- When your coordinator asks you for a status, investigation result,
+  recommendation, or other deliverable, send the requested answer directly
+  to the coordinator before ending your turn, even if the request arrives as
+  a user message in your thread and uses no protocol keyword. Use the
+  verified originating thread when available, or the coordinator's verified
+  roster route (`protocol.md`, "Routes"). A final reply in your own thread
+  does not deliver the answer. Preserve the requested format and action
+  limits. Check the send result, and report any delivery failure.
+  Example: for a disk-cleanup request, send one line per worktree with what
+  it contains, whether it is still needed, and push or discard. A discard
+  recommendation does not authorize you to delete the worktree.
 
 ## 5. Leases (only when WELCOME says leases are on)
 
