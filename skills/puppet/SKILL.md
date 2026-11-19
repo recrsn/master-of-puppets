@@ -335,7 +335,9 @@ Only when the user tells you to. The full protocol is in
 5. On `HANDOFF COMPLETE — <name>`, send LEAVE. Same tool: leave the worktree
    for the successor. Other tool: your session removes its own worktree.
    On `HANDOFF COMPLETE — <name> — JOIN <coordinator>`, send JOIN to that
-   coordinator and continue your task.
+   coordinator and continue your task. When your coordinator handed its whole
+   stack to another one, this line comes from the new coordinator (it ran
+   `adopt`): follow it as well. It is not a reason to ask the user.
 
 **You are the successor** (your kickoff names a handoff note):
 

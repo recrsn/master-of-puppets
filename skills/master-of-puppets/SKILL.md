@@ -540,4 +540,6 @@ report the exact one. Quote raw failures. Never ask a member to weaken a test
 or rerun a flake to green. When you make a mistake, say so and how you fixed
 it. When you stop, stop your watcher and heartbeat schedule, run
 `coordinator.py resign` and tell your members
-and the other coordinators.
+and the other coordinators. When another coordinator takes your work, run
+`coordinator.py resign --to <it>` instead (`references/handoff.md`,
+"Coordinator handoffs").

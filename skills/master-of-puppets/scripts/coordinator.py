@@ -219,6 +219,12 @@ Roster and members (coordinators write; members send messages, and request and r
   member remove --name NAME
   member transfer --name NAME --to C2 [--note PATH] | --cancel
   member accept --name NAME --from C1
+  resign [--to C2 [--note PATH]] | adopt --from C1
+       resign --to offers every member that is not done to live coordinator C2, gives C2 every stream and keeps
+       C's PR claim and watch list for it, then resigns; C2's watch prints HANDOFF; C2 runs adopt. A plain resign
+       prints what it leaves without an owner. adopt --from takes what C1 offered, or, when C1 resigned without
+       --to, all its members, streams, lease entries, PR claim, watch list and decisions; it refuses a taken
+       member name and prints the HANDOFF COMPLETE line to send each member.
        transfer offers a member to live coordinator C2; C2's watch prints TRANSFER; C2 runs accept.
        accept moves it in one locked write: the roster entry and its pending children,
        its queued and held lease entries (their coordinator field), its PRs and its row
@@ -354,6 +360,7 @@ Watchers and install
          PRIORITY CLASS ID N by=X   another coordinator or the dashboard changed its priority
          TRANSFER NAME ...      another coordinator offers C a member: member accept
          ACCEPT NAME ...        another coordinator took a member C offered
+         HANDOFF C1 to C ...    C1 resigned and handed C its stack: adopt --from C1
          EXTEND CLASS ID N min ...  C's member asks for more time (puppet.py extend): extend or refuse
          CONFIG, MEMORY, LEASES, ADMISSION   a peer changed a machine rule
          VOTE PASSED ID | VOTE ID REJECTED   the outcome of a vote
@@ -1058,10 +1065,21 @@ def roster_cmd(args):
             cur["heartbeat"] = now().isoformat()
             save_roster(roster)
             return 0
+        if args.to:
+            return resign_to(args, roster)
+        left = {"members": [m["name"] for m in roster["members"].get(args.name, []) if m.get("status") != "done"],
+                "streams": sorted(n for n, x in roster["streams"].items() if x.get("coordinator") == args.name),
+                "prs": cur.get("prs", [])}
+        if left["prs"]:
+            roster.setdefault("handoffs", {})[args.name] = {"to": None, "prs": left["prs"], "note": "", "at": now().isoformat()}
         coords.pop(args.name)
         save_roster(roster)
         log(f"resign {args.name}")
         note(args.name, "resigned")
+        if any(left.values()):
+            print(json.dumps({"left_without_owner": left,
+                              "do": f"a live coordinator takes them with coordinator.py adopt --from {args.name}; "
+                                    "next time hand them over with resign --to <coordinator>"}))
         return 0
     if args.cmd == "stream":
         return stream_cmd(args, roster)
@@ -1141,6 +1159,8 @@ def roster_cmd(args):
         return 0
     if args.cmd == "member" and args.mcmd in ("transfer", "accept"):
         return transfer_cmd(args, roster)
+    if args.cmd == "adopt":
+        return adopt_cmd(args, roster)
     m = next((x for x in members if x["name"] == args.name), None)
     if args.cmd == "member" and args.mcmd == "remove":
         members[:] = [x for x in members if x["name"] != args.name]
@@ -1283,8 +1303,27 @@ def transfer_cmd(args, roster):
     if not moving or (moving[0].get("transfer") or {}).get("to") != dst:
         print(f"{src} has not offered {args.name} to {dst}")
         return 3
-    m = moving[0]
     moving += [x for x in roster["members"][src] if x.get("status") == "pending" and x.get("parent") == args.name]
+    clash = [x["name"] for x in moving if any(y["name"] == x["name"] for y in roster["members"].get(dst, []))]
+    if clash:
+        print(json.dumps({"name_taken": {dst: clash}}))
+        return 3
+    names, prs, leases = move_members(roster, src, dst, moving)
+    log(f"accept {args.name} from={src} to={dst} by={dst}" + (f" leases={','.join(leases)}" if leases else ""))
+    note(dst, f"took {', '.join(names)} from {src}" + (f"; PRs {' '.join('#' + str(n) for n in prs)}" if prs else "")
+         + (f"; leases {', '.join(leases)}" if leases else ""))
+    say(dst, f"ACCEPT {', '.join(names)}: {dst} took custody" + (f"; PRs {' '.join('#' + str(n) for n in prs)}" if prs else "")
+        + (f"; leases {', '.join(leases)}" if leases else "") + ". Stop directing it.", src)
+    print(json.dumps({"moved": names, "prs": prs, "leases": leases}))
+    return 0
+
+
+def move_members(roster, src, dst, moving, all_leases=False):
+    """Move the member records in moving from src to dst in one write: the roster entries, their PRs (out of
+    src's claim, into dst's), their queued and held lease entries (with all_leases, every entry that names
+    src, for a src that is gone), and their dashboard rows and decisions. The caller holds the lock and has
+    checked that no name is taken under dst. Returns (names, prs, lease ids)."""
+    coords = roster["coordinators"]
     names = [x["name"] for x in moving]
     for x in moving:
         roster["members"][src].remove(x)
@@ -1302,21 +1341,121 @@ def transfer_cmd(args, roster):
     leases = []
     for c in class_names(machine):
         for q in state[c] + state["queue"][c]:
-            if q["coordinator"] == src and q["holder"].partition(" ")[0] in names:
+            if q["coordinator"] == src and (all_leases or q["holder"].partition(" ")[0] in names):
                 q["coordinator"] = dst
                 leases.append(q["id"])
     if leases:
         save(state, machine)
-    rows = {t["id"]: t for t in (read_json(state_path(src)) or {}).get("tasks", [])}
+    old = read_json(state_path(src)) or {}
+    rows = {t["id"]: t for t in old.get("tasks", [])}
     for n in names:
         remove_task(src, n)
         upsert_task(dst, n, {k: v for k, v in rows.get(n, {"name": next(x.get("task") for x in moving if x["name"] == n)}).items() if k != "id"})
-    log(f"accept {args.name} from={src} to={dst} by={dst}" + (f" leases={','.join(leases)}" if leases else ""))
-    note(dst, f"took {', '.join(names)} from {src}" + (f"; PRs {' '.join('#' + str(n) for n in prs)}" if prs else "")
-         + (f"; leases {', '.join(leases)}" if leases else ""))
-    say(dst, f"ACCEPT {', '.join(names)}: {dst} took custody" + (f"; PRs {' '.join('#' + str(n) for n in prs)}" if prs else "")
-        + (f"; leases {', '.join(leases)}" if leases else "") + ". Stop directing it.", src)
-    print(json.dumps({"moved": names, "prs": prs, "leases": leases}))
+    moved = [d for d in (read_json(state_path(src)) or {}).get("decisions", []) if d.get("task") in names]
+    if moved:
+        data = read_json(state_path(src)) or {}
+        data["decisions"] = [d for d in data.get("decisions", []) if d not in moved]
+        write_json(state_path(src), data)
+        data = read_json(state_path(dst)) or {}
+        data.setdefault("decisions", []).extend(moved)
+        write_json(state_path(dst), data)
+    return names, prs, leases
+
+
+def resign_to(args, roster):
+    """resign --to R: hand the whole stack to live coordinator R in one write, then resign. Every member that is
+    not done is offered to R, every stream (open or closed) gets owner R, and the PR claim and watch list are
+    kept for R in roster["handoffs"]. R takes it all with adopt --from <me>."""
+    coords, me, to = roster["coordinators"], args.name, args.to
+    if to == me or to not in coords or not live(coords[to]):
+        print(json.dumps({"no_live_coordinator": to}))
+        return 3
+    at = now().isoformat()
+    offered = []
+    for m in roster["members"].get(me, []):
+        if m.get("status") != "done":
+            m["transfer"] = {"to": to, "note": args.note or "", "at": at}
+            offered.append(m["name"])
+    streams = sorted(n for n, x in roster["streams"].items() if x.get("coordinator") == me)
+    for n in streams:
+        roster["streams"][n].update({"coordinator": to, "updatedAt": at})
+    prs = coords[me].get("prs", [])
+    roster.setdefault("handoffs", {})[me] = {"to": to, "prs": prs, "note": args.note or "", "at": at}
+    coords.pop(me)
+    save_roster(roster)
+    log(f"resign {me} to={to} members={','.join(offered) or '-'} streams={','.join(streams) or '-'}")
+    note(me, f"resigned; handed {len(offered)} members, {len(streams)} streams and PRs {' '.join('#' + str(n) for n in prs) or 'none'} to {to}")
+    text = (f"HANDOFF {me} to {to}: {len(offered)} members, {len(streams)} streams (now yours), PRs "
+            f"{' '.join('#' + str(n) for n in prs) or 'none'}" + (f", note {args.note}" if args.note else "")
+            + f". {me} resigned: take the rest with coordinator.py adopt --from {me}")
+    say(me, text, to)
+    print(deliver(to, coords[to].get("tool"), coords[to].get("sessionId"), f"[{me} via coordinator.py resign] {text}"))
+    print(json.dumps({"resigned": me, "to": to, "offered": offered, "streams": streams, "prs": prs}))
+    return 0
+
+
+def adopt_cmd(args, roster):
+    """adopt --from S: take what S handed over. From a registered S: the members it offered to me. From an S
+    that resigned: every member that is not done and not offered to another coordinator, every stream S still
+    owns, every lease entry that names S, its PR claim (the PRs no live coordinator owns), its watch list and
+    its open decisions. Refuses before any write when a member name is taken under me. Prints, for each
+    member, the HANDOFF COMPLETE line to send by its app route. The caller holds the lock."""
+    coords, me, src = roster["coordinators"], args.coordinator, args.source
+    gone = src not in coords
+    rec = roster.get("handoffs", {}).get(src) or {}
+    if rec.get("to") not in (None, me):
+        gone = False  # handed to another coordinator: take only what S offered to me
+    pool = roster["members"].get(src, [])
+    moving = [m for m in pool if (m.get("transfer") or {}).get("to") == me
+              or (gone and m.get("status") != "done" and not m.get("transfer"))]
+    streams = sorted(n for n, x in roster["streams"].items() if x.get("coordinator") == src) if gone else []
+    if not moving and not streams and not (gone and (rec.get("prs") or os.path.exists(os.path.join(DIR, f"prs-{src}.txt")))):
+        print(f"{src} offered nothing to {me}" + ("" if src not in coords else
+              f" and is still registered: ask it to run resign --to {me}, or member transfer --to {me}"))
+        return 3
+    clash = [m["name"] for m in moving if any(y["name"] == m["name"] for y in roster["members"].get(me, []))]
+    if clash:
+        print(json.dumps({"name_taken": {me: clash}, "do": "rename or remove those members first"}))
+        return 3
+    at = now().isoformat()
+    for n in streams:
+        roster["streams"][n].update({"coordinator": me, "updatedAt": at})
+    prs, skipped = [], {}
+    if gone:
+        clash_prs = pr_conflicts(roster, me, rec.get("prs", []))
+        skipped = {str(n): o for n, o in clash_prs.items()}
+        prs = [n for n in rec.get("prs", []) if n not in clash_prs]
+        coords[me]["prs"] = list(dict.fromkeys(coords[me].get("prs", []) + prs))
+        if src in roster.get("handoffs", {}):
+            roster["handoffs"].pop(src)
+    names, member_prs, leases = move_members(roster, src, me, moving, all_leases=gone)
+    if gone:
+        watch_src, watch_me = os.path.join(DIR, f"prs-{src}.txt"), os.path.join(DIR, f"prs-{me}.txt")
+        if os.path.exists(watch_src):
+            have = open(watch_me).read().splitlines() if os.path.exists(watch_me) else []
+            keys = {(x.split() or [""])[0] for x in have}
+            add = [x for x in open(watch_src).read().splitlines() if x.strip() and x.split()[0] not in keys]
+            with open(watch_me, "a") as f:
+                f.writelines(x + "\n" for x in add)
+            os.remove(watch_src)
+        left = (read_json(state_path(src)) or {}).get("decisions", [])
+        if left:
+            data = read_json(state_path(me)) or {}
+            data.setdefault("decisions", []).extend(left)
+            write_json(state_path(me), data)
+            data = read_json(state_path(src)) or {}
+            data["decisions"] = []
+            write_json(state_path(src), data)
+    all_prs = list(dict.fromkeys(prs + member_prs))
+    log(f"adopt from={src} to={me} members={','.join(names) or '-'} streams={','.join(streams) or '-'}"
+        + (f" leases={','.join(leases)}" if leases else ""))
+    note(me, f"adopted from {src}: members {', '.join(names) or 'none'}; streams {', '.join(streams) or 'none'}; PRs "
+         + (" ".join("#" + str(n) for n in all_prs) or "none"))
+    print(json.dumps({"adopted": names, "streams": streams, "prs": all_prs, "leases": leases, "prs_owned_by_other": skipped}))
+    for m in moving:
+        line = f"HANDOFF COMPLETE — {m['name']} — JOIN {me}"
+        say(me, line, m["name"])
+        print(f"send to {m['name']} by its app route ({native_route(m)}): {line}")
     return 0
 
 
@@ -4355,6 +4494,12 @@ def main(argv=None):
     hb.add_argument("--status", choices=("active", "idle"))
     rs = sub.add_parser("resign")
     rs.set_defaults(_self=("name",))
+    rs.add_argument("--to", help="hand the whole stack to this live coordinator: offer every member, give it every "
+                    "stream, keep the PR claim for it; it runs adopt --from <me>")
+    rs.add_argument("--note", help="with --to: the handoff note path")
+    ad = sub.add_parser("adopt", help="take a coordinator's handed-over stack, or the members and streams of one that resigned")
+    ad.set_defaults(_self=("coordinator",))
+    ad.add_argument("--from", dest="source", required=True, help="the coordinator that resigned or offered")
     ls = sub.add_parser("leases")
     ls.add_argument("mode", choices=("on", "off"))
     ls.set_defaults(_self=("by",))
@@ -4497,7 +4642,7 @@ def main(argv=None):
 
     lock()
     try:
-        if args.cmd in ("register", "handoff", "heartbeat", "resign", "leases", "member", "enroll", "stream"):
+        if args.cmd in ("register", "handoff", "heartbeat", "resign", "leases", "member", "enroll", "stream", "adopt"):
             return roster_cmd(args)
         if args.cmd == "config":
             return config_cmd(args)

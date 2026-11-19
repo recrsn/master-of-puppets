@@ -89,6 +89,7 @@ See `references/handoff.md` for the steps around each one.
 | --- | --- |
 | `HANDOFF — <what> — PRs <n> — streams <slug> — note <path>` | sender, after it dropped its claims, only when no member moves (members move with `member transfer` and `member accept`) |
 | `CUSTODY ACCEPTED — <you> owns <what> — successor pending` | receiver, after its user said yes, only for a `HANDOFF` without members (`member accept` is the acceptance for a member) |
+| `HANDOFF <sender> to <receiver>: ... adopt --from <sender>` | `coordinator.py resign --to`, for a whole-stack handoff; the receiver runs `adopt --from <sender>` (`references/handoff.md`, "Coordinator handoffs") |
 | `HANDOFF DECLINED — <reason>` | receiver |
 | `HANDOFF CLOSED — <what> — merged <sha> — cleanup <done\|left with the user: items>` | receiver |
 

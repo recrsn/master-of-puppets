@@ -154,10 +154,27 @@ heartbeat round. The receiver may be asking its user.
 ## Coordinator handoffs
 
 A coordinator that hands its whole stack to another one (the user replaces
-it, or its session ends) uses the same steps for each stream. Its members
-keep their tasks: each one gets `HANDOFF COMPLETE — <name> — JOIN <receiver>`.
-Only the coordinator changes, so the worktree rule does not apply. The sender
-then runs `resign`.
+it, or its session ends) does it with two commands. Its members keep their
+tasks; only the coordinator changes, so the worktree rule does not apply.
+
+1. **Sender:** write the note, then `coordinator.py resign --to <receiver> --note <path>`.
+   One write offers every member that is not done, gives the receiver every
+   stream (open and closed), keeps the PR claim and the watch list for it, and
+   resigns. The command puts `HANDOFF` in the receiver's inbox and delivers it.
+   Then stop your watcher and heartbeat schedule.
+2. **Receiver:** read the note, then `coordinator.py adopt --from <sender>`.
+   It moves the members, their lease entries and dashboard rows, the PR claim
+   (except PRs another live coordinator owns, which it lists), the watch list
+   and the open decisions. It refuses, before any write, when a member name
+   is already yours. It prints each member's app route and the line to send:
+   `HANDOFF COMPLETE — <name> — JOIN <receiver>`. Send each one; the member
+   sends JOIN to you.
+
+A coordinator that resigned without `--to` leaves its members and streams
+without an owner; `resign` lists them. Any live coordinator takes them with
+`adopt --from <resigned>`, on its user's word. `adopt` never takes what was
+offered to another coordinator, and it refuses a sender that is still
+registered and offered nothing.
 
 This is not the name handoff. To keep a coordinator name and move it to a
 new session (the user replaces the session, or its id changed after
