@@ -416,6 +416,9 @@ def release(args):
 SEV_RANK = {s: i for i, s in enumerate(SCOUT_SEVERITIES)}  # P0 first
 
 
+FLAP_TICKS = 4  # tick lengths a resolved fingerprint is remembered: real ticks run late, and the rule is 2 clean ticks
+
+
 def scout_cmd(args):
     """A scout's own watch state file (references/scouts.md): tick, alert, resolve, paused, show.
     Only the scout itself writes it; the coordinator heartbeat and the dashboard read it."""
@@ -440,6 +443,15 @@ def scout_cmd(args):
     st.setdefault("openAlerts", [])
     st["tickMin"] = m.get("tickMin", 15)
     out = ""
+    tick_min = float(st["tickMin"])
+    # a fingerprint resolved less than FLAP_TICKS ticks ago that opens again is a flap, not a new alert
+    st["resolved"] = {f: at for f, at in st.get("resolved", {}).items()
+                      if now() - dt.datetime.fromisoformat(at) < dt.timedelta(minutes=FLAP_TICKS * tick_min)}
+    prev = st.get("lastTick")
+    late = (now() - dt.datetime.fromisoformat(prev)).total_seconds() / 60 if prev and args.scmd != "paused" else 0
+    if late > 2 * tick_min and "missed" not in st:
+        # kept until the next tick prints it: alert and resolve also move lastTick before the closing tick
+        st["missed"] = {"from": prev, "to": t, "minutes": round(late), "cursor": (st.get("state") or {}).get("text")}
     if args.scmd == "tick":
         st["lastTick"] = t
         if args.state:
@@ -447,12 +459,22 @@ def scout_cmd(args):
         if args.summary:
             st["summary"] = {"at": t, "text": args.summary}
         out = f"tick {t[:19]}Z; {len(st['openAlerts'])} open"
+        old_alerts = [a["fingerprint"] for a in st["openAlerts"]
+                      if now() - dt.datetime.fromisoformat(a["lastSeen"]) > dt.timedelta(hours=24)]
+        if old_alerts:
+            out += f"; {len(old_alerts)} not seen for 24 h, check each one again or resolve it: {', '.join(old_alerts)}"
+        missed = st.pop("missed", None)
+        if missed:
+            out += (f"\nLATE {missed['minutes']}m: no tick from {missed['from'][:19]}Z to {missed['to'][:19]}Z; "
+                    f"the cursor then was: {missed['cursor'] or '(none)'}. Read that window again and tick once more")
     elif args.scmd == "alert":
         old = next((a for a in st["openAlerts"] if a["fingerprint"] == args.fingerprint), None)
         if old is None:
             st["openAlerts"].append({"fingerprint": args.fingerprint, "severity": args.severity, "kind": args.kind,
                                      "text": args.text, "firstSeen": t, "lastSeen": t})
-            out = "NEW: send it"
+            flap = st["resolved"].pop(args.fingerprint, None)
+            out = (f"REOPENED (resolved at {flap[:19]}Z): send it once, marked flapping; resolve it only after "
+                   f"{FLAP_TICKS} clean ticks" if flap else "NEW: send it")
         else:
             worse = SEV_RANK[args.severity] < SEV_RANK[old["severity"]]
             out = f"ESCALATED {old['severity']} to {args.severity}: send it" if worse else "SEEN: do not send it again"
@@ -463,6 +485,8 @@ def scout_cmd(args):
         left = [a for a in st["openAlerts"] if a["fingerprint"] != args.fingerprint]
         out = ("RESOLVED: send UPDATE recovered" if len(left) < len(st["openAlerts"])
                else f"{args.fingerprint} is not open")
+        if len(left) < len(st["openAlerts"]):
+            st["resolved"][args.fingerprint] = t
         st["openAlerts"] = left
         st["lastTick"] = t
     elif args.scmd == "paused":

@@ -75,6 +75,12 @@ the daily summary; never write per-tick state into it.
 Dedupe by fingerprint: a monitor or issue id plus the cause. `puppet.py
 scout alert` prints `NEW` or `ESCALATED` (send it) or `SEEN` (do not send
 it). Re-alert only on escalation, for example P2 to P1 or a doubled rate.
+A fingerprint resolved less than 4 tick lengths ago that opens again prints
+`REOPENED`: the alert flaps, so send it once, marked as flapping, and resolve
+it only after 2 clean ticks. A write more than 2 ticks after the last one
+records the missed window and the cursor of that time; the next `scout tick`
+prints them as `LATE <n>m`. `scout tick` also lists open alerts not seen for
+24 h.
 
 ## Severity and routing
 
@@ -113,6 +119,8 @@ the primary record:
   - `lastTick`
   - `tickMin`
   - `openAlerts`: fingerprint, severity, kind, text, `firstSeen`, `lastSeen`
+  - `resolved`: fingerprints resolved in the last 4 tick lengths, with the time, so a flap prints `REOPENED`
+  - `missed`: a window with no tick and the cursor of that time, until `scout tick` prints it
   - `state`: the latest `tick --state` text and its time
   - `summary`: the daily summary and its time
   - `pausedSince`
