@@ -869,9 +869,10 @@ def render_page(host):
         alerts = "".join(f'<p class="{"danger" if a.get("severity") == "P0" else "t2"}"><span class="mono sm">{e(a.get("severity", ""))} '
                          f'{e(a.get("fingerprint", ""))}</span> {e(a.get("text", ""))} · since {e(local(parse(a["firstSeen"])))}</p>'
                          for a in sorted(opened, key=lambda a: a.get("severity", "P9")) if a.get("firstSeen"))
-        summary = st.get("summary") or {}
+        summary, state = st.get("summary") or {}, st.get("state") or {}
         body = (meta + (f'<p class="t2">{e(m.get("targets", ""))}</p>' if m.get("targets") else "") + alerts
-                + (f'<p class="t3">Summary {e(local(parse(summary["at"])))}: {e(summary.get("text", ""))}</p>' if summary.get("at") else "")
+                + (f'<p class="t2">State {e(local(parse(state["at"])))}: {e(state.get("text", ""))}</p>' if state.get("at") else "")
+                + (f'<p class="t3">Daily summary {e(local(parse(summary["at"])))}: {e(summary.get("text", ""))}</p>' if summary.get("at") else "")
                 + actions(open_button(scout_rows.get((coord, name), {}).get("session", ""))))
         sev = min((a.get("severity", "P2") for a in opened), default="")
         dot = "blocked" if stale or sev == "P0" or st.get("pausedSince") else "progress" if sev else "ontrack live"

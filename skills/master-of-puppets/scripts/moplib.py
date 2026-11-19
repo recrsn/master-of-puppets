@@ -1542,7 +1542,7 @@ def scout_path(name):
 
 def scout_state(name):
     """The scout's watch state: lastTick, tickMin, openAlerts [{fingerprint, severity, kind, text, firstSeen,
-    lastSeen}], summary {at, text} and pausedSince. Missing or unreadable: {}."""
+    lastSeen}], state {at, text} (the latest tick state), summary {at, text} (daily) and pausedSince. Missing or unreadable: {}."""
     s = read_json(scout_path(name))
     return s if isinstance(s, dict) else {}
 

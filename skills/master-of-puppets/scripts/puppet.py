@@ -67,7 +67,7 @@ Usage: python3 -I puppet.py <command> ...
        delete command and logs `resource destroyed ... reason="..."`.
   scout tick|alert|resolve|paused|show --coordinator C --name NAME ...   (scouts only)
        a scout's own watch state file, scouts/NAME.json, which C's heartbeat and the dashboard read.
-       tick [--summary TEXT]: a check (QUIET ticks and the daily summary go here, never in a message).
+       tick [--state TEXT] [--summary TEXT]: a check (QUIET ticks, the tick state and the daily summary go here, never in a message).
        alert --fingerprint F --severity P0|P1|P2 [--kind alert|gap] --text TEXT: prints NEW or
        ESCALATED (send it) or SEEN (do not send it again). resolve --fingerprint F: prints RESOLVED
        (send UPDATE recovered). paused [--clear]: a send returned Paused. Never a secret in TEXT.
@@ -434,6 +434,8 @@ def scout_cmd(args):
     out = ""
     if args.scmd == "tick":
         st["lastTick"] = t
+        if args.state:
+            st["state"] = {"at": t, "text": args.state}
         if args.summary:
             st["summary"] = {"at": t, "text": args.summary}
         out = f"tick {t[:19]}Z; {len(st['openAlerts'])} open"
@@ -514,7 +516,7 @@ def main(argv=None):
     r.add_argument("--process", action="append", help="also count processes matching this pattern (pgrep -f)")
     r.add_argument("--ignore-pid", type=int, action="append", help="a process in the worktree that the run did not start "
                    "(for example your own wait loop); name the reason in --note")
-    sc = sub.add_parser("scout", help="a scout's own watch state (references/scouts.md); never put a secret in --text or --summary")
+    sc = sub.add_parser("scout", help="a scout's own watch state (references/scouts.md); never put a secret in --text, --state or --summary")
     scs = sc.add_subparsers(dest="scmd", required=True)
     for name, what in (("tick", "record a check; QUIET ticks go here only"), ("alert", "open or refresh an alert; prints whether to send it"),
                        ("resolve", "close an alert; prints whether to send UPDATE"), ("paused", "a send returned Paused"),
@@ -523,6 +525,8 @@ def main(argv=None):
         x.add_argument("--coordinator", required=True)
         x.add_argument("--name", required=True, help="your scout name")
         if name == "tick":
+            x.add_argument("--state", help="this tick's own state (counters, coverage, cursor or checkpoint); it replaces "
+                           "the last one and never touches the daily summary")
             x.add_argument("--summary", help="the daily SUMMARY, kept in the file instead of a message")
         if name in ("alert", "resolve"):
             x.add_argument("--fingerprint", required=True, help="monitor or issue id plus the cause")

@@ -52,7 +52,7 @@ you.
    consumers, or a growing backlog. Quiet output alone is not a stall: an
    on-demand system with no input is healthy (scouts.md, "Severity and routing").
 5. When a read of yours fails (expired credentials, a timeout, a denied query), you are blind: record it with `--kind gap` and send `GAP`. Never go silent.
-6. End every tick with `puppet.py scout tick --coordinator <coord> --name <name>`. Once a day add `--summary "<counts and the state of the open alerts>"`. The coordinator and the dashboard see you only through this file.
+6. End every tick with `puppet.py scout tick --coordinator <coord> --name <name>`. Add `--state "<counters, coverage, cursor>"` when you keep a cursor or counters; each tick replaces it. Once a day add `--summary "<counts and the state of the open alerts>"`. Never put per-tick state in `--summary`. The coordinator and the dashboard see you only through this file.
 7. Schedule your next wakeup (`references/agents.md`, scheduling). Never write a polling loop.
 
 Send at most one message per tick. When several items are new, put them in

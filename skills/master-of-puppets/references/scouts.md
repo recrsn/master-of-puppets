@@ -67,8 +67,10 @@ at most one message per tick.
 | `GAP — <name> — P1\|P2 — <what it cannot observe> — <error>` | The scout's own read failed. P1 when the blindness also blinds members or a release watch (for example expired gcloud auth); P2 otherwise. |
 | `DONE — <name> — <target> — <end condition met> — <evidence>` | The end of a target-bound watch. Silence is not success. |
 
-QUIET ticks and the daily SUMMARY are not messages: they go to the watch
-state.
+QUIET ticks, the tick state and the daily SUMMARY are not messages: they go
+to the watch state. Put counters, source coverage and a resume cursor or
+checkpoint in `tick --state`, which each tick replaces. Keep `--summary` for
+the daily summary; never write per-tick state into it.
 
 Dedupe by fingerprint: a monitor or issue id plus the cause. `puppet.py
 scout alert` prints `NEW` or `ESCALATED` (send it) or `SEEN` (do not send
@@ -111,7 +113,8 @@ the primary record:
   - `lastTick`
   - `tickMin`
   - `openAlerts`: fingerprint, severity, kind, text, `firstSeen`, `lastSeen`
-  - `summary`
+  - `state`: the latest `tick --state` text and its time
+  - `summary`: the daily summary and its time
   - `pausedSince`
 - Only the scout writes it, through `puppet.py scout tick|alert|resolve|paused`.
 - `coordinator.py member stale` (and so `round`) and the dashboard read it.
