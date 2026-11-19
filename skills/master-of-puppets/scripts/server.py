@@ -78,6 +78,13 @@ HOST_EVERY = 5
 e = html.escape
 
 
+def automerge_flag(value):
+    """The PR row's auto-merge flag: on or queued(...); nothing for off or merged. A record cached before
+    moplib.automerge_state holds a bool, and merged and closed PRs are not fetched again."""
+    value = {True: "on", False: "off"}.get(value, value) if isinstance(value, bool) else value
+    return "" if value in (None, "off", "merged") else f"auto-merge {value}"
+
+
 def load(path, default):
     try:
         return json.load(open(path))
@@ -850,7 +857,7 @@ def render_page(host):
         state = p.get("state") or "?"
         flags = ["draft" if p.get("draft") else "", f"base {p['base']}" if p.get("base") else "",
                  f"merge {p['merge'].lower()}" if p.get("merge") else "", f"review {p['review']}" if p.get("review") else "",
-                 f"checks {p['checks']}" if p.get("checks") else "", f"auto-merge {p['automerge']}" if p.get("automerge") not in (None, "off") else ""]
+                 f"checks {p['checks']}" if p.get("checks") else "", automerge_flag(p.get("automerge"))]
         body = (meta_line(state, *flags, ", ".join(p.get("who") or []), f"checked {ago_short(checked, now)}" + ("" if ago_short(checked, now) == "now" else " ago") if checked else "")
                 + (f'<p class="danger">{e(p["error"])}</p>' if p.get("error") else "")
                 + (f'<div class="links">{link({"href": p["url"], "label": "Open PR"})}</div>' if p.get("url") else ""))

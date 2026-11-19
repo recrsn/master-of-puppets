@@ -72,6 +72,11 @@ class JoinWelcome(unittest.TestCase):
         self.assertIn("isInMergeQueue", self.m.PR_GQL)
         self.assertEqual(self.m.automerge_state({**d, "isInMergeQueue": False}), "off")
         self.assertEqual(self.m.automerge_state({**d, "state": "MERGED"}), "merged")
+        sys.modules.pop("server", None)
+        flag = importlib.import_module("server").automerge_flag
+        # a record cached before the change holds a bool, and a merged PR is not fetched again
+        self.assertEqual([flag(v) for v in (True, False, None, "off", "merged", "on", "queued(pos=9,QUEUED)")],
+                         ["auto-merge on", "", "", "", "", "auto-merge on", "auto-merge queued(pos=9,QUEUED)"])
 
     def test_a_scout_command_finds_its_coordinator(self):
         with redirect_stdout(io.StringIO()):
