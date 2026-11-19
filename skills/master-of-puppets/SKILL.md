@@ -198,7 +198,8 @@ message and prints the app route to send it by; send it there.
   Close a stream when its goal is done: `coordinator.py stream close`. Stream slugs are
   unique on the machine; only the owner changes a stream.
 - **JOIN** arrives: `coordinator.py join --text "<the JOIN line>" [--local <local_ id>]`
-  (it runs `member add` and prints the WELCOME to send). A JOIN that names a
+  (it runs `member add`, saves the WELCOME to a file and prints the short
+  message and app route that deliver it; send that message at once). A JOIN that names a
   member as `parent` comes from a session that member started before puppets
   lost children: record it under you as any other member; it answers to you.
 - **Scouts** are read-only members that watch one target (production

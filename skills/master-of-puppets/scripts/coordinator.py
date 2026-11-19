@@ -409,7 +409,7 @@ from moplib import (
     class_names, project_key, load_project, save_project, class_peak, typical_minutes,
     suggested_minutes, over_limit, undersized, extend_lease, now, lock, unlock, log, note,
     load_roster, save_roster, live, asleep, load, save, budget, order, queue_entry,
-    say, deliver, notify, READS, memory_path, add_read_commands, pr_refs, gh_http, http_error,
+    say, deliver, notify, automerge_state, READS, memory_path, add_read_commands, pr_refs, gh_http, http_error,
     read_cmd, run, worktree_pids, drain, pool_spec, pool_env, pool_run, pool_info, find_resource, RESOURCE_NAME, parse_prefer, prefer_matches,
     set_state, stop_resource, begin_op, end_op, op_current, op_live, BUSY_STATES, POOL_STUCK_MINUTES, delete_claimed,
     mark_failed, health_run, host_hold, host_held, failed_restart, failed_restart_end, FAIL_DELETE, CLEAN_TIMEOUT, FIND_TIMEOUT, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
@@ -2784,6 +2784,20 @@ MEMBER_LIVES = ("ephemeral", "long-running")  # the JOIN's last field: LEAVE whe
 JOIN_FORMAT = "JOIN — name — tool id — worktree — task — PRs ... — phase — commands — parent P — ephemeral|long-running"
 
 
+def join_gap(parts):
+    """Which field a short JOIN most likely lacks, read from the end, where the fields have fixed forms."""
+    if re.sub(r"\s+", "-", parts[-1].lower()) not in MEMBER_LIVES:
+        return "the last field (ephemeral or long-running) is missing"
+    if not parts[-2].lower().startswith("parent"):
+        return "the field before the last (parent <name|none>) is missing"
+    prs = next((i for i in range(len(parts) - 3, 0, -1) if re.match(r"(?i)prs?\b", parts[i])), None)
+    if prs is None:
+        return "the PRs field (PRs <n ...|none>) is missing"
+    if prs < 5:
+        return "a field before PRs is missing (name, tool and session id, worktree, task)"
+    return "a field between PRs and parent is missing (phase, then planned heavy commands; write none when there are none)"
+
+
 def parse_join(text):
     """The fields of a JOIN line (puppet skill, section 2): name, tool, sessionId, worktree, task, prs, base,
     phase, commands, parent, life (ephemeral or long-running). Fields are split on " — "; a task with a dash in it keeps it, because the
@@ -2791,8 +2805,10 @@ def parse_join(text):
     parts = [p.strip() for p in JOIN_SEP.split(text.strip())]
     if parts[0].upper() == "SCOUT JOIN":
         return parse_scout_join(parts)
-    if len(parts) < 10 or parts[0].upper() != "JOIN":
+    if parts[0].upper() != "JOIN":
         raise ValueError(f"not a JOIN line: {JOIN_FORMAT}")
+    if len(parts) < 10:
+        raise ValueError(f"the JOIN has {len(parts)} fields, at least 10 are needed; {join_gap(parts)}: {JOIN_FORMAT}")
     tool, _, sid = parts[2].partition(" ")
     if tool not in MEMBER_TOOLS:
         raise ValueError(f"unknown tool {tool!r}; known: {', '.join(MEMBER_TOOLS)}")
@@ -2931,7 +2947,16 @@ def welcome_text(me, name, project_root=None):
                      "Choose the smallest time that finishes the whole current unit of work; do not cut a unit to fit "
                      "the suggested time. Split only runs longer than the limit. I charge what you ask and refuse a size "
                      "below my observed peak unless you tell me why the run is smaller.")
-    print("\n".join(lines))
+    full = "\n".join(lines)
+    print(full)
+    path = os.path.join(DIR, "welcome", f"{me}-{name}.txt")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write(full + "\n")
+    short = f"WELCOME {name}: {me} recorded your {'SCOUT JOIN' if scout else 'JOIN'}. Read the full WELCOME at {path} before you work."
+    say(me, short, name)
+    print(f"\n== deliver: the WELCOME is saved at {path} and recorded in the inbox. A script cannot reach a member "
+          f"session, so send this text now by its app route ({native_route(m)}):\n{short}")
     return 0
 
 
@@ -3043,13 +3068,7 @@ def pr_digest(repo, nums):
         bots = [r for r in (p.get("reviews") or {}).get("nodes") or [] if (r.get("author") or {}).get("__typename") == "Bot"]
         bot = bots[-1] if bots else None  # the latest review by a review bot (a GitHub App account)
         threads = p.get("reviewThreads") or {}
-        if p["state"] == "MERGED":
-            auto = "merged"
-        elif p.get("isInMergeQueue"):
-            q = p.get("mergeQueueEntry") or {}
-            auto = f"queued(pos={q.get('position')},{q.get('state')})"
-        else:
-            auto = "on" if p.get("autoMergeRequest") else "off"
+        auto = automerge_state(p)
         out[n] = {
             "ref": f"{repo}#{n}", "state": p["state"], "head": p["headRefOid"], "base": p["baseRefName"],
             "draft": p["isDraft"], "merge": p["mergeStateStatus"], "review": p.get("reviewDecision") or "none",

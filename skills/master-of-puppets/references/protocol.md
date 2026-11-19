@@ -40,7 +40,7 @@ observed peak unless you tell me why the run is smaller.
 
 | Message | Coordinator action |
 | --- | --- |
-| `JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs ... — phase — commands — parent <parent\|none> — <ephemeral\|long-running>` | `coordinator.py join --text "<the line>" [--local <local_ id>]`: member add and the WELCOME text to send. A JOIN without the lifetime field is refused: tell the member the format. A task marked `scheduled:` or `sweep:` is background work (`references/leases.md`, "Priority") |
+| `JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs ... — phase — commands — parent <parent\|none> — <ephemeral\|long-running>` | `coordinator.py join --text "<the line>" [--local <local_ id>]`: member add, the WELCOME saved to a file, and the short message and app route to deliver it. A short JOIN is refused with the missing field named: tell the member. A task marked `scheduled:` or `sweep:` is background work (`references/leases.md`, "Priority") |
 | `SCOUT JOIN — <name> — <tool> <session id> — <worktree\|none> — <class> — <targets> — <end\|long-running> — tick <n> min — parent <parent\|none>` | `coordinator.py join --text "<the line>" [--local <local_ id>]`: member add --role scout and the scout WELCOME (`references/scouts.md`) |
 | `ALERT — <scout> — P0\|P1\|P2 — <fingerprint> — <line>` | `note` it; act or find the owner; acknowledge with `note --text "ACK <fingerprint> ..."`. P0: to the user at once, quoted (`references/scouts.md`) |
 | `UPDATE — <scout> — <fingerprint> — <change>`, `GAP — <scout> — P1\|P2 — ...`, `DONE — <scout> — ...` | `note`; a P1 GAP that blinds members is a host problem to fix or take to the user; after DONE, accept the scout's LEAVE (`leave --no-release-check`) |

@@ -850,7 +850,7 @@ def render_page(host):
         state = p.get("state") or "?"
         flags = ["draft" if p.get("draft") else "", f"base {p['base']}" if p.get("base") else "",
                  f"merge {p['merge'].lower()}" if p.get("merge") else "", f"review {p['review']}" if p.get("review") else "",
-                 f"checks {p['checks']}" if p.get("checks") else "", "auto-merge on" if p.get("automerge") else ""]
+                 f"checks {p['checks']}" if p.get("checks") else "", f"auto-merge {p['automerge']}" if p.get("automerge") not in (None, "off") else ""]
         body = (meta_line(state, *flags, ", ".join(p.get("who") or []), f"checked {ago_short(checked, now)}" + ("" if ago_short(checked, now) == "now" else " ago") if checked else "")
                 + (f'<p class="danger">{e(p["error"])}</p>' if p.get("error") else "")
                 + (f'<div class="links">{link({"href": p["url"], "label": "Open PR"})}</div>' if p.get("url") else ""))

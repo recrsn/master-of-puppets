@@ -1818,11 +1818,22 @@ def coordinator_prs(me):
     return {ref for ref, who in pr_refs().items() if any(w == me or w.startswith(me + "/") for w in who)}
 
 
+def automerge_state(d):
+    """merged, queued(pos=N,STATE), on or off, from a PR record. GitHub clears autoMergeRequest when the PR enters
+    the merge queue, so the queue entry is read first; `watch` and `pr` both use this one answer."""
+    if d.get("state") == "MERGED":
+        return "merged"
+    if d.get("isInMergeQueue"):
+        q = d.get("mergeQueueEntry") or {}
+        return f"queued(pos={q.get('position')},{q.get('state')})"
+    return "on" if d.get("autoMergeRequest") else "off"
+
+
 def pr_line(d):
     """The one-line state that `watch` prints, from a `gh pr view --json` record."""
     sha = f" sha={d['mergeCommit']['oid'][:12]}" if d.get("mergeCommit") else ""
     return (f"{d['state']} base={d['baseRefName']} draft={str(d['isDraft']).lower()} merge={d['mergeStateStatus']} "
-            f"automerge={'on' if d.get('autoMergeRequest') else 'off'} review={d.get('reviewDecision') or 'none'}{sha}")
+            f"automerge={automerge_state(d)} review={d.get('reviewDecision') or 'none'}{sha}")
 
 
 def pr_checks(d):
@@ -1891,7 +1902,7 @@ def pr_scan(repo, old, at):
 
 
 PR_GQL = """number state title url baseRefName isDraft mergeStateStatus reviewDecision
-  autoMergeRequest { enabledAt } mergeCommit { oid }
+  autoMergeRequest { enabledAt } isInMergeQueue mergeQueueEntry { state position } mergeCommit { oid }
   commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
     __typename ... on CheckRun { status conclusion } ... on StatusContext { state } } } } } } }"""
 
@@ -1949,7 +1960,7 @@ def pr_record(old, at, stamp, d, err):
     line = pr_line(d)
     return {"updated": stamp if stamp is not None else old.get("updated"), "line": line, "state": d["state"],
             "title": d.get("title", ""), "url": d.get("url", ""), "base": d["baseRefName"], "draft": d["isDraft"],
-            "merge": d["mergeStateStatus"], "automerge": bool(d.get("autoMergeRequest")), "review": d.get("reviewDecision") or "none",
+            "merge": d["mergeStateStatus"], "automerge": automerge_state(d), "review": d.get("reviewDecision") or "none",
             "checks": pr_checks(d), "checkedAt": at, "fullAt": at,
             "changedAt": at if line != old.get("line") else old.get("changedAt", at)}
 

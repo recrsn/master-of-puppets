@@ -65,7 +65,7 @@ Usage: python3 -I puppet.py <command> ...
        When the class has a recycle command, release then resets the resource (it stays busy until
        done) and logs `resource recycled ... free=N GiB`; a failed reset destroys it with the class's
        delete command and logs `resource destroyed ... reason="..."`.
-  scout tick|alert|resolve|paused|show --coordinator C --name NAME ...   (scouts only)
+  scout tick|alert|resolve|paused|show [--coordinator C] --name NAME ...   (scouts only)
        a scout's own watch state file, scouts/NAME.json, which C's heartbeat and the dashboard read.
        tick [--state TEXT] [--summary TEXT]: a check (QUIET ticks, the tick state and the daily summary go here, never in a message).
        alert --fingerprint F --severity P0|P1|P2 [--kind alert|gap] --text TEXT: prints NEW or
@@ -420,6 +420,14 @@ def scout_cmd(args):
     """A scout's own watch state file (references/scouts.md): tick, alert, resolve, paused, show.
     Only the scout itself writes it; the coordinator heartbeat and the dashboard read it."""
     roster = load_roster()
+    if not args.coordinator:
+        found = [c for c, ms in roster["members"].items()
+                 if any(x["name"] == args.name and x.get("role") == "scout" and x.get("status") != "done" for x in ms)]
+        if len(found) != 1:
+            print(f"{args.name} is a scout of {', '.join(found)}: give --coordinator" if found else
+                  f"{args.name} is not a scout in the roster; send SCOUT JOIN first")
+            return 3
+        args.coordinator = found[0]
     m = next((x for x in roster["members"].get(args.coordinator, []) if x["name"] == args.name), None)
     if m is None or m.get("role") != "scout":
         print(f"{args.name} is not a scout of {args.coordinator}; send SCOUT JOIN first")
@@ -522,7 +530,7 @@ def main(argv=None):
                        ("resolve", "close an alert; prints whether to send UPDATE"), ("paused", "a send returned Paused"),
                        ("show", "print the state file")):
         x = scs.add_parser(name, help=what)
-        x.add_argument("--coordinator", required=True)
+        x.add_argument("--coordinator", help="default: the one coordinator whose roster has you as a scout")
         x.add_argument("--name", required=True, help="your scout name")
         if name == "tick":
             x.add_argument("--state", help="this tick's own state (counters, coverage, cursor or checkpoint); it replaces "
