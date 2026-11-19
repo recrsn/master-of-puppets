@@ -23,6 +23,9 @@ tool equivalents and session ids, and the "Routes" section of
 your coordinator.
 
 Below, `puppet.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/puppet.py"`.
+To reach your coordinator, look up the route before each send (protocol.md,
+"Routes"; it also says what to do when a send fails). When `puppet.py --help`
+lists `route`, run `puppet.py route` and use the first route that works.
 In a shell, define it as a function, not a variable (zsh does not split a
 variable into words): `puppet() { python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/puppet.py" "$@"; }`.
 If the file does not exist, no coordinator

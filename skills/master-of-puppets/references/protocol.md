@@ -117,6 +117,18 @@ a file and name it with `send --file <path>`.
 The coordinator records member updates in the roster/dashboard and decisions
 in the ledger; member messages need no shared inbox copy.
 
+- **Find the route at each send, never from memory.** Run `puppet.py route`
+  (a member: its own coordinator; anyone: `--coordinator C`). It prints the
+  routes that reach the coordinator now, best first. Never copy a route or a
+  session name into a scheduled prompt: names change when a thread is renamed
+  or restarts. When the command is not known yet (it comes with an install),
+  use the routes below.
+- **A failed send:** look up the route again, send once by the next route, and
+  after a second failure tell the user. When `puppet.py --help` lists `tell`,
+  a member's last route is `puppet.py tell --text "..."`: an inbox record
+  that the coordinator's `watch` shows, sent in the member's own name. Never send one message by two
+  routes that both work.
+- If you use T3 Code, read [t3-code.md](t3-code.md): route by thread id there.
 - Claude session to Claude session: `SendMessage` to the session name from
   `ListAgents`, or to its session id. A session-id route can stop after about
   10 messages until the user types in that session; prefer the name route.

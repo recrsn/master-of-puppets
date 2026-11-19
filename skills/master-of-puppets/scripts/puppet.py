@@ -91,7 +91,7 @@ from moplib import (
     load, save, load_roster, queue_entry, extension_refusal, READS, add_read_commands, read_cmd, version_warning, drain,
     find_resource, set_state, mark_failed, parse_prefer, RESOURCE_NAME, pool_spec,
     begin_op, recycle_run, recycle_note, destroy_recycled, recycle_released, health_released,
-    write_json, scout_path, scout_state, SCOUT_SEVERITIES,
+    write_json, scout_path, scout_state, SCOUT_SEVERITIES, SEND_MAX, member_of_session, session_identity, deliver,
 )
 
 MAX_RECYCLE_DESTROYS = 3  # resources one await-grant may destroy for failed recycles before it stops re-queueing
@@ -416,6 +416,27 @@ def release(args):
 SEV_RANK = {s: i for i, s in enumerate(SCOUT_SEVERITIES)}  # P0 first
 
 
+def tell_cmd(args):
+    """tell: a member's message to its own coordinator when no app route works: an inbox record (the
+    coordinator's watch shows it), then a best-effort direct delivery. The sender is the member whose roster
+    session is the caller's, so no session can write in another member's name."""
+    roster = load_roster()
+    coord, m = member_of_session(roster, session_identity()[0])
+    if not m:
+        print("this session is not a member in the roster (after /clear or a new thread the id changes): "
+              "send JOIN by an app route (puppet.py route --coordinator C)")
+        return 3
+    text = " ".join(args.text.split())
+    if len(text) > SEND_MAX:
+        print(f"{len(text)} characters; at most {SEND_MAX}: put the details in a file and name its path")
+        return 2
+    c = roster["coordinators"].get(coord) or {}
+    say(m["name"], text, coord)
+    print(f"inbox: recorded for {coord}; its watch shows it")
+    print(deliver(coord, c.get("tool"), c.get("sessionId"), f"[{m['name']} via puppet.py tell] {text}"))
+    return 0
+
+
 FLAP_TICKS = 4  # tick lengths a resolved fingerprint is remembered: real ticks run late, and the rule is 2 clean ticks
 
 
@@ -548,6 +569,8 @@ def main(argv=None):
     r.add_argument("--process", action="append", help="also count processes matching this pattern (pgrep -f)")
     r.add_argument("--ignore-pid", type=int, action="append", help="a process in the worktree that the run did not start "
                    "(for example your own wait loop); name the reason in --note")
+    tl = sub.add_parser("tell", help="message your coordinator through the inbox when no app route works (puppet.py route)")
+    tl.add_argument("--text", required=True, help=f"one message, at most {SEND_MAX} characters; never a secret")
     sc = sub.add_parser("scout", help="a scout's own watch state (references/scouts.md); never put a secret in --text, --state or --summary")
     scs = sc.add_subparsers(dest="scmd", required=True)
     for name, what in (("tick", "record a check; QUIET ticks go here only"), ("alert", "open or refresh an alert; prints whether to send it"),
@@ -571,6 +594,8 @@ def main(argv=None):
     args = p.parse_args(argv)
     if args.cmd == "scout":
         return scout_cmd(args)
+    if args.cmd == "tell":
+        return tell_cmd(args)
     if args.cmd in ("await-grant", "extend", "release") and not args.cls:
         args.cls = class_of(args.id)
         if not args.cls:

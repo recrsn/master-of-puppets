@@ -60,3 +60,7 @@ controls and configured permissions unless the user specifies a mode for the
 task. There is no universal Full access requirement for new sessions,
 follow-ups, heartbeats or cloud tasks. Execution permissions do not broaden
 task authorization.
+
+A Codex member in a sandbox runs `puppet.py` and other commands that need the
+network or the lease server with per-command escalation. It asks the user
+only when the escalation is refused.

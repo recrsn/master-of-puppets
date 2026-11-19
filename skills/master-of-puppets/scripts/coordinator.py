@@ -410,7 +410,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.dont_write_bytecode = True  # no __pycache__ in the shared state dir
 from moplib import (
-    RUN, caller, captured, coordinator_prs, cenv, forward, in_run, mark, nap, restart_server, session_identity,
+    SEND_MAX, RUN, caller, captured, coordinator_prs, cenv, forward, in_run, mark, nap, restart_server, session_identity,
     DIR, CONFIG, MEMBER_TOOLS, SLUG, FILES, OBSOLETE, SOURCE, version_warning, PEAKS,
     INBOX, LEDGER, PRS_STATE, PRS_EVENTS, PRS_POLL_S, CLASS_NAME, read_json, write_json, load_machine, registry,
     class_names, project_key, load_project, save_project, class_peak, typical_minutes,
@@ -735,7 +735,6 @@ def config_cmd(args):
 # ---------------------------------------------------------------- peer messaging
 
 
-SEND_MAX = 1200  # characters: a longer message goes in a file, named with --file
 
 
 def native_route(m):
@@ -923,6 +922,18 @@ def kickoff_line(coord, name, parent, role="puppet"):
 HANDOFF_SECONDS = 120
 
 
+def note_route(c):
+    """Record the caller's T3 Code thread on its own coordinator entry: members look it up with
+    puppet.py route when the app name they had stops working."""
+    if c.get("sessionId") not in (cenv("CLAUDE_CODE_SESSION_ID"), cenv("CODEX_THREAD_ID")):
+        return  # the dashboard or another session: it does not know this coordinator's thread
+    thread = cenv("T3CODE_THREAD_ID")
+    if thread:
+        c["t3Thread"] = thread
+    else:
+        c.pop("t3Thread", None)
+
+
 def register(args, roster, cur):
     """Claim name C for this session. A name another session holds is refused, except while its handoff
     is open (`handoff`, or the dashboard): then this session is C-new until the user confirms on the dashboard."""
@@ -967,6 +978,7 @@ def register(args, roster, cur):
         "status": "active",
         "general": args.general,
     }
+    note_route(coords[name])
     roster["members"].setdefault(name, [])
     save_roster(roster)
     log(f"coordinate {name} tool={tool} focus={args.focus!r}")
@@ -1063,6 +1075,7 @@ def roster_cmd(args):
                 if args.status == "idle":
                     print(json.dumps({"asleep": "stop your heartbeat schedule and watchers; wake with heartbeat --status active"}))
             cur["heartbeat"] = now().isoformat()
+            note_route(cur)
             save_roster(roster)
             return 0
         if args.to:
@@ -4007,6 +4020,7 @@ def renew_heartbeat(me):
         c = roster["coordinators"].get(me)
         if c:
             c["heartbeat"] = now().isoformat()
+            note_route(c)
             save_roster(roster)
     finally:
         unlock()

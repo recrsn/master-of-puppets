@@ -79,7 +79,8 @@ RUN = threading.local()  # per run in the server: env (the client's), cancel (an
 CLIENT_ENV = ("CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "XDG_RUNTIME_DIR", "CLAUDE_CODE_TMPDIR",
               "MOP_CLIENT_PID", "MOP_CLIENT_PGID",  # the client process, for session_pids
               "MOP_FOLLOW_OFFSETS",  # where a resumed run's follow starts
-              "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID")  # who calls: session_identity
+              "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID",  # who calls: session_identity
+              "T3CODE_THREAD_ID")  # the caller's T3 Code thread, a route that outlives renames: coordinator_routes
 PATH_FLAGS = ("--worktree", "--root", "--path", "--project-root")
 RESUMABLE = ("watch", "await-grant", "calm-wait", "measure-peak")  # rerun after a server restart
 SERVER_LOG = os.path.join(DIR, "server.log")
@@ -1501,6 +1502,53 @@ def deliver(name, tool, session_id, text):
     return f"{name}: {send_codex(session_id, text) if tool == 'codex' else send_claude(session_id, text)}"
 
 
+SEND_MAX = 1200  # characters: a longer message goes in a file, named with --file
+
+
+def coordinator_routes(name, c):
+    """The routes that reach coordinator `name` (roster entry c), best first, as lines a member can act on.
+    A display name is never recorded: it changes; the thread and session ids do not."""
+    rows = []
+    if c.get("t3Thread"):
+        rows.append(f"T3 Code: t3_thread_send with threadId {c['t3Thread']} (references/t3-code.md)")
+    if c.get("tool") == "codex" and c.get("sessionId"):
+        rows.append(f"Codex: send_message_to_thread with threadId {c['sessionId']}")
+    elif c.get("sessionId"):
+        rows.append(f"Claude: SendMessage to {c['sessionId']}, or to its name from ListAgents")
+    rows.append('fallback: puppet.py tell --text "..." (an inbox record; the coordinator\'s watch shows it)')
+    return rows
+
+
+def member_of_session(roster, sid):
+    """(coordinator, member) whose roster sessionId is sid and that is not done, else (None, None)."""
+    for coord, ms in roster["members"].items():
+        for m in ms:
+            if m.get("sessionId") == sid and m.get("status") != "done":
+                return coord, m
+    return None, None
+
+
+def route_cmd(args):
+    """route: how to reach a coordinator now. Default: the caller's own coordinator."""
+    roster = load_roster()
+    name = args.coordinator
+    if not name:
+        name = member_of_session(roster, session_identity()[0])[0]
+        if not name:
+            print("this session is not a member in the roster: give --coordinator, or send JOIN first")
+            return 3
+    c = roster["coordinators"].get(name)
+    if not c:
+        print(f"{name} is not a registered coordinator; run puppet.py roster")
+        return 3
+    beat = c.get("heartbeat")
+    age = f"{(now() - dt.datetime.fromisoformat(beat)).total_seconds() / 60:.0f} min ago" if beat else "never"
+    print(f"coordinator {name} ({c.get('tool')}, {'live' if live(c) else 'NOT LIVE'}, heartbeat {age})")
+    for i, row in enumerate(coordinator_routes(name, c), 1):
+        print(f"  {i}. {row}")
+    return 0
+
+
 def tell_member(sender, coord, name, message):
     """Tell member name of coordinator coord: an inbox record to it, then direct delivery to its session
     (members do not read the shared inbox). Returns the delivery line."""
@@ -1525,7 +1573,7 @@ def notify(to, message):
 # ---------------------------------------------------------------- read commands (coordinator.py and puppet.py)
 
 
-READS = ("roster", "whoami", "memory", "inbox", "ledger", "events", "who", "sizes")
+READS = ("roster", "whoami", "memory", "inbox", "ledger", "events", "who", "sizes", "route")
 AGO = re.compile(r"^(\d+)([smhd])$")
 AGO_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 
@@ -1604,6 +1652,8 @@ def add_read_commands(sub, memory=None):
     g.add_argument("--worktree")
     g.add_argument("--repo", help="owner/repo")
     g.add_argument("--text", help="case-insensitive match on names, tasks, focus, labels and goals")
+    rt = sub.add_parser("route", help="how to reach a coordinator now, best route first")
+    rt.add_argument("--coordinator", help="default: your own coordinator")
     sz = sub.add_parser("sizes", help="a project's recorded run sizes per class: the figures to size a lease from")
     sz.add_argument("--worktree", required=True)
     sz.add_argument("--class", dest="lcls", metavar="CLASS")
@@ -1744,6 +1794,8 @@ def read_cmd(args):
         return who_cmd(args)
     if args.cmd == "sizes":
         return sizes_cmd(args)
+    if args.cmd == "route":
+        return route_cmd(args)
     roster = load_roster()
     if args.cmd == "whoami":
         me = find_session(roster, args.session_id or session_identity()[0])

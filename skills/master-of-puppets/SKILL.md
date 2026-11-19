@@ -75,6 +75,7 @@ file, `references/handoff.md` before you send or take a handoff, and
 Read these only when your setup uses CodeRabbit: `references/coderabbit.md`
 for its code review, and `references/coderabbit-cloud.md` before you
 suggest, start or track a CodeRabbit cloud task.
+Read `references/t3-code.md` only when your sessions run in T3 Code.
 
 Read [references/agents.md](references/agents.md) for Claude/Codex tool
 equivalents, session identity, messaging, watchers, scheduling and PR repair.
@@ -222,6 +223,14 @@ message and prints the app route to send it by; send it there.
   user first with the ask-user tool (task, worktree or branch, PRs) and start
   the session only on yes (`references/agents.md`). Subagents need no
   enrollment.
+- **Where new work goes** (user rules, 19 Nov), in this order:
+  1. The member that owns the stream (`who --text`, `roster`): send it the
+     work. Do not start a session for work an owner can take.
+  2. Ephemeral or parallel work with an end: a delegated child (a subagent or
+     a delegated task), not a new top-level session.
+  3. A workstream that no owner covers: one new top-level session, enrolled
+     with its own `--stream`. Never start several for one stream; when
+     streams overlap, merge them and hand the work to one owner.
 - **TASK REQUEST** arrives (`TASK REQUEST — <member> — <task> — <why> — PRs ...`):
   members never start sessions themselves. Decide; when it should run, enroll
   and start it as above. The new session answers to you, not to the member.
