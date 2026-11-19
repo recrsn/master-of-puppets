@@ -37,7 +37,9 @@ class Adopt(unittest.TestCase):
         roster["members"]["a"] = [
             {"name": "w1", "tool": "claude", "sessionId": "m1", "status": "active", "prs": [11], "task": "one"},
             {"name": "w2", "tool": "codex", "sessionId": "m2", "status": "paused", "prs": [], "task": "two"},
-            {"name": "old", "tool": "claude", "sessionId": "m3", "status": "done", "prs": [], "task": "done one"}]
+            {"name": "old", "tool": "claude", "sessionId": "m3", "status": "done", "prs": [], "task": "done one"},
+            {"name": "sc", "role": "scout", "tool": "claude", "sessionId": "m4", "status": "active", "prs": [], "task": "scout"},
+            {"name": "cr", "tool": "coderabbit", "sessionId": "t1", "status": "active", "prs": [], "task": "cloud"}]
         roster["streams"] = {"s-open": {"coordinator": "a", "label": "Open", "status": "open"},
                              "s-closed": {"coordinator": "a", "label": "Closed", "status": "closed"},
                              "s-other": {"coordinator": "x", "label": "Other", "status": "open"}}
@@ -57,6 +59,8 @@ class Adopt(unittest.TestCase):
                                                                  {"id": "d2", "text": "release?"}]})
         with open(os.path.join(self.dir, "prs-a.txt"), "w") as f:
             f.write("owner/repo#7 watch\nowner/repo#9\n")
+        with open(os.path.join(self.dir, "cloud-a.txt"), "w") as f:
+            f.write("task-1 cr\n")
 
     def tearDown(self):
         sys.path.remove(SCRIPTS)
@@ -104,7 +108,7 @@ class Adopt(unittest.TestCase):
         code, out = self.run_as("b", "adopt", "--from", "a")
         self.assertEqual(code, 0, out)
         roster = self.m.load_roster()
-        self.assertEqual(sorted(m["name"] for m in roster["members"]["b"]), ["w1", "w2"])
+        self.assertEqual(sorted(m["name"] for m in roster["members"]["b"]), ["cr", "sc", "w1", "w2"])
         self.assertEqual(sorted(roster["coordinators"]["b"]["prs"]), [7, 11])
         self.assertNotIn("a", roster.get("handoffs", {}))
         self.assertEqual(set(self.coords_of_leases().values()), {"b"})
@@ -112,17 +116,20 @@ class Adopt(unittest.TestCase):
         self.assertIn("owner/repo#9", open(os.path.join(self.dir, "prs-b.txt")).read())
         self.assertFalse(os.path.exists(os.path.join(self.dir, "prs-a.txt")))
         self.assertIn("HANDOFF COMPLETE — w1 — JOIN b", out)
+        self.assertIn("HANDOFF COMPLETE — sc — SCOUT JOIN b", out)
+        self.assertIn("cr: no session to tell", out)
+        self.assertIn("task-1", open(os.path.join(self.dir, "cloud-b.txt")).read())
         self.assertIn("send_message_to_thread with threadId m2", out)
 
     def test_adopt_after_a_plain_resign(self):
         code, out = self.run_as("a", "resign")
         self.assertEqual(code, 0)
         left = json.loads(out)["left_without_owner"]
-        self.assertEqual(left, {"members": ["w1", "w2"], "streams": ["s-closed", "s-open"], "prs": [7]})
+        self.assertEqual(left, {"members": ["w1", "w2", "sc", "cr"], "streams": ["s-closed", "s-open"], "prs": [7]})
         code, out = self.run_as("b", "adopt", "--from", "a")
         self.assertEqual(code, 0, out)
         roster = self.m.load_roster()
-        self.assertEqual(sorted(m["name"] for m in roster["members"]["b"]), ["w1", "w2"])
+        self.assertEqual(sorted(m["name"] for m in roster["members"]["b"]), ["cr", "sc", "w1", "w2"])
         self.assertEqual(roster["streams"]["s-open"]["coordinator"], "b")
         self.assertEqual(set(self.coords_of_leases().values()), {"b"})
         self.assertEqual(sorted(roster["coordinators"]["b"]["prs"]), [7, 11])
@@ -133,7 +140,7 @@ class Adopt(unittest.TestCase):
         code, out = self.run_as("b", "adopt", "--from", "a")
         self.assertEqual(code, 3)
         self.assertIn("resign --to b", out)
-        self.assertEqual(len(self.m.load_roster()["members"]["a"]), 3)
+        self.assertEqual(len(self.m.load_roster()["members"]["a"]), 5)
 
 
 if __name__ == "__main__":

@@ -160,15 +160,17 @@ tasks; only the coordinator changes, so the worktree rule does not apply.
 1. **Sender:** write the note, then `coordinator.py resign --to <receiver> --note <path>`.
    One write offers every member that is not done, gives the receiver every
    stream (open and closed), keeps the PR claim and the watch list for it, and
-   resigns. The command puts `HANDOFF` in the receiver's inbox and delivers it.
-   Then stop your watcher and heartbeat schedule.
+   resigns. The command puts `HANDOFF` in the receiver's inbox, and its
+   `watch` prints it. Then stop your watcher and heartbeat schedule.
 2. **Receiver:** read the note, then `coordinator.py adopt --from <sender>`.
    It moves the members, their lease entries and dashboard rows, the PR claim
-   (except PRs another live coordinator owns, which it lists), the watch list
-   and the open decisions. It refuses, before any write, when a member name
-   is already yours. It prints each member's app route and the line to send:
-   `HANDOFF COMPLETE — <name> — JOIN <receiver>`. Send each one; the member
-   sends JOIN to you.
+   (except PRs another live coordinator owns, which it lists), the PR and
+   cloud-task watch lists and the open decisions. It refuses, before any
+   write, when a member name is already yours. It prints each member's app
+   route and the line to send: `HANDOFF COMPLETE — <name> — JOIN <receiver>`
+   (`SCOUT JOIN` for a scout). Send each one; the member sends JOIN to you.
+   A cloud task or a pending member has no session: it is yours with no
+   message.
 
 A coordinator that resigned without `--to` leaves its members and streams
 without an owner; `resign` lists them. Any live coordinator takes them with

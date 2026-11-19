@@ -221,9 +221,9 @@ Roster and members (coordinators write; members send messages, and request and r
   member accept --name NAME --from C1
   resign [--to C2 [--note PATH]] | adopt --from C1
        resign --to offers every member that is not done to live coordinator C2, gives C2 every stream and keeps
-       C's PR claim and watch list for it, then resigns; C2's watch prints HANDOFF; C2 runs adopt. A plain resign
+       C's PR claim and watch lists for it, then resigns; C2's watch prints HANDOFF; C2 runs adopt. A plain resign
        prints what it leaves without an owner. adopt --from takes what C1 offered, or, when C1 resigned without
-       --to, all its members, streams, lease entries, PR claim, watch list and decisions; it refuses a taken
+       --to, all its members, streams, lease entries, PR claim, watch lists and decisions; it refuses a taken
        member name and prints the HANDOFF COMPLETE line to send each member.
        transfer offers a member to live coordinator C2; C2's watch prints TRANSFER; C2 runs accept.
        accept moves it in one locked write: the roster entry and its pending children,
@@ -1388,8 +1388,7 @@ def resign_to(args, roster):
     text = (f"HANDOFF {me} to {to}: {len(offered)} members, {len(streams)} streams (now yours), PRs "
             f"{' '.join('#' + str(n) for n in prs) or 'none'}" + (f", note {args.note}" if args.note else "")
             + f". {me} resigned: take the rest with coordinator.py adopt --from {me}")
-    say(me, text, to)
-    print(deliver(to, coords[to].get("tool"), coords[to].get("sessionId"), f"[{me} via coordinator.py resign] {text}"))
+    say(me, text, to)  # the inbox only, as member transfer: deliver would wait on a session lookup under the lock
     print(json.dumps({"resigned": me, "to": to, "offered": offered, "streams": streams, "prs": prs}))
     return 0
 
@@ -1430,8 +1429,10 @@ def adopt_cmd(args, roster):
             roster["handoffs"].pop(src)
     names, member_prs, leases = move_members(roster, src, me, moving, all_leases=gone)
     if gone:
-        watch_src, watch_me = os.path.join(DIR, f"prs-{src}.txt"), os.path.join(DIR, f"prs-{me}.txt")
-        if os.path.exists(watch_src):
+        for kind in ("prs", "cloud"):  # the PR and cloud-task watch lists: one entry per line, keyed by its first word
+            watch_src, watch_me = os.path.join(DIR, f"{kind}-{src}.txt"), os.path.join(DIR, f"{kind}-{me}.txt")
+            if not os.path.exists(watch_src):
+                continue
             have = open(watch_me).read().splitlines() if os.path.exists(watch_me) else []
             keys = {(x.split() or [""])[0] for x in have}
             add = [x for x in open(watch_src).read().splitlines() if x.strip() and x.split()[0] not in keys]
@@ -1453,7 +1454,10 @@ def adopt_cmd(args, roster):
          + (" ".join("#" + str(n) for n in all_prs) or "none"))
     print(json.dumps({"adopted": names, "streams": streams, "prs": all_prs, "leases": leases, "prs_owned_by_other": skipped}))
     for m in moving:
-        line = f"HANDOFF COMPLETE — {m['name']} — JOIN {me}"
+        if m.get("tool") == "coderabbit" or m.get("status") == "pending" or not m.get("sessionId"):
+            print(f"{m['name']}: no session to tell ({m.get('tool')}, {m.get('status')}); it is yours now")
+            continue
+        line = f"HANDOFF COMPLETE — {m['name']} — {'SCOUT JOIN' if m.get('role') == 'scout' else 'JOIN'} {me}"
         say(me, line, m["name"])
         print(f"send to {m['name']} by its app route ({native_route(m)}): {line}")
     return 0

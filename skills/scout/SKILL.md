@@ -42,6 +42,13 @@ Wait for WELCOME. It gives the rules from the coordinator's memory. Follow the
 rules that apply to reading and reporting; the lease rules do not apply to
 you.
 
+When your coordinator hands its whole stack to another one, the new
+coordinator sends `HANDOFF COMPLETE — <name> — SCOUT JOIN <coordinator>`.
+Send your SCOUT JOIN line to that coordinator, wait for its WELCOME, and from
+then on report to it. In `puppet.py scout` commands, give the new name to
+`--coordinator`, or leave the flag out: the roster names your coordinator.
+Your scout state file stays as it is.
+
 ## 2. Each tick
 
 1. Check every target with read-only tools only (scouts.md, "Permissions").

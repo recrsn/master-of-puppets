@@ -1818,14 +1818,16 @@ def coordinator_prs(me):
     return {ref for ref, who in pr_refs().items() if any(w == me or w.startswith(me + "/") for w in who)}
 
 
-def automerge_state(d):
+def automerge_state(d, position=True):
     """merged, queued(pos=N,STATE), on or off, from a PR record. GitHub clears autoMergeRequest when the PR enters
-    the merge queue, so the queue entry is read first; `watch` and `pr` both use this one answer."""
+    the merge queue, so the queue entry is read first; `watch` and `pr` both use this one answer. Without
+    position it is queued(STATE): the watch line, which writes an event at each change, then does not change
+    each time the queue moves."""
     if d.get("state") == "MERGED":
         return "merged"
     if d.get("isInMergeQueue"):
         q = d.get("mergeQueueEntry") or {}
-        return f"queued(pos={q.get('position')},{q.get('state')})"
+        return f"queued(pos={q.get('position')},{q.get('state')})" if position else f"queued({q.get('state')})"
     return "on" if d.get("autoMergeRequest") else "off"
 
 
@@ -1833,7 +1835,7 @@ def pr_line(d):
     """The one-line state that `watch` prints, from a `gh pr view --json` record."""
     sha = f" sha={d['mergeCommit']['oid'][:12]}" if d.get("mergeCommit") else ""
     return (f"{d['state']} base={d['baseRefName']} draft={str(d['isDraft']).lower()} merge={d['mergeStateStatus']} "
-            f"automerge={automerge_state(d)} review={d.get('reviewDecision') or 'none'}{sha}")
+            f"automerge={automerge_state(d, position=False)} review={d.get('reviewDecision') or 'none'}{sha}")
 
 
 def pr_checks(d):

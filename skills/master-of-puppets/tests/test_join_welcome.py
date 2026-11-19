@@ -68,7 +68,7 @@ class JoinWelcome(unittest.TestCase):
         d = {"state": "OPEN", "baseRefName": "main", "isDraft": False, "mergeStateStatus": "CLEAN",
              "autoMergeRequest": None, "isInMergeQueue": True, "mergeQueueEntry": {"position": 9, "state": "QUEUED"}}
         self.assertEqual(self.m.automerge_state(d), "queued(pos=9,QUEUED)")
-        self.assertIn("automerge=queued(pos=9,QUEUED)", self.m.pr_line(d))
+        self.assertIn("automerge=queued(QUEUED)", self.m.pr_line(d))  # no position: a queue move is no event
         self.assertIn("isInMergeQueue", self.m.PR_GQL)
         self.assertEqual(self.m.automerge_state({**d, "isInMergeQueue": False}), "off")
         self.assertEqual(self.m.automerge_state({**d, "state": "MERGED"}), "merged")
