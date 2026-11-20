@@ -238,7 +238,9 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
      (`REQUEUED`), so keep waiting. `release` resets the resource again.
    Never write polling loops. Your position can change: the queue goes by
    priority, then FIFO, and your coordinator sets the priority. Keep
-   waiting; `await-grant` follows the queue.
+   waiting; `await-grant` follows the queue and prints `QUEUED ... position
+   <n> of <m>` each time your place changes. Do not read the lease files
+   yourself, and send no message about the wait.
 3. Run only the granted commands and cleanup of resources they started.
    Use it or return it: no edits or repairs while holding a lease. On failure,
    clean up owned resources, release promptly and report the raw failure;

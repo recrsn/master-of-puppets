@@ -234,12 +234,12 @@ def recycle_granted(cls, lease_id, requeue):
 def await_grant(args):
     """Poll without the lock. The coordinator may queue the ID for the member, so the
     ID gets --appear-timeout to show up before it is judged. Prints HELD <reason> when
-    the coordinator holds or reviews the entry, then one final line: GRANTED, DENIED,
+    the coordinator holds or reviews the entry, QUEUED <position> each time the position changes, then one final line: GRANTED, DENIED,
     LEFT-QUEUE, TIMEOUT or NEVER-QUEUED <reason>; only GRANTED (exit 0) means granted, and no
     other final line contains the word GRANTED, so a text match cannot read a refusal as a grant. A pool class with a
     recycle command resets the granted resource first (recycle_granted)."""
     start = time.time()
-    seen, held, assigning, destroyed = False, None, None, 0
+    seen, held, assigning, destroyed, place = False, None, None, 0, None
     while True:
         state = load()
         held_lease = next((h for h in state[args.cls] if h["id"] == args.id), None)
@@ -279,6 +279,13 @@ def await_grant(args):
                 held = status
                 if held:
                     print(f"HELD {args.cls} {args.id}: {held}", flush=True)
+            ready = [q["id"] for q in state["queue"][args.cls] if not q.get("hold")]
+            now_place = (ready.index(args.id) + 1, len(ready)) if args.id in ready else None
+            if now_place and now_place != place:  # a silent wait made members read leases.json by hand
+                ahead = ready[now_place[0] - 2] if now_place[0] > 1 else None
+                print(f"QUEUED {args.cls} {args.id}: position {now_place[0]} of {now_place[1]}"
+                      + (f" (next ahead: {ahead})" if ahead else " (next)") + "; keep waiting", flush=True)
+            place = now_place
             if entry.get("assigning") != assigning:
                 assigning = entry.get("assigning")
                 if assigning:
