@@ -176,7 +176,9 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
 - `UPDATE — <name> — <phase> — <newest fact>` on each change, and at least
   every 30 minutes while you work. While you are idle (section 7), send
   none. The coordinator checks on silent members each round, but your report
-  is the record. It goes on the dashboard: keep
+  is the record. A turn that a schedule started (a scheduled task, a cron)
+  and that finds a change sends an UPDATE by your route, even when its
+  prompt has no send step: text in your own thread is not a report. It goes on the dashboard: keep
   the phase to 5 words and the fact to one plain sentence of 20 words. Write
   PRs as `#123`. No SHAs, test counts, paths or commands.
 - `MERGED — #<n> — <merge sha>` for each merged PR.
