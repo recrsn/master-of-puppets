@@ -44,5 +44,23 @@ class Round(unittest.TestCase):
         self.assertTrue(last.startswith("ROUND INCOMPLETE — not checked: prs (exit 3)"), last)
 
 
+    def test_active_only_leaves_paused_members_out(self):
+        roster = self.m.load_roster()
+        old = "2026-01-01T00:00:00+00:00"
+        roster["members"]["a"] = [{"name": "p", "status": "paused", "updatedAt": old, "task": "parked"},
+                                  {"name": "w", "status": "active", "updatedAt": old, "task": "working"}]
+        self.m.save_roster(roster)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.c.round_stale(30, None, "a")
+        text = out.getvalue()
+        self.assertIn("w active", text)
+        self.assertNotIn("p paused", text)
+        self.assertIn("1 lines of paused members not shown", text)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.c.round_stale(30)
+        self.assertIn("p paused", out.getvalue())  # without the flag, nothing is hidden
+
 if __name__ == "__main__":
     unittest.main()

@@ -2800,11 +2800,25 @@ def round_prs(me, open_only=False, hours=24):
     return 0
 
 
-def round_stale(minutes, max_hours=None):
-    """member stale; with max_hours, only members silent for less than that (a longer silence is parked work)."""
+def drop_paused(me, rows):
+    """rows without the lines of C's paused members (a PAUSE means no work, so their silence is expected),
+    and a count line in their place."""
+    paused = {m["name"] for m in load_roster()["members"].get(me, []) if m.get("status") == "paused"}
+    kept = [r for r in rows if not any(r.startswith(f"{n} ") or r.startswith(f"STALE {n}:") or r.startswith(f"NOT-CHECKED {n}:")
+                                       or r.startswith(f"IDLE-WITH-WORK {n}:") for n in paused)]
+    if len(kept) < len(rows):
+        kept.append(f"({len(rows) - len(kept)} lines of paused members not shown: --active-only)")
+    return kept
+
+
+def round_stale(minutes, max_hours=None, me=None):
+    """member stale; with max_hours, only members silent for less than that (a longer silence is parked work);
+    with me, without C's paused members (round --active-only)."""
     with captured() as buf:
         code = main(["member", "stale", "--minutes", str(minutes)])
     rows = buf.getvalue().splitlines()
+    if me:
+        rows = drop_paused(me, rows)
     if max_hours is not None:
         def age(line):
             m = re.search(r"last update (\d+) min ago", line)
@@ -2910,11 +2924,13 @@ def sessions_cmd(args):
     return 0
 
 
-def round_sessions(me):
+def round_sessions(me, active_only=False):
     lines, untracked = session_report(me)
     if lines is None:
         print("claude agents --json failed")
         return 1
+    if active_only:
+        lines = drop_paused(me, lines)
     if untracked:
         lines.append(f"{len(untracked)} live sessions in no roster (coordinator.py sessions lists them)")
     print("\n".join(lines) if lines else "ok")
@@ -2932,8 +2948,9 @@ def round_cmd(args):
     hb = ["heartbeat"] + (["--focus", args.focus] if args.focus else []) + (["--pr", *map(str, args.pr)] if args.pr else []) \
         + (["--status", args.status] if args.status else [])
     sections = [("heartbeat", lambda: main(hb)), ("leases", lambda: round_leases(me)),
-                (f"members silent {args.stale_minutes} min", lambda: round_stale(args.stale_minutes, args.open_hours if args.open else None)),
-                ("sessions", lambda: round_sessions(me)),
+                (f"members silent {args.stale_minutes} min", lambda: round_stale(args.stale_minutes, args.open_hours if args.open else None,
+                                                                                  me if args.active_only else None)),
+                ("sessions", lambda: round_sessions(me, args.active_only)),
                 (f"inbox since {since[:19] + 'Z' if since else 'ever'}", lambda: round_inbox(me, since)),
                 ("votes", lambda: main(["vote", "list"])), ("prs", lambda: round_prs(me, args.open, args.open_hours))]
     if args.release_repo:
@@ -4388,6 +4405,8 @@ def main(argv=None):
     rd.add_argument("--stale-minutes", type=int, default=30)
     rd.add_argument("--open", action="store_true", help="skip merged and closed PRs, and members silent over --open-hours")
     rd.add_argument("--open-hours", type=float, default=24)
+    rd.add_argument("--active-only", action="store_true",
+                    help="leave paused members out of the silent-members and sessions sections (a count shows how many)")
     rd.add_argument("--release-repo", help="also show release state for this owner/repo")
     rd.add_argument("--release-workflow", help="with --release-repo: the release workflow file")
     rd.add_argument("--timeout", type=int, default=ROUND_TIMEOUT_S, help="seconds per section")
