@@ -37,9 +37,12 @@ to or from Codex needs a new JOIN (or the name handoff for a coordinator).
 
 Some providers' terminal sandboxes (Antigravity ACP, the Codex sandbox) block
 `~/.local/state/machine-leases/`, `localhost:4720` and worktrees outside the
-project unless a command runs outside the sandbox. Ask for that approval per
-command, and keep each command in one plain shape so a prefix approval
-covers the next run:
+project unless a command runs outside the sandbox. A helper command run
+inside the sandbox always fails (`[Errno 1] Operation not permitted` on
+`coordinator.py`). So run every `coordinator.py` and `puppet.py` command
+outside the sandbox on the first try (Antigravity ACP: `BypassSandbox: true`;
+Codex: per-command escalation); never try it in the sandbox first. Keep each
+command in one plain shape so a prefix approval covers the next run:
 `python3 -I ~/.local/state/machine-leases/coordinator.py <command> ...` (or
 `puppet.py`). Use no `cd ... &&`, `timeout`, pipes or `$VARIABLES` around it.
 
