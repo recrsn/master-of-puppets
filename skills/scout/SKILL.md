@@ -79,6 +79,7 @@ Your scout state file stays as it is.
    - When it prints `SESSION`, this session is not the one the roster names for you (a new thread, or a move to another provider): send SCOUT JOIN again before the next tick. When it prints `TWIN`, another session also ticks as you: tell your coordinator at once; one of you must stop.
    - Read the whole output of `scout tick`; never cut it with `head` or `cut`. The `OLD` and `LATE` lines come after the first line.
    - When it lists alerts not seen for 24 h, check each one again, then resolve it or alert it again. This also applies to the alerts you take over from another scout.
+   When `puppet.py` cannot run (a sandbox refuses it and escalation is refused), say so in a GAP once, then put each tick's changes in your message; your coordinator records them.
 7. Schedule your next wakeup (`references/agents.md`, scheduling). Never write a polling loop. Never put a route or a session name in the scheduled prompt: look up the route at each send.
 
 Keep a QUIET tick small: put your reads in one script of your own, outside

@@ -58,8 +58,16 @@ class ScoutState(unittest.TestCase):
         buf = io.StringIO()
         with redirect_stdout(buf):
             c.main(["member", "stale"])
-        self.assertIn("TWIN: sessions new, old all tick", buf.getvalue())
+        self.assertIn("sc scout ticking [TWIN: sessions new, old all tick", buf.getvalue())  # flags first
         self.assertIn("ticks from session new, not its roster session old", buf.getvalue())
+
+    def test_a_recorded_report_keeps_a_scout_live_that_cannot_tick(self):
+        roster = self.m.load_roster()
+        m = roster["members"]["a"][0]
+        m["joinedAt"] = (self.m.now() - self.m.dt.timedelta(hours=5)).isoformat()
+        self.assertTrue(self.m.scout_stale(m, {})[0])
+        m["updatedAt"] = self.m.now().isoformat()  # the coordinator ran member update for its message
+        self.assertFalse(self.m.scout_stale(m, {})[0])
 
     def test_tick_state_replaces_itself_and_keeps_the_daily_summary(self):
         daily = self.tick("--summary", "day: 3 alerts, all resolved", "--state", "cursor 100")["summary"]

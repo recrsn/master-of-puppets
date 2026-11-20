@@ -1168,8 +1168,10 @@ def roster_cmd(args):
                 if writer and x.get("sessionId") and writer != x["sessionId"]:
                     flags.append(f"ticks from session {writer}, not its roster session {x['sessionId']}: ask it to send SCOUT JOIN")
                 if stale or flags:
-                    rows.append(f"{x['name']} scout {'stale' if stale else 'ticking'} last update {age if age is not None else '?'} min ago — "
-                                f"{x.get('targetClass', '?')}: {x.get('targets', '')[:50]}" + (f" ({'; '.join(flags)})" if flags else ""))
+                    # flags first: a coordinator that cuts long rows must still see TWIN or a P0
+                    rows.append(f"{x['name']} scout {'stale' if stale else 'ticking'}" + (f" [{'; '.join(flags)}]" if flags else "")
+                                + f" last update {age if age is not None else '?'} min ago — "
+                                f"{x.get('targetClass', '?')}: {x.get('targets', '')[:50]}")
                 continue
             last = x.get("updatedAt") or x.get("joinedAt") or x.get("enrolledAt")
             when = dt.datetime.fromisoformat(last) if last else None

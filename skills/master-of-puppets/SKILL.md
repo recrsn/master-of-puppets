@@ -209,8 +209,12 @@ message and prints the app route to send it by; send it there.
   --task "<class>: <targets>"`; its `SCOUT JOIN` goes through `join` as
   above. Scouts get no ACTIVE or PAUSE and no leases. Record each ALERT with
   `note`, and acknowledge it with `note --text "ACK <fingerprint> ..."`, which
-  costs no message. Take a P0 to the user at once, quoted. Follow
-  `references/scouts.md`.
+  costs no message. Take a P0 to the user at once, quoted. Also run
+  `member update` for each scout message: it counts as a sign of life, so a
+  scout that cannot write its own state does not show as stale. When
+  `member stale` shows `TWIN` or a session that is not the roster's, ask the
+  scout to send SCOUT JOIN from its live session and stop the other one.
+  Follow `references/scouts.md`.
 - **UPDATE, STATUS reply or MERGED**: `coordinator.py member update --name <name> --phase "<phase>" --kind ok|work|warn|done --latest "<newest fact>" [--pr ...]`.
   This also updates the member's row on the dashboard. Keep `--phase` and
   `--latest` short; shorten a long UPDATE first (`references/dashboard.md`,

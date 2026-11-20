@@ -1634,10 +1634,12 @@ def scout_twins(state, at=None):
 
 
 def scout_stale(m, state=None, at=None):
-    """(stale, last tick or None) for scout member m: no tick for 2 ticks. Before its first tick, joinedAt counts."""
+    """(stale, last sign of life or None) for scout member m: no tick for 2 ticks. Before its first tick, joinedAt
+    counts. A report the coordinator recorded (member update sets updatedAt) also counts: a scout whose sandbox
+    cannot write its state file still reports by message."""
     state = scout_state(m["name"]) if state is None else state
-    last = state.get("lastTick") or m.get("joinedAt") or m.get("enrolledAt")
-    when = dt.datetime.fromisoformat(last) if last else None
+    signs = [t for t in (state.get("lastTick"), m.get("updatedAt")) if t] or [m.get("joinedAt") or m.get("enrolledAt")]
+    when = max(dt.datetime.fromisoformat(t) for t in signs if t) if any(signs) else None
     tick = float(state.get("tickMin") or m.get("tickMin") or 15)
     return (when is None or (at or now()) - when > dt.timedelta(minutes=2 * tick)), when
 
