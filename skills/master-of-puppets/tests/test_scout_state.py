@@ -44,13 +44,16 @@ class ScoutState(unittest.TestCase):
 
     def test_two_sessions_ticking_as_one_scout_are_twins(self):
         roster = self.m.load_roster()
-        roster["members"]["a"][0]["sessionId"] = "old"
+        roster["members"]["a"][0].update(sessionId="old", targetClass="prod", targets="api 5xx")
         self.m.save_roster(roster)
         self.as_session("old")
         self.assertNotIn("SESSION", self.scout("tick"))
         self.as_session("new")  # a provider handoff left the old session running
         out = self.scout("tick")
         self.assertIn("SESSION: this session (new) is not sc's roster session (old)", out)
+        join = next(x.strip() for x in out.splitlines() if x.strip().startswith("SCOUT JOIN — sc — claude new"))
+        sys.modules.pop("coordinator", None)
+        self.assertEqual(importlib.import_module("coordinator").parse_join(join)["sessionId"], "new")  # ready to send
         self.assertIn("TWIN: session old also ticks as sc", out)
         self.m.RUN.env = {"MOP_ACTOR": "a"}
         sys.modules.pop("coordinator", None)

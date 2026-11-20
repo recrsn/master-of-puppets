@@ -487,8 +487,12 @@ def scout_cmd(args):
                           if now() - dt.datetime.fromisoformat(v) < dt.timedelta(days=1)}
         if m.get("sessionId") and sid != m["sessionId"]:
             acts.append("SESSION")
+            tick = f"{float(m.get('tickMin') or 15):g}"
+            join = (f"SCOUT JOIN — {args.name} — {session_or_none()[1]} {sid} — {m.get('worktree') or 'none'} — "
+                    f"{m.get('targetClass', '?')} — {m.get('targets', '?')} — {m.get('end') or 'long-running'} — "
+                    f"tick {tick} min — parent {m.get('parent') or 'none'}")
             warn += (f"\nSESSION: this session ({sid}) is not {args.name}'s roster session ({m['sessionId']}): "
-                     f"send SCOUT JOIN again, or stop if another session is {args.name}")
+                     f"send this SCOUT JOIN now, or stop if another session is {args.name}:\n  {join}")
         twins = [x for x in scout_twins(st) if x != sid]
         if twins:
             acts.append("TWIN")
