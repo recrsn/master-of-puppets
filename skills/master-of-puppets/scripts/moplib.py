@@ -81,7 +81,8 @@ CLIENT_ENV = ("CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "XD
               "MOP_CLIENT_PID", "MOP_CLIENT_PGID",  # the client process, for session_pids
               "MOP_FOLLOW_OFFSETS",  # where a resumed run's follow starts
               "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID",  # who calls: session_identity
-              "T3CODE_THREAD_ID")  # the caller's T3 Code thread, a route that outlives renames: coordinator_routes
+              "T3CODE_THREAD_ID",  # the caller's T3 Code thread, a route that outlives renames: routes_to
+              "CLAUDE_CODE_ENTRYPOINT", "__CFBundleIdentifier", "CODEX_INTERNAL_ORIGINATOR_OVERRIDE")  # where it runs: detect_host
 PATH_FLAGS = ("--worktree", "--root", "--path", "--project-root")
 RESUMABLE = ("watch", "await-grant", "calm-wait", "measure-peak")  # rerun after a server restart
 SERVER_LOG = os.path.join(DIR, "server.log")
@@ -124,7 +125,7 @@ def session_identity():
     if sid:
         return sid, tool
     print("no session identity: Claude Code sets CLAUDE_CODE_SESSION_ID; in Codex, run the command as "
-          "CODEX_THREAD_ID=<this thread's id> coordinator.py ...", file=sys.stderr)
+          "CODEX_THREAD_ID=<this thread's id> coordinator.py ... (references/hosts/ says where to find the id)", file=sys.stderr)
     sys.exit(2)
 
 
@@ -1514,18 +1515,69 @@ def deliver(name, tool, session_id, text):
 SEND_MAX = 1200  # characters: a longer message goes in a file, named with --file
 
 
+HOSTS = {  # host: (label, its guide in references/hosts/)
+    "t3-code": ("T3 Code", "t3-code.md"),
+    "claude-desktop": ("Claude Desktop", "claude-desktop.md"),
+    "claude-code": ("Claude Code CLI, IDE or SDK", "claude-code.md"),
+    "codex-desktop": ("Codex Desktop", "codex-desktop.md"),
+    "codex-cli": ("Codex CLI", "codex-cli.md"),
+    "unknown": ("an unknown host", "README.md"),
+}
+
+
+def detect_host(tool=None):
+    """Where the caller runs, from its environment: a key of HOSTS. The host, not the provider (claude or codex),
+    decides which send tool the session has. A Codex thread started from a Claude session inherits
+    CLAUDE_CODE_ENTRYPOINT, so the provider picks which markers count."""
+    tool = tool or session_or_none()[1]
+    entry = cenv("CLAUDE_CODE_ENTRYPOINT") or ""
+    bundle = cenv("__CFBundleIdentifier") or ""
+    origin = cenv("CODEX_INTERNAL_ORIGINATOR_OVERRIDE") or ""
+    if bundle == "com.t3tools.t3code" or origin.startswith("T3") or (tool != "codex" and (
+            entry == "t3-code" or cenv("T3CODE_THREAD_ID"))):
+        return "t3-code"
+    if tool == "claude" or (tool is None and entry):
+        return "claude-desktop" if entry == "claude-desktop" else "claude-code" if entry else "unknown"
+    if tool == "codex" or origin:
+        return "codex-desktop" if origin.startswith("Codex Desktop") or bundle.startswith("com.openai.codex") else "codex-cli"
+    return "unknown"
+
+
+def routes_to(target, last):
+    """The routes from the caller to a roster entry (a coordinator or a member), best first, as lines it can
+    act on. They depend on the caller's host and the target's host: each host has its own send tool.
+    A display name is never recorded: it changes; the thread and session ids do not. last: the inbox route."""
+    sid, tool = session_or_none()
+    host = detect_host(tool)
+    rows, th, rtool, rsid, rhost = [], target.get("t3Thread"), target.get("tool"), target.get("sessionId"), target.get("host")
+    if host in ("t3-code", "unknown"):
+        if th:
+            rows.append(f"t3_thread_send with threadId {th} (references/hosts/t3-code.md)")
+        elif rhost == "t3-code":
+            rows.append("t3_thread_search for its name, then t3_thread_send by that thread id (references/hosts/t3-code.md)")
+    if tool in ("claude", None) and host != "codex-desktop" and rtool == "claude" and rsid:
+        rows.append(f"SendMessage to {target.get('session') or rsid}, or to its name from ListAgents")
+    if host in ("codex-desktop", "unknown") and rtool == "codex" and rsid and rhost in (None, "codex-desktop"):
+        rows.append(f"send_message_to_thread with threadId {rsid} (references/hosts/codex-desktop.md)")
+    if host in ("codex-cli", "unknown") and rtool == "codex" and rsid and rhost in (None, "codex-cli"):
+        rows.append(f'codex queue --thread {rsid} --message "..." (references/hosts/codex-cli.md)')
+    return rows + [last]
+
+
 def coordinator_routes(name, c):
-    """The routes that reach coordinator `name` (roster entry c), best first, as lines a member can act on.
-    A display name is never recorded: it changes; the thread and session ids do not."""
-    rows = []
-    if c.get("t3Thread"):
-        rows.append(f"T3 Code: t3_thread_send with threadId {c['t3Thread']} (references/t3-code.md)")
-    if c.get("tool") == "codex" and c.get("sessionId"):
-        rows.append(f"Codex: send_message_to_thread with threadId {c['sessionId']}")
-    elif c.get("sessionId"):
-        rows.append(f"Claude: SendMessage to {c['sessionId']}, or to its name from ListAgents")
-    rows.append('fallback: puppet.py tell --text "..." (an inbox record; the coordinator\'s watch shows it)')
-    return rows
+    """The routes that reach coordinator `name` (roster entry c) from the caller, best first."""
+    return routes_to(c, 'fallback: puppet.py tell --text "..." (an inbox record; the coordinator\'s watch shows it)')
+
+
+def host_cmd(args):
+    """host: where this session runs, and the guide that names its send, schedule and session tools."""
+    sid, tool = session_or_none()
+    host = detect_host(tool)
+    label, guide = HOSTS[host]
+    print(f"host {host} ({label}); provider {tool or 'unknown'}; session {sid or '(none)'}"
+          + (f"; T3 thread {cenv('T3CODE_THREAD_ID')}" if cenv("T3CODE_THREAD_ID") else ""))
+    print(f"read references/hosts/{guide} for how to send, schedule, watch and start sessions here")
+    return 0
 
 
 def member_of_session(roster, sid):
@@ -1538,21 +1590,28 @@ def member_of_session(roster, sid):
 
 
 def note_member_route():
-    """Record the calling member's T3 Code thread on its roster entry, so the coordinator's routes to it
-    survive thread renames. Runs on every puppet.py command; writes only when the thread changed."""
-    thread = cenv("T3CODE_THREAD_ID")
-    sids = {cenv("CLAUDE_CODE_SESSION_ID"), cenv("CODEX_THREAD_ID")} - {None}
-    if not thread or not sids:
+    """Record the calling member's host and T3 Code thread on its roster entry, so the coordinator's routes
+    to it fit the member's send tools and survive thread renames. Runs on every puppet.py command; writes
+    only when one changed."""
+    sid, tool = session_or_none()
+    if not sid:
         return
+    want = {"host": detect_host(tool), "t3Thread": cenv("T3CODE_THREAD_ID")}
     def stale(roster):
-        return [m for m in (member_of_session(roster, sid)[1] for sid in sids) if m and m.get("t3Thread") != thread]
+        m = member_of_session(roster, sid)[1]
+        return m if m and any(m.get(k) != v for k, v in want.items()) else None
     if not stale(load_roster()) or not STATE_LOCK.acquire(timeout=5):
         return  # a busy lock never fails the member's own command: the next one records it
     try:
         roster = load_roster()
-        for m in stale(roster):
-            m["t3Thread"] = thread
-        save_roster(roster)
+        m = stale(roster)
+        if m:
+            for k, v in want.items():
+                if v:
+                    m[k] = v
+                else:
+                    m.pop(k, None)
+            save_roster(roster)
     finally:
         unlock()
 
@@ -1572,7 +1631,8 @@ def route_cmd(args):
         return 3
     beat = c.get("heartbeat")
     age = f"{(now() - dt.datetime.fromisoformat(beat)).total_seconds() / 60:.0f} min ago" if beat else "never"
-    print(f"coordinator {name} ({c.get('tool')}, {'live' if live(c) else 'NOT LIVE'}, heartbeat {age})")
+    print(f"coordinator {name} ({c.get('tool')} in {HOSTS.get(c.get('host'), ('host not recorded',))[0]}, "
+          f"{'live' if live(c) else 'NOT LIVE'}, heartbeat {age}); you: {detect_host()} (puppet.py host)")
     for i, row in enumerate(coordinator_routes(name, c), 1):
         print(f"  {i}. {row}")
     return 0
@@ -1602,7 +1662,7 @@ def notify(to, message):
 # ---------------------------------------------------------------- read commands (coordinator.py and puppet.py)
 
 
-READS = ("roster", "whoami", "memory", "inbox", "ledger", "events", "who", "sizes", "route")
+READS = ("roster", "whoami", "memory", "inbox", "ledger", "events", "who", "sizes", "route", "host")
 AGO = re.compile(r"^(\d+)([smhd])$")
 AGO_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 
@@ -1694,6 +1754,7 @@ def add_read_commands(sub, memory=None):
     g.add_argument("--text", help="case-insensitive match on names, tasks, focus, labels and goals")
     rt = sub.add_parser("route", help="how to reach a coordinator now, best route first")
     rt.add_argument("--coordinator", help="default: your own coordinator")
+    sub.add_parser("host", help="where this session runs (T3 Code, Claude Desktop, Codex Desktop, a CLI) and its guide")
     sz = sub.add_parser("sizes", help="a project's recorded run sizes per class: the figures to size a lease from")
     sz.add_argument("--worktree", required=True)
     sz.add_argument("--class", dest="lcls", metavar="CLASS")
@@ -1836,6 +1897,8 @@ def read_cmd(args):
         return sizes_cmd(args)
     if args.cmd == "route":
         return route_cmd(args)
+    if args.cmd == "host":
+        return host_cmd(args)
     roster = load_roster()
     if args.cmd == "whoami":
         me = find_session(roster, args.session_id or session_identity()[0])

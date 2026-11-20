@@ -69,7 +69,7 @@ class Route(unittest.TestCase):
         code, out = self.run_cli(self.p, {"CLAUDE_CODE_SESSION_ID": "s1"}, "route")
         self.assertEqual(code, 0, out)
         lines = out.splitlines()
-        self.assertIn("coordinator a (claude, live", lines[0])
+        self.assertIn("coordinator a (claude in T3 Code, live", lines[0])
         self.assertIn("t3_thread_send with threadId th-1", lines[1])
         self.assertIn("SendMessage to sa", lines[2])
         self.assertIn("puppet.py tell", lines[3])

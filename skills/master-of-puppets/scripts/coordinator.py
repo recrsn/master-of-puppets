@@ -280,7 +280,7 @@ Shared records (read-only; puppet.py has them too)
        the reply to every LEAVE, in the same turn. Accept checks the done rules: each PR of the
        member MERGED and, unless --no-release-check, carried by the latest release of its repo,
        with --validated naming the production check; then member remove, a ledger record (kind
-       leave) and the reply, delivered directly where the helper can and printed for SendMessage.
+       leave) and the reply, delivered directly where the helper can and printed with the app route for your host.
        Exit 1 when a rule fails (nothing changes): then reply with --reject
   sessions [--send]
        compares C's members with the app's live Claude sessions (claude agents --json): STALE (a
@@ -337,7 +337,7 @@ Messaging
        it). A coordinator then gets it directly: a Claude session through its inbox socket (protocol:
        github.com/PeterSR/claude-code-socket-transport, reverse-engineered, not an Anthropic
        interface), a Codex thread through `codex queue`. For a member or scout it prints the exact
-       app route to send it by (SendMessage target or Codex thread id): a script's socket message can
+       app route to send it by (the send tool your host and its host share): a script's socket message can
        be held for the user's approval in a member session. --direct also tries the socket. A text
        over 1200 characters is refused: put the details in a file and pass --file.
   vote propose --text TEXT [--class CLASS [--project-root P] [--default-gib N] [--default-cpus N] [--max-minutes N]]
@@ -421,7 +421,7 @@ from moplib import (
     set_state, stop_resource, begin_op, end_op, op_current, op_live, BUSY_STATES, POOL_STUCK_MINUTES, delete_claimed,
     mark_failed, health_run, host_hold, host_held, failed_restart, failed_restart_end, FAIL_DELETE, CLEAN_TIMEOUT, FIND_TIMEOUT, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
     SCOUT_CLASSES, scout_path, scout_state, scout_stale, scout_twins, stalled, queue_head, blocked_by, STALL_MINUTES,
-    RECLAIM_MINUTES, reclaim_minutes, clean_run, record_health, clear_short, tell_member,
+    RECLAIM_MINUTES, reclaim_minutes, clean_run, record_health, clear_short, tell_member, session_or_none, detect_host, routes_to,
 )
 
 
@@ -738,13 +738,13 @@ def config_cmd(args):
 
 
 def native_route(m):
-    """The app route that reaches member m: its T3 Code thread when it runs there (it survives renames),
-    else a Claude SendMessage target or a Codex thread id."""
-    if m.get("t3Thread"):
-        return f"t3_thread_send with threadId {m['t3Thread']} (references/t3-code.md)"
-    if m.get("tool") == "codex":
-        return f"send_message_to_thread with threadId {m.get('sessionId')} (or codex queue --thread {m.get('sessionId')})"
-    return f"SendMessage to {m.get('session') or m.get('sessionId') or '(no session recorded: ask it to send JOIN again)'}"
+    """The app routes from this session to member m, best first, joined with "or": they depend on this
+    session's host and the member's (references/hosts/)."""
+    rows = routes_to(m, "")[:-1]
+    if not rows:
+        return ("no app route from this host to it" + ("" if m.get("sessionId") else ": no session recorded, ask it to send JOIN again")
+                + " (references/hosts/README.md, \"No shared route\")")
+    return " or ".join(rows)
 
 
 def send_cmd(args):
@@ -926,10 +926,12 @@ HANDOFF_SECONDS = 120
 
 
 def note_route(c):
-    """Record the caller's T3 Code thread on its own coordinator entry: members look it up with
-    puppet.py route when the app name they had stops working."""
-    if c.get("sessionId") not in (cenv("CLAUDE_CODE_SESSION_ID"), cenv("CODEX_THREAD_ID")):
-        return  # the dashboard or another session: it does not know this coordinator's thread
+    """Record the caller's host and T3 Code thread on its own coordinator entry: members look them up with
+    puppet.py route, which picks the send tool their host and this coordinator's host share."""
+    sid, tool = session_or_none()
+    if not sid or c.get("sessionId") != sid:
+        return  # the dashboard or another session: it does not know this coordinator's host or thread
+    c["host"] = detect_host(tool)
     thread = cenv("T3CODE_THREAD_ID")
     if thread:
         c["t3Thread"] = thread
@@ -3554,7 +3556,7 @@ def leave_cmd(args):
     by the latest release of its repo by full-SHA ancestry, with --validated naming the production check.
     A PR the user decided to close unmerged passes as CLOSED when --closed-by-user names it and --quote gives
     the user's words; the release check skips it. Then member remove, a ledger record (kind leave) and the reply: delivered directly where the helper
-    can, and printed with the session id for SendMessage. Exit 1 when the done rules fail (nothing changes)."""
+    can, and printed with the app route for your host. Exit 1 when the done rules fail (nothing changes)."""
     me, roster = args.coordinator, load_roster()
     m = next((x for x in roster["members"].get(me, []) if x["name"] == args.name), None)
     if not m:
