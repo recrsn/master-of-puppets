@@ -71,13 +71,18 @@ Your scout state file stays as it is.
    on-demand system with no input is healthy (scouts.md, "Severity and routing").
 5. When a read of yours fails (expired credentials, a timeout, a denied query), you are blind: record it with `--kind gap` and send `GAP`. Never go silent.
 6. End every tick with `puppet.py scout tick --coordinator <coord> --name <name>`. Add `--state "<counters, coverage, cursor>"` when you keep a cursor or counters; each tick replaces it. Once a day add `--summary "<counts and the state of the open alerts>"`. Never put per-tick state in `--summary`. The coordinator and the dashboard see you only through this file.
-   - When it prints `LATE <n>m`, you missed ticks: it names the window and the cursor you had then. Read that window again, record what it shows, and run `scout tick` once more. Say `LATE` in a message only when the window had an alert.
+   - When it prints `LATE <n>m`, you missed ticks: it names the window and the cursor you had then. Read that window again, record what it shows, then run `scout tick --reread` (when `scout tick --help` lists it; else a plain `scout tick`). Until you do, every tick prints `LATE` again. Say `LATE` in a message only when the window had an alert.
+   - Read the whole output of `scout tick`; never cut it with `head` or `cut`. The `OLD` and `LATE` lines come after the first line.
    - When it lists alerts not seen for 24 h, check each one again, then resolve it or alert it again. This also applies to the alerts you take over from another scout.
 7. Schedule your next wakeup (`references/agents.md`, scheduling). Never write a polling loop. Never put a route or a session name in the scheduled prompt: look up the route at each send.
 
 Keep a QUIET tick small: put your reads in one script of your own, outside
 the repository, and run it with one call, then `scout tick`. A tick that
 makes many tool calls in a long session costs a lot of context.
+
+Before each send, run `puppet.py route` and send by its first route. A route
+written in your scheduled prompt or remembered from an earlier tick can be
+stale. When that send fails, use the next route, then `puppet.py tell`.
 
 Send at most one message per tick. When several items are new, put them in
 one message, with the worst first. Never message on a schedule. A QUIET tick

@@ -73,6 +73,8 @@ class ScoutState(unittest.TestCase):
         out = self.scout("tick", "--state", "cursor 300")  # the new cursor must not hide the old one
         self.assertIn("LATE 45m", out)
         self.assertIn("cursor then was: cursor 100", out)
+        self.assertIn("LATE 45m", self.scout("tick"))  # a plain tick does not clear it
+        self.assertIn("read again", self.scout("tick", "--reread"))
         self.assertNotIn("LATE", self.scout("tick"))
 
     def test_a_late_tick_that_starts_with_an_alert_still_says_late(self):
@@ -94,7 +96,9 @@ class ScoutState(unittest.TestCase):
         self.scout("alert", "--fingerprint", "old", "--severity", "P2", "--text", "x")
         self.assertNotIn("24 h", self.scout("tick"))
         self.age(seen=25 * 60)
-        self.assertIn("not seen for 24 h, check each one again or resolve it: old", self.scout("tick"))
+        out = self.scout("tick")
+        self.assertIn("1 not seen for 24 h", out)
+        self.assertIn("\n  OLD old", out)
 
 
 if __name__ == "__main__":

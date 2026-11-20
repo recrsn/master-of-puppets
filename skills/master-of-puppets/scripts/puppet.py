@@ -482,12 +482,18 @@ def scout_cmd(args):
         out = f"tick {t[:19]}Z; {len(st['openAlerts'])} open"
         old_alerts = [a["fingerprint"] for a in st["openAlerts"]
                       if now() - dt.datetime.fromisoformat(a["lastSeen"]) > dt.timedelta(hours=24)]
+        missed = st.get("missed")
+        if missed and args.reread:
+            st.pop("missed")
+            out += f"; window {missed['from'][:19]}Z to {missed['to'][:19]}Z read again"
+            missed = None
         if old_alerts:
-            out += f"; {len(old_alerts)} not seen for 24 h, check each one again or resolve it: {', '.join(old_alerts)}"
-        missed = st.pop("missed", None)
+            out += f"; {len(old_alerts)} not seen for 24 h, check each one again, then alert it again or resolve it:"
+            out += "".join(f"\n  OLD {f}" for f in old_alerts)  # one per line: a cut summary line must not hide them
         if missed:
             out += (f"\nLATE {missed['minutes']}m: no tick from {missed['from'][:19]}Z to {missed['to'][:19]}Z; "
-                    f"the cursor then was: {missed['cursor'] or '(none)'}. Read that window again and tick once more")
+                    f"the cursor then was: {missed['cursor'] or '(none)'}. Read that window again, then run "
+                    f"scout tick --reread; until then each tick prints this")
     elif args.scmd == "alert":
         old = next((a for a in st["openAlerts"] if a["fingerprint"] == args.fingerprint), None)
         if old is None:
@@ -583,6 +589,7 @@ def main(argv=None):
             x.add_argument("--state", help="this tick's own state (counters, coverage, cursor or checkpoint); it replaces "
                            "the last one and never touches the daily summary")
             x.add_argument("--summary", help="the daily SUMMARY, kept in the file instead of a message")
+            x.add_argument("--reread", action="store_true", help="you read the LATE window again: clears LATE")
         if name in ("alert", "resolve"):
             x.add_argument("--fingerprint", required=True, help="monitor or issue id plus the cause")
         if name == "alert":

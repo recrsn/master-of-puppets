@@ -129,8 +129,12 @@ Limits: no admin merge or merge bypass, and never skip git hooks.
 - **Auto-merge.** Your coordinator's `OK for auto-merge — #<n> — <method>`
   means your work is done and meets the agreed requirements. It comes once
   per PR. Then enable plain auto-merge: `gh pr merge <n> --auto --<method>`
-  (no method flag for `auto`), never with `--match-head-commit`. Never enable
-  it without the OK.
+  (no method flag for `auto`), never with `--match-head-commit`. When the base
+  branch uses a merge queue, give no method flag at all: `gh pr merge <n> --auto`
+  (GitHub refuses a method there). Never enable it without the OK.
+  - Auto-merge does not end your watch. An app PR watch can stop at the merge
+    without a merged event, so check the PR state at each wake until it is
+    MERGED, and send `MERGED` (and any DEPLOY REQUEST) in the turn you see it.
   - Keep it on across pushes that only fix review findings or CI.
   - Before a push that changes scope or behavior beyond the agreed
     requirements, turn it off (`gh pr merge <n> --disable-auto`), push, and
@@ -235,13 +239,18 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
 3. Run only the granted commands and cleanup of resources they started.
    Use it or return it: no edits or repairs while holding a lease. On failure,
    clean up owned resources, release promptly and report the raw failure;
-   repair; request again with a new id.
+   repair; request again with a new id. When cleanup cannot finish (for
+   example the resource is unreachable), release it yourself with
+   `--result fail --note "cleanup blocked: <why>"`; never ask the coordinator
+   to release it for you. The coordinator handles the resource's recovery.
    **More time.** Extension is your coordinator's decision. When the run
    needs longer than the grant, ask before it expires:
    `puppet.py extend <CLASS> --coordinator <coord> --name <name> --id <id> --minutes <n> --reason "<what still runs>"`.
    It changes nothing by itself; your coordinator sees the request (no
    message is needed) and replies `LEASE EXTENDED` with the new expiry, or
-   tells you to release. Until then the old expiry holds. Start no new
+   tells you to release. Until then the old expiry holds. When no answer comes
+   in 5 minutes, check `puppet.py events --id <id>`: an `extend` line there
+   means it was extended and the message was lost. Start no new
    commands meanwhile, and release at once on a no.
    - Exit 2: the whole run would be over the class limit. Release with
      `--result partial` and request the rest with a new id.

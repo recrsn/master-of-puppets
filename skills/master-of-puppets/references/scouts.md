@@ -78,9 +78,10 @@ it). Re-alert only on escalation, for example P2 to P1 or a doubled rate.
 A fingerprint resolved less than 4 tick lengths ago that opens again prints
 `REOPENED`: the alert flaps, so send it once, marked as flapping, and resolve
 it only after 2 clean ticks. A write more than 2 ticks after the last one
-records the missed window and the cursor of that time; the next `scout tick`
-prints them as `LATE <n>m`. `scout tick` also lists open alerts not seen for
-24 h.
+records the missed window and the cursor of that time; each `scout tick`
+prints them as `LATE <n>m` until the scout reads the window again and runs
+`scout tick --reread`. Alerts not seen for 24 h print as `OLD <fingerprint>`,
+one per line.
 
 ## Severity and routing
 
