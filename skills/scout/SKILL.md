@@ -74,6 +74,15 @@ Your scout state file stays as it is.
 
 ## 2. Each tick
 
+Command card (use these; do not read the helper source; `resolve --text` works once `scout resolve --help` lists it):
+
+```
+puppet.py scout tick    --name N [--state "<cursor>"] [--reread]
+puppet.py scout alert   --name N --fingerprint <id:cause> --severity P0|P1|P2 [--kind gap] --text "<one line>"
+puppet.py scout resolve --name N --fingerprint <id:cause> [--text "<why>"]
+puppet.py scout show    --name N
+```
+
 1. Check every target with read-only tools only (scouts.md, "Permissions").
 2. For each problem: `puppet.py scout alert --coordinator <coord> --name <name> --fingerprint <id:cause> --severity P0|P1|P2 [--kind gap] --text "<one line, no secret>"`.
    It prints `NEW` or `ESCALATED` (send it), or `SEEN` (do not send it again).
@@ -83,10 +92,10 @@ Your scout state file stays as it is.
    on-demand system with no input is healthy (scouts.md, "Severity and routing").
 5. When a read of yours fails (expired credentials, a timeout, a denied query), you are blind: record it with `--kind gap` and send `GAP`. Never go silent.
 6. End every tick with `puppet.py scout tick --coordinator <coord> --name <name>`. Add `--state "<counters, coverage, cursor>"` when you keep a cursor or counters; each tick replaces it. Once a day add `--summary "<counts and the state of the open alerts>"`. Never put per-tick state in `--summary`. The coordinator and the dashboard see you only through this file.
-   - When it prints `LATE <n>m`, you missed ticks: it names the window and the cursor you had then. Read that window again, record what it shows, then run `scout tick --reread`. Until you do, every tick prints `LATE` again. Say `LATE` in a message only when the window had an alert.
+   - When it prints `LATE <n>m`, you missed ticks: it names the window and the cursor you had then. Read that window again, record what it shows, then run `scout tick --reread`. When you cannot read it again (the data is gone, or access is blocked), send one GAP that names the window, then run `scout tick --reread`. Until you do, every tick prints `LATE` again. Say `LATE` in a message only when the window had an alert.
    - When it prints `SESSION`, this session is not the one the roster names for you (a new thread, or a move to another provider): send SCOUT JOIN again before the next tick (when the tick prints a `SCOUT JOIN` line under it, send that line as it is). A report of the mismatch in an UPDATE is not enough. When it prints `TWIN`, another session also ticks as you: tell your coordinator at once; one of you must stop.
    - Read the whole output of `scout tick`; never cut it with `head` or `cut`. When the first line ends with `ACT:`, act on each tag. The `OLD` and `LATE` lines come after the first line. A tick with `ACT:` is never a quiet tick: do not end it with "quiet tick recorded". For each `OLD` alert, read it again now: when it is still bad, even with no new evidence, run `scout alert` again with what you see now; when it is clean, `scout resolve` it (add `--text "<why>"` when the helper has it). Never leave an `OLD` alert standing for another tick.
-   - When it lists alerts not seen for 24 h, check each one again, then resolve it or alert it again. This also applies to the alerts you take over from another scout.
+   - When it lists alerts not seen for 24 h, check each one again, then resolve it or alert it again. This also applies to the alerts you take over from another scout. An alert that is out of your scope now, or that the coordinator or the user accepted, is resolved with that reason: `scout resolve --fingerprint F --text "accepted: <by whom>"`; do not keep it open. A tag that stays for 2 ticks prints `UNHANDLED`, and your coordinator sees it.
    When `puppet.py` cannot run (a sandbox refuses it and escalation is refused), say so in a GAP once, then put each tick's changes in your message; your coordinator records them.
 7. Schedule your next wakeup (the "Scheduled turn" row of your host guide). Never write a polling loop. Never put a route or a session name in the scheduled prompt: look up the route at each send.
 

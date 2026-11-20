@@ -9,7 +9,7 @@ deferred: load one by name before you call it.
 
 | Purpose | Do this |
 | --- | --- |
-| Your session id | Claude: `$CLAUDE_CODE_SESSION_ID`. Codex: `$CODEX_THREAD_ID`, else run each command as `CODEX_THREAD_ID=<thread id> coordinator.py ...`. Another provider (Antigravity ACP): your T3 thread id, `$T3CODE_THREAD_ID`; the helpers use it when neither of the others is set. |
+| Your session id | Claude: `$CLAUDE_CODE_SESSION_ID`. Codex: `$CODEX_THREAD_ID`, which T3 Code sets. Check it once with `echo $CODEX_THREAD_ID`; add a `CODEX_THREAD_ID=<thread id>` prefix only when it is empty. Another provider (Antigravity ACP): your T3 thread id, `$T3CODE_THREAD_ID`; the helpers use it when neither of the others is set. |
 | Your T3 thread id | `$T3CODE_THREAD_ID`, for every provider (Codex too). A thread that T3 Code launched has an id like `mcp:launch:<hash>` or `thread:mcp:<id>:<label>:<n>`; use it as it is. |
 | Find other sessions | `t3_thread_list`, `t3_thread_search`; `t3_thread_read` for a thread's latest items |
 | Send a message | `t3_thread_send` by thread id ("Routes", below). It reaches every T3 Code thread, whatever its provider. |
