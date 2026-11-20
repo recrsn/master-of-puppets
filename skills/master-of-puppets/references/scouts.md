@@ -181,3 +181,9 @@ An ACK records that you saw an alert. It does not handle it.
   ```
   <name>: run one tick of your scout skill (section 2), then schedule the next one.
   ```
+
+  A schedule made before this rule may still carry a long prompt with
+  routes, thread ids and old findings. When you check a scout, read its
+  schedule; when the prompt is not this text, change it to this text in
+  place. A note for the scout's next tick goes in a message that says "do
+  this in this tick", never into its schedule prompt.

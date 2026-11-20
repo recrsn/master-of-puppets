@@ -74,19 +74,21 @@ Your scout state file stays as it is.
 
 ## 2. Each tick
 
-Command card (use these; do not read the helper source; `resolve --text` works once `scout resolve --help` lists it):
+Command card (use these; do not read the helper source or the state file, and do not run `--help`; when `resolve` refuses `--text`, run it without it):
 
 ```
 puppet.py scout tick    --name N [--state "<cursor>"] [--reread]
 puppet.py scout alert   --name N --fingerprint <id:cause> --severity P0|P1|P2 [--kind gap] --text "<one line>"
 puppet.py scout resolve --name N --fingerprint <id:cause> [--text "<why>"]
-puppet.py scout show    --name N
+puppet.py scout show    --name N        # your state: never read scouts/<name>.json yourself
+puppet.py route                         # just before a send
 ```
 
+0. Schedule the next tick first (step 7), so a tick that hangs (for example across a machine sleep) does not break the chain. When the last tick was less than half an interval ago (a catch-up run after a wake), record `scout tick` and stop.
 1. Check every target with read-only tools only (scouts.md, "Permissions").
 2. For each problem: `puppet.py scout alert --coordinator <coord> --name <name> --fingerprint <id:cause> --severity P0|P1|P2 [--kind gap] --text "<one line, no secret>"`.
    It prints `NEW` or `ESCALATED` (send it), or `SEEN` (do not send it again).
-3. Resolve an open alert only after 2 clean ticks in a row, not after one good read: `puppet.py scout resolve ... --fingerprint <id:cause>`. It prints `RESOLVED`: send `UPDATE ... recovered`. When it prints `NOT YET`, the alert stays open: send nothing. When `scout alert` prints `REOPENED`, the alert flaps: send it once, say it flaps, and wait for 2 clean ticks again. Give a gap the fingerprint of the one tool or query that failed, not of the whole provider.
+3. Resolve an open alert only after 2 clean ticks in a row, not after one good read: `puppet.py scout resolve ... --fingerprint <id:cause>`. It prints `RESOLVED`: send `UPDATE ... recovered`. When it prints `NOT YET`, the alert stays open: send nothing, and do not run `resolve` again before the time it names. When `scout alert` prints `REOPENED`, the alert flaps: send it once, say it flaps, and wait for 2 clean ticks again. Give a gap the fingerprint of the one tool or query that failed, not of the whole provider.
 4. A stall is input that waits with no matching start, a stopped cursor, no
    consumers, or a growing backlog. Quiet output alone is not a stall: an
    on-demand system with no input is healthy (scouts.md, "Severity and routing").
@@ -97,7 +99,7 @@ puppet.py scout show    --name N
    - Read the whole output of `scout tick`; never cut it with `head` or `cut`. When the first line ends with `ACT:`, act on each tag. The `OLD` and `LATE` lines come after the first line. A tick with `ACT:` is never a quiet tick: do not end it with "quiet tick recorded". For each `OLD` alert, read it again now: when it is still bad, even with no new evidence, run `scout alert` again with what you see now; when it is clean, `scout resolve` it (add `--text "<why>"` when the helper has it). Never leave an `OLD` alert standing for another tick.
    - When it lists alerts not seen for 24 h, check each one again, then resolve it or alert it again. This also applies to the alerts you take over from another scout. An alert that is out of your scope now, or that the coordinator or the user accepted, is resolved with that reason: `scout resolve --fingerprint F --text "accepted: <by whom>"`; do not keep it open. A tag that stays for 2 ticks prints `UNHANDLED`, and your coordinator sees it.
    When `puppet.py` cannot run (a sandbox refuses it and escalation is refused), say so in a GAP once, then put each tick's changes in your message; your coordinator records them.
-7. Schedule your next wakeup (the "Scheduled turn" row of your host guide). Never write a polling loop. Never put a route or a session name in the scheduled prompt: look up the route at each send.
+7. Schedule your next wakeup (the "Scheduled turn" row of your host guide). Never write a polling loop. Never put a route or a session name in the scheduled prompt: look up the route at each send. Use the same prompt every time, word for word: "<name>: run one tick of your scout skill (section 2), then schedule the next one." Never add the last tick's findings, a coordinator's note, a send chain or a fallback to it; those go stale and the prompt grows each hour. A note for your next tick goes in `scout tick --state`. Update an existing schedule in place; do not make a new one each tick.
 
 Keep a QUIET tick small: put your reads in one script of your own, outside
 the repository, and run it with one call, then `scout tick`. A tick that

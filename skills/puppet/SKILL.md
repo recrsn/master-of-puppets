@@ -27,8 +27,8 @@ of [protocol.md](../master-of-puppets/references/protocol.md) says how to
 message your coordinator.
 
 Below, `puppet.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/puppet.py"`.
-To reach your coordinator, run `puppet.py route` before each send and use the
-first route that works (protocol.md, "Routes" says what to do when a send
+To reach your coordinator, run `puppet.py route` just before each send (not
+on a turn that sends nothing) and use the first route that works (protocol.md, "Routes" says what to do when a send
 fails).
 In a sandboxed session (Codex, Antigravity ACP), run every `puppet.py` call
 outside the sandbox from the first try, `host` included: inside it, each one
@@ -178,7 +178,7 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
   none. The coordinator checks on silent members each round, but your report
   is the record. A turn that a schedule started (a scheduled task, a cron)
   and that finds a change sends an UPDATE by your route, even when its
-  prompt has no send step: text in your own thread is not a report. It goes on the dashboard: keep
+  prompt has no send step: text in your own thread is not a report. A scheduled turn with no change sends nothing and ends with one line in your thread that says what you checked. It goes on the dashboard: keep
   the phase to 5 words and the fact to one plain sentence of 20 words. Write
   PRs as `#123`. No SHAs, test counts, paths or commands.
 - `MERGED — #<n> — <merge sha>` for each merged PR.
