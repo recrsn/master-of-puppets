@@ -30,7 +30,9 @@ Below, `puppet.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/ma
 To reach your coordinator, run `puppet.py route` before each send and use the
 first route that works (protocol.md, "Routes" says what to do when a send
 fails).
-In a shell, define it as a function, not a variable (zsh does not split a
+In a sandboxed session (Codex, Antigravity ACP), run every `puppet.py` call
+outside the sandbox from the first try, `host` included: inside it, each one
+fails. In a shell, define it as a function, not a variable (zsh does not split a
 variable into words): `puppet() { python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/puppet.py" "$@"; }`.
 If the file does not exist, no coordinator
 runs on this machine: tell the user, and suggest `/master-of-puppets` in the

@@ -10,7 +10,7 @@ deferred: load one by name before you call it.
 | Purpose | Do this |
 | --- | --- |
 | Your session id | Claude: `$CLAUDE_CODE_SESSION_ID`. Codex: `$CODEX_THREAD_ID`, else run each command as `CODEX_THREAD_ID=<thread id> coordinator.py ...`. Another provider (Antigravity ACP): your T3 thread id, `$T3CODE_THREAD_ID`; the helpers use it when neither of the others is set. |
-| Your T3 thread id | Claude and Antigravity ACP: `$T3CODE_THREAD_ID`. Codex has no such variable: find your thread in `t3_thread_list` or `t3_thread_search`. |
+| Your T3 thread id | `$T3CODE_THREAD_ID`, for every provider (Codex too). A thread that T3 Code launched has an id like `mcp:launch:<hash>` or `thread:mcp:<id>:<label>:<n>`; use it as it is. |
 | Find other sessions | `t3_thread_list`, `t3_thread_search`; `t3_thread_read` for a thread's latest items |
 | Send a message | `t3_thread_send` by thread id ("Routes", below). It reaches every T3 Code thread, whatever its provider. |
 | Reach a Claude session in another host | Claude only: `SendMessage` and `ListAgents`, as in [claude-desktop.md](claude-desktop.md) |
@@ -30,8 +30,9 @@ example Claude to Antigravity ACP). The session id changes; the thread id
 does not. The helpers automatically move the roster entry whose `t3Thread` is
 your thread to your new session id and provider at your next command, and print
 `identity: <name> now runs as ...`. You keep your coordinator or member name:
-run no handoff and send no new JOIN. Codex records no `t3Thread`, so a switch
-to or from Codex needs a new JOIN (or the name handoff for a coordinator).
+run no handoff and send no new JOIN. This works for every provider, Codex
+too. Only an entry with no `t3Thread` (a member that joined before an install
+recorded it) needs a new JOIN after a switch.
 
 ## Sandboxed providers
 
@@ -55,9 +56,9 @@ command in one plain shape so a prefix approval covers the next run:
 - A Claude coordinator's `heartbeat` and `register` record its thread id
   (`t3Thread`) and host in the roster, and every `puppet.py` command does the
   same for a Claude or Antigravity ACP member. `puppet.py route` prints it.
-- A Codex member's thread id is not recorded (Codex has no
-  `T3CODE_THREAD_ID`). Other providers' thread ids are, as for Claude. The coordinator finds it with `t3_thread_search` by
-  the member's name and records it in its notes.
+- A member that has run no `puppet.py` command since that install has no
+  `t3Thread` yet: find its thread with `t3_thread_search` by the member's
+  name.
 - Send with `t3_thread_send`: `threadId` from the route, the protocol text as
   the message, and `mode: "queue"`, which runs it as a new turn after the
   receiver's current one. Add `environmentId` when your thread list gives

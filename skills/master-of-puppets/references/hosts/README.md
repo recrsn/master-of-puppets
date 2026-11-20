@@ -34,7 +34,7 @@ only that host's guide.
    only in T3 Code here.
 3. The environment gives hints (`env`):
    `CLAUDE_CODE_ENTRYPOINT` (`t3-code`, `claude-desktop`, `cli`, `sdk-ts`)
-   for Claude, and `T3CODE_THREAD_ID` for Claude in T3 Code. For Codex,
+   for Claude, and `T3CODE_THREAD_ID` for any provider in T3 Code. For Codex,
    `__CFBundleIdentifier=com.t3tools.t3code` or
    `CODEX_INTERNAL_ORIGINATOR_OVERRIDE=T3 Code` point to T3 Code, and
    `CODEX_INTERNAL_ORIGINATOR_OVERRIDE=Codex Desktop` to Codex Desktop. The

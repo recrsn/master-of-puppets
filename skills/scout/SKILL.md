@@ -16,7 +16,9 @@ Below, `puppet.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/ma
 To reach your coordinator, run `puppet.py route` before each send and use the
 first route that works (protocol.md, "Routes" says what to do when a send
 fails).
-In a shell, define it as a function, not a variable (zsh does not split a
+In a sandboxed session (Codex, Antigravity ACP), run every `puppet.py` call
+outside the sandbox from the first try, `host` included: inside it, each one
+fails. In a shell, define it as a function, not a variable (zsh does not split a
 variable into words): `puppet() { python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/puppet.py" "$@"; }`.
 If the file does not exist, no coordinator runs on this machine: tell the user.
 
@@ -151,6 +153,7 @@ The dashboard shows that you are paused. When sends work again, run
 - Security: read metadata only, never sensitive payloads or private source artifacts outside your scope. Scan PR diffs only in the repositories your coordinator names.
 - Never run a local code review tool, such as `coderabbit review`.
 - Never re-send an ALERT that `scout alert` called `SEEN`.
+- Never run a tick through UI automation (computer use, pasting into an app). When your tools fail, record a GAP and send it.
 
 ## 5. End
 
