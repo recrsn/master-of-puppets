@@ -22,6 +22,7 @@ import sys
 import tempfile
 import threading
 import time
+import http.client
 import urllib.error
 import urllib.request
 import uuid
@@ -1920,15 +1921,20 @@ def gh_http(url, payload=None, etag=None):
     if etag:
         headers["If-None-Match"] = etag
     req = urllib.request.Request(url, json.dumps(payload).encode() if payload else None, headers)
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            return r.status, r.headers.get("ETag"), r.read().decode()
-    except urllib.error.HTTPError as e:
-        if e.code == 401:
-            _gh_token = None
-        return e.code, e.headers.get("ETag"), e.read().decode(errors="replace")
-    except (OSError, ValueError) as e:
-        return 0, None, " ".join(str(e).split())[:200]
+    for attempt in (1, 2):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return r.status, r.headers.get("ETag"), r.read().decode()
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                _gh_token = None
+            return e.code, e.headers.get("ETag"), e.read().decode(errors="replace")
+        except http.client.HTTPException as e:
+            # a body cut off mid-read (IncompleteRead) is not an OSError; uncaught, it failed the whole poll cycle
+            if attempt == 2:
+                return 0, None, f"{type(e).__name__}: {' '.join(str(e).split())}"[:200]
+        except (OSError, ValueError) as e:
+            return 0, None, " ".join(str(e).split())[:200]
 
 
 def http_error(status, body):
