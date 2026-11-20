@@ -1538,22 +1538,35 @@ def detect_host(tool=None):
         return "t3-code"
     if tool == "claude" or (tool is None and entry):
         return "claude-desktop" if entry == "claude-desktop" else "claude-code" if entry else "unknown"
-    if tool == "codex" or origin:
-        return "codex-desktop" if origin.startswith("Codex Desktop") or bundle.startswith("com.openai.codex") else "codex-cli"
-    return "unknown"
+    if origin.startswith("Codex Desktop") or bundle == "com.openai.codex":
+        return "codex-desktop"
+    return "unknown"  # no positive sign (a Codex CLI has none): the session states it with `host --set`
+
+
+def recorded_host(sid):
+    """The host that the roster records for session sid (a coordinator or a member), else None."""
+    roster = load_roster()
+    entries = list(roster["coordinators"].values()) + [m for ms in roster["members"].values() for m in ms]
+    return next((e["host"] for e in entries if sid and e.get("sessionId") == sid and e.get("host")), None)
+
+
+def caller_host():
+    """(session id, provider, host) of the caller: detected from its environment, else as the roster records it."""
+    sid, tool = session_or_none()
+    host = detect_host(tool)
+    return sid, tool, host if host != "unknown" else recorded_host(sid) or "unknown"
 
 
 def routes_to(target, last):
     """The routes from the caller to a roster entry (a coordinator or a member), best first, as lines it can
     act on. They depend on the caller's host and the target's host: each host has its own send tool.
     A display name is never recorded: it changes; the thread and session ids do not. last: the inbox route."""
-    sid, tool = session_or_none()
-    host = detect_host(tool)
+    sid, tool, host = caller_host()
     rows, th, rtool, rsid, rhost = [], target.get("t3Thread"), target.get("tool"), target.get("sessionId"), target.get("host")
     if host in ("t3-code", "unknown"):
         if th:
             rows.append(f"t3_thread_send with threadId {th} (references/hosts/t3-code.md)")
-        elif rhost == "t3-code":
+        elif host == "t3-code" and rhost in (None, "t3-code"):
             rows.append("t3_thread_search for its name, then t3_thread_send by that thread id (references/hosts/t3-code.md)")
     if tool in ("claude", None) and host != "codex-desktop" and rtool == "claude" and rsid:
         rows.append(f"SendMessage to {target.get('session') or rsid}, or to its name from ListAgents")
@@ -1570,9 +1583,25 @@ def coordinator_routes(name, c):
 
 
 def host_cmd(args):
-    """host: where this session runs, and the guide that names its send, schedule and session tools."""
-    sid, tool = session_or_none()
-    host = detect_host(tool)
+    """host: where this session runs, and the guide that names its send, schedule and session tools.
+    --set records a host that the environment does not show (references/hosts/README.md)."""
+    if args.set:
+        sid = session_identity()[0]
+        lock()
+        try:
+            roster = load_roster()
+            entries = [e for e in list(roster["coordinators"].values()) + [m for ms in roster["members"].values() for m in ms]
+                       if e.get("sessionId") == sid and e.get("status") != "done"]
+            for e in entries:
+                e["host"] = args.set
+            if entries:
+                save_roster(roster)
+        finally:
+            unlock()
+        if not entries:
+            print("this session is not in the roster yet: send JOIN first, then run host --set again")
+            return 3
+    sid, tool, host = caller_host()
     label, guide = HOSTS[host]
     print(f"host {host} ({label}); provider {tool or 'unknown'}; session {sid or '(none)'}"
           + (f"; T3 thread {cenv('T3CODE_THREAD_ID')}" if cenv("T3CODE_THREAD_ID") else ""))
@@ -1596,7 +1625,9 @@ def note_member_route():
     sid, tool = session_or_none()
     if not sid:
         return
-    want = {"host": detect_host(tool), "t3Thread": cenv("T3CODE_THREAD_ID")}
+    want = {k: v for k, v in (("host", detect_host(tool)), ("t3Thread", cenv("T3CODE_THREAD_ID"))) if v and v != "unknown"}
+    if not want:
+        return  # only a positive detection is written: a thinner environment never erases a recorded host
     def stale(roster):
         m = member_of_session(roster, sid)[1]
         return m if m and any(m.get(k) != v for k, v in want.items()) else None
@@ -1606,11 +1637,7 @@ def note_member_route():
         roster = load_roster()
         m = stale(roster)
         if m:
-            for k, v in want.items():
-                if v:
-                    m[k] = v
-                else:
-                    m.pop(k, None)
+            m.update(want)
             save_roster(roster)
     finally:
         unlock()
@@ -1754,7 +1781,9 @@ def add_read_commands(sub, memory=None):
     g.add_argument("--text", help="case-insensitive match on names, tasks, focus, labels and goals")
     rt = sub.add_parser("route", help="how to reach a coordinator now, best route first")
     rt.add_argument("--coordinator", help="default: your own coordinator")
-    sub.add_parser("host", help="where this session runs (T3 Code, Claude Desktop, Codex Desktop, a CLI) and its guide")
+    hs = sub.add_parser("host", help="where this session runs (T3 Code, Claude Desktop, Codex Desktop, a CLI) and its guide")
+    hs.add_argument("--set", choices=[h for h in HOSTS if h != "unknown"],
+                    help="record your host when the environment does not show it (references/hosts/README.md)")
     sz = sub.add_parser("sizes", help="a project's recorded run sizes per class: the figures to size a lease from")
     sz.add_argument("--worktree", required=True)
     sz.add_argument("--class", dest="lcls", metavar="CLASS")

@@ -131,8 +131,9 @@ in the ledger; member messages need no shared inbox copy.
 - **The send tool depends on your host**, not on your provider (Claude or
   Codex). Find your host and read only its guide: [hosts/README.md](hosts/README.md).
   It lists which receivers each host's send tool reaches, and the inbox
-  routes for when no app route connects two hosts. `puppet.py route` and the
-  coordinator's printed app routes list only the routes your host has.
+  routes for when no app route connects two hosts. When `puppet.py --help`
+  lists `host`, `puppet.py route` and the coordinator's printed app routes
+  list only the routes your host has.
 - Coordinator to coordinator:
   `coordinator.py send --to <name> --text "<text>"`
   Send only what the other coordinator must act on and the shared records do

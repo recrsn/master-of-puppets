@@ -14,25 +14,30 @@ only that host's guide.
 
 1. When `puppet.py --help` (or `coordinator.py --help`) lists `host`, run
    `puppet.py host`. It prints your host, provider, session id and guide.
-2. Else, read your environment once (`env`), and use the first line that
-   matches:
+   When it prints `unknown`, use the steps below, then record the answer
+   with `puppet.py host --set <host>`.
+2. Check your tool list. It decides over the environment:
 
-   | Marker | Host | Guide |
+   | You have | Host | Guide |
    | --- | --- | --- |
-   | `CLAUDE_CODE_ENTRYPOINT=t3-code`, a `T3CODE_THREAD_ID` variable, `__CFBundleIdentifier=com.t3tools.t3code`, or `CODEX_INTERNAL_ORIGINATOR_OVERRIDE` that starts with `T3` | T3 Code | [t3-code.md](t3-code.md) |
-   | `CLAUDE_CODE_ENTRYPOINT=claude-desktop` | Claude Desktop | [claude-desktop.md](claude-desktop.md) |
-   | Another `CLAUDE_CODE_ENTRYPOINT` (`cli`, `sdk-ts`, `sdk-cli`, an IDE) | Claude Code CLI, IDE or SDK | [claude-code.md](claude-code.md) |
-   | `CODEX_INTERNAL_ORIGINATOR_OVERRIDE=Codex Desktop`, or `__CFBundleIdentifier=com.openai.codex` | Codex Desktop | [codex-desktop.md](codex-desktop.md) |
-   | `CODEX_THREAD_ID` and none of the above | Codex CLI | [codex-cli.md](codex-cli.md) |
+   | `t3_thread_send` | T3 Code | [t3-code.md](t3-code.md) |
+   | `send_message_to_thread` (prefix `mcp__codex_app__`) | Codex Desktop | [codex-desktop.md](codex-desktop.md) |
+   | `SendMessage` and no T3 tools, and `CLAUDE_CODE_ENTRYPOINT=claude-desktop` | Claude Desktop | [claude-desktop.md](claude-desktop.md) |
+   | Claude, none of the above | Claude Code CLI, IDE or SDK | [claude-code.md](claude-code.md) |
+   | Codex, none of the above | Codex CLI | [codex-cli.md](codex-cli.md) |
 
-   A Codex thread started from a Claude session can inherit
-   `CLAUDE_CODE_ENTRYPOINT`. When you are Codex, skip the Claude rows.
-3. Check against your tool list: `t3_thread_send` means T3 Code;
-   `send_message_to_thread` (prefix `mcp__codex_app__`) means Codex Desktop;
-   `SendMessage` with no T3 tools means a Claude host. A tool can be
-   deferred: search for it by name before you decide it is missing. Tool
-   prefixes differ by provider (`mcp__t3-code__` in Claude,
+   A tool can be deferred: search for it by name before you decide it is
+   missing. Tool prefixes differ by provider (`mcp__t3-code__` in Claude,
    `mcp__t3_code__` in Codex): match the bare name.
+3. The environment gives hints (`env`):
+   `CLAUDE_CODE_ENTRYPOINT` (`t3-code`, `claude-desktop`, `cli`, `sdk-ts`)
+   for Claude, and `T3CODE_THREAD_ID` for Claude in T3 Code. For Codex,
+   `__CFBundleIdentifier=com.t3tools.t3code` or
+   `CODEX_INTERNAL_ORIGINATOR_OVERRIDE=T3 Code` point to T3 Code, and
+   `CODEX_INTERNAL_ORIGINATOR_OVERRIDE=Codex Desktop` to Codex Desktop. The
+   Codex markers are seen on the app's own processes and may be missing in a
+   tool shell. A Codex thread started from a Claude session can inherit
+   `CLAUDE_CODE_ENTRYPOINT`: when you are Codex, ignore it.
 4. When nothing matches, your host is unknown: use the inbox routes only
    ("No shared route", below) and tell the user.
 
@@ -41,9 +46,10 @@ another app. When it changed, send JOIN (or SCOUT JOIN) again.
 
 ## Who reaches whom
 
-Each send tool reaches only some receivers. `puppet.py route` (and the
-coordinator's printed app routes) list only the routes from your host to the
-receiver's host. Without the command, use this table:
+Each send tool reaches only some receivers. When `puppet.py --help` lists
+`host`, `puppet.py route` and the coordinator's printed app routes list only
+the routes from your host to the receiver's host. Otherwise they can name a
+tool that you do not have: use this table to pick.
 
 | From (host, provider) | To | Route |
 | --- | --- | --- |

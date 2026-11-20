@@ -931,7 +931,9 @@ def note_route(c):
     sid, tool = session_or_none()
     if not sid or c.get("sessionId") != sid:
         return  # the dashboard or another session: it does not know this coordinator's host or thread
-    c["host"] = detect_host(tool)
+    host = detect_host(tool)
+    if host != "unknown":
+        c["host"] = host  # only a positive detection: `host --set` covers the rest
     thread = cenv("T3CODE_THREAD_ID")
     if thread:
         c["t3Thread"] = thread

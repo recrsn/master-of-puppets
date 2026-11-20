@@ -27,12 +27,11 @@ Codex. T3 tools are often deferred: load one by name before you call it.
   name `ListAgents` shows, change when the thread is renamed or its session
   restarts. A send to an old name fails with "No agent named ...". Route by
   the thread id, never by a display name.
-- A coordinator's `heartbeat` and `register` record its host and, for
-  Claude, its thread id (`t3Thread`) in the roster. Every `puppet.py`
-  command does the same for a member. `puppet.py route` prints the route.
-  Until that command exists on your machine (an install puts it there), take
-  the id from your coordinator's WELCOME, from `t3_thread_search`, or ask the
-  user.
+- A Claude coordinator's `heartbeat` and `register` record its thread id
+  (`t3Thread`) in the roster, and every `puppet.py` command does the same for
+  a Claude member. `puppet.py route` prints it. When `puppet.py --help` lists
+  `host`, they record the host too. Without `route`, take the id from your
+  coordinator's WELCOME, from `t3_thread_search`, or ask the user.
 - A Codex member's thread id is not recorded (Codex has no
   `T3CODE_THREAD_ID`). The coordinator finds it with `t3_thread_search` by
   the member's name and records it in its notes.

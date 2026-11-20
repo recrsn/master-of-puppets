@@ -53,7 +53,7 @@ class Hosts(unittest.TestCase):
         self.assertEqual(self.host(CLAUDE_DESKTOP), "claude-desktop")
         self.assertEqual(self.host(CLAUDE_CLI), "claude-code")
         self.assertEqual(self.host(CODEX_DESKTOP), "codex-desktop")
-        self.assertEqual(self.host(CODEX_CLI), "codex-cli")
+        self.assertEqual(self.host(CODEX_CLI), "unknown")  # a Codex CLI shows no positive sign: host --set
         self.assertEqual(self.host({}), "unknown")
         # a Codex thread started from a Claude Desktop session inherits its entrypoint: Codex markers count
         self.assertEqual(self.host(dict(CODEX_DESKTOP, CLAUDE_CODE_ENTRYPOINT="claude-desktop")), "codex-desktop")
@@ -71,8 +71,9 @@ class Hosts(unittest.TestCase):
         self.assertEqual(self.routes(CLAUDE_DESKTOP, desktop_codex), ["inbox"])
         self.assertIn("send_message_to_thread with threadId x9", self.routes(CODEX_DESKTOP, desktop_codex)[0])
         self.assertEqual(self.routes(CODEX_DESKTOP, t3_codex_coord), ["inbox"])  # another app's thread
-        self.assertIn("codex queue --thread x9", self.routes(CODEX_CLI, {"tool": "codex", "sessionId": "x9"})[0])
         r = self.routes(T3_CLAUDE, {"tool": "codex", "sessionId": "x9", "host": "t3-code"})  # thread id not known
+        self.assertIn("t3_thread_search", r[0])
+        r = self.routes(T3_CLAUDE, {"tool": "codex", "sessionId": "x9"})  # a member whose host is not recorded yet
         self.assertIn("t3_thread_search", r[0])
 
     def test_coordinator_and_member_record_their_host(self):
@@ -95,6 +96,22 @@ class Hosts(unittest.TestCase):
         # the Codex Desktop coordinator and the Claude Desktop member share no app tool
         self.m.RUN.env = CODEX_DESKTOP
         self.assertIn("No shared route", self.c.native_route(self.m.load_roster()["members"]["a"][0]))
+        # a thinner environment never erases a recorded host
+        self.m.RUN.env = {"CLAUDE_CODE_SESSION_ID": "s1"}
+        with redirect_stdout(io.StringIO()):
+            self.p.main(["roster"])
+        self.assertEqual(self.m.load_roster()["members"]["a"][0]["host"], "claude-desktop")
+
+    def test_a_cli_session_states_its_host(self):
+        roster = self.m.load_roster()
+        roster["members"]["a"] = [{"name": "w", "tool": "codex", "sessionId": "x1", "status": "active"}]
+        self.m.save_roster(roster)
+        self.m.RUN.env = CODEX_CLI
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(self.p.main(["host", "--set", "codex-cli"]), 0)
+        self.assertIn("host codex-cli", out.getvalue())
+        self.assertIn("codex queue --thread x9", self.routes(CODEX_CLI, {"tool": "codex", "sessionId": "x9"})[0])
 
 
 if __name__ == "__main__":

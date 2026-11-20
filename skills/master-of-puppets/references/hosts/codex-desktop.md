@@ -1,8 +1,7 @@
 # Codex Desktop
 
-Read this when your host is Codex Desktop (`CODEX_INTERNAL_ORIGINATOR_OVERRIDE=Codex Desktop`
-or `__CFBundleIdentifier=com.openai.codex`; [README.md](README.md) tells you
-how to find your host). The app tools have the `mcp__codex_app__` prefix;
+Read this when your host is Codex Desktop: you have `send_message_to_thread`
+([README.md](README.md) tells you how to find your host). The app tools have the `mcp__codex_app__` prefix;
 discover them when they are not loaded. Use only the tools that your session
 has.
 
