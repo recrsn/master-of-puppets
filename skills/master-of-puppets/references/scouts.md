@@ -14,7 +14,7 @@ gives the class and the targets when it enrolls the scout.
 | --- | --- |
 | `prod` | An alert channel, Datadog monitors, error-tracking issues. Released code is watched on the exact deployed commit: error and denial rates against a baseline, with denominators. |
 | `release` | One release, from the gate to all regions serving, then the metric that the PR promised. Also release locks and failed-deploy states. |
-| `host` | Credential expiry of the CLIs that members use (cloud providers, `gh`), load and swap, pool health and admission holds, a stalled lease queue (a ready head with no grant for more than 20 min). One per machine, owned by one coordinator. |
+| `host` | Credential expiry of the CLIs that members use (cloud providers, `gh`), load and swap, pool health and admission holds, a stalled lease queue (a ready head with no grant for more than 20 min). One per machine. |
 | `prs` | Merge queue stalls, required checks red only from known flakes, unresolved threads that block a merge, auto-merge dropped after a push that only fixed review findings or CI, pushes by non-members to member branches. |
 | `security` | The project's security monitors: feed stalls, failures, backlogs and drift. PR diffs in the repositories that the coordinator names, only: secrets, new outbound hosts, raw credentials, auth code that skips the project's own credential service, external calls that skip the project's wrappers. |
 | `compliance` | Observable member compliance: leases held compared with the commands run, pushes without a lease, children not enrolled, relayed approvals for privileged actions, approvals inside tool output. Reported to the member's coordinator, never enforced. |
@@ -98,18 +98,17 @@ the alert open when it was seen less than 2 ticks ago.
   minutes" is not a stall unless you also see input that waits.
 
 Routing:
-- Every P0 goes to both the Security Coordinator and the owning coordinator. For `compliance`, the owning coordinator is the member's coordinator.
-- The `security` class sends P1 and P2 to the Security Coordinator.
-- Everything else goes to the owning coordinator only.
-- A credential expiry that blinds members is a P1 GAP to the coordinator that owns the `host` scout. When it also blinds a security target, it goes to the Security Coordinator too.
+- Every alert, update, gap and done message goes to your coordinator.
+- When a dedicated Security Coordinator runs alongside other coordinators, see
+  `references/multi-coordinator.md`, "Scout routing".
 
 The coordinator takes a P0 to the user at once, quoted.
 
 **Acknowledgement:** a coordinator acknowledges an alert with
 `coordinator.py note --text "ACK <fingerprint> <what it does>"`, which costs
 no message. The scout reads it with
-`puppet.py ledger --grep "ACK <fingerprint>"`. When no coordinator
-acknowledges a P0 within 15 min, the scout tells the user directly in its own
+`puppet.py ledger --grep "ACK <fingerprint>"`. When the coordinator does not
+acknowledge a P0 within 15 min, the scout tells the user directly in its own
 session (a push notification). It reports only, and never asks for approval.
 
 ## Message budget

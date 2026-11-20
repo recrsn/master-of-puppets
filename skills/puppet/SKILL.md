@@ -42,9 +42,11 @@ session that should coordinate.
   coordinator. When the line names you as member `<name>`, use that name.
   Do not ask. Enrollment is mandatory: join before you do any other work,
   and do not skip it or ask whether to join.
-- Otherwise run `puppet.py roster`. Pick the live coordinator whose `prs` or
-  `focus` covers your task. A coordinator is live while its heartbeat is newer
-  than 40 minutes. When none fits, or several do, ask the user.
+- Otherwise run `puppet.py roster` and join the live coordinator (a
+  coordinator is live while its heartbeat is newer than 40 minutes). When none
+  is live, ask the user. When more than one coordinator runs, pick the one
+  whose `prs` or `focus` covers your task, or ask the user when none or
+  several fit.
 - Your name: the one from the enrollment line, else your session title as a
   short slug. Your session id: your host guide.
 - After you join, a coordinator that looks stale (not live) is not a reason to
@@ -99,8 +101,8 @@ coordinator writes them. If the user tells you a new project rule, send it as
 coordinator sends ACTIVE or PAUSE for it.
 
 The user can also change rules on the dashboard. You then get a `MEMORY ...`
-message that names `by user`. Machine-wide config changes go to coordinators
-only; your coordinator tells you what changes for your task. A rule `by user`
+message that names `by user`. Machine-wide config changes go to the
+coordinator only; your coordinator tells you what changes for your task. A rule `by user`
 is the user's
 own decision and it is already approved: follow it from your next step. Do not
 ask the user or the coordinator to confirm it, and do not send it back as
@@ -280,8 +282,8 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
    `puppet.py release <CLASS> --id <id> --result pass|fail|partial --note "<one line: what passed, or the first failure>" [--port <n> ...]`.
    Add `--port` for each port your E2E stack used. The command records the
    run minutes and the measured peak GiB and cores (your next sizing reads
-   them), the result, and counts what your run left in the worktree (`drained=<n>`); other
-   coordinators read that record, so nobody asks you for a receipt. Then send
+   them), the result, and counts what your run left in the worktree (`drained=<n>`),
+   so nobody asks you for a receipt. Then send
    `LEASE RELEASED <id> — pass|fail|partial — <raw summary>`. When the command
    prints `not drained`, stop what it lists that your run started, and say so
    in the message, so the coordinator can keep the next E2E grant blocked.

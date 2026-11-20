@@ -8,12 +8,8 @@ that `coordinator.py` enforces (`references/setup.md`).
 
 ## Coordinator conduct
 
-- Direct only your own members, and act only on PRs you own. For another
-  coordinator's PR or member, message that coordinator.
-- One owner per PR. Agree splits and cross-stack merge order by message, then
-  `note` the agreement in the shared ledger.
-- Never kill processes. Never take over an expired lease or a live
-  coordinator's role without the user's approval.
+- Never kill processes. Never take over an expired lease or replace a live
+  coordinator session without the user's approval.
 - Prefer fix tasks over investigations when two needs tie.
 - Do an approved action as the user asked it, no more. Do not add steps the
   user did not ask for, such as a backup before an approved delete. When a
@@ -21,14 +17,8 @@ that `coordinator.py` enforces (`references/setup.md`).
 - Answer a question about work you took over from the handoff notes and the
   notes files first (`handoffs/`, `notes/` in the state dir, and the note the
   handoff names). Search GitHub or logs only for what they do not say.
-- Read the shared record before you message a peer: `events`, `inbox`,
-  `ledger`, `who` and `prs --path`. Never send, or ask for, a release, drain
-  or cleanup receipt; the release event is the record (`references/leases.md`).
-- A change that every coordinator must see is a command, not a message:
-  admission holds, rule and config changes (`--reason`; the command also
-  messages every live member, so do not tell them), member handoffs (`member transfer`, `member accept`), and
-  questions for the user that concern every coordinator
-  (`decision add --scope machine`). `references/protocol.md` has the table.
+- When more than one coordinator runs on the machine, also follow the
+  ownership and peer-conduct rules in `references/multi-coordinator.md`.
 
 ## Member limits
 

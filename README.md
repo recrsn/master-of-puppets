@@ -7,22 +7,23 @@ Codex) on one machine.
 
 ### `master-of-puppets`
 
-One or more coordinator sessions take PR stacks to merged. Coordinators:
+A coordinator session takes PR stacks to merged (running multiple coordinators
+at once is supported as an advanced path). The coordinator:
 
-- watch inboxes, lease expiry and PR state with Monitors, and run a status
+- watches inboxes, lease expiry and PR state with Monitors, and runs a status
   heartbeat round on a schedule that checks on members who forget to report;
-- move each stack bottom-up: one active PR, retarget to the base branch after
+- moves each stack bottom-up: one active PR, retarget to the base branch after
   the PR below merges, auto-merge, confirm the merge SHA;
-- record members, tasks and decisions in a shared roster and ledger;
-- optionally grant machine-wide leases for shared actions (builds, local
+- records members, tasks and decisions in a shared roster and ledger;
+- optionally grants machine-wide leases for shared actions (builds, local
   stacks, a single browser window, a test database). Members size each run
-  (minutes, memory, cores); coordinators grant against memory and core
-  budgets, refuse requests below their measured peaks, and check swap, load
+  (minutes, memory, cores); the coordinator grants against memory and core
+  budgets, refuses requests below their measured peaks, and checks swap, load
   and disk;
-- give tasks and lease queue entries a priority: all start at 0, the user's
-  urgent work goes first, and a coordinator pushes back its own sweeps and
+- gives tasks and lease queue entries a priority: all start at 0, the user's
+  urgent work goes first, and the coordinator pushes back its own sweeps and
   scheduled runs while regular tasks wait;
-- share one live dashboard: CPU, memory, swap and disk meters, what needs
+- serves one live dashboard: CPU, memory, swap and disk meters, what needs
   you first, one board of all tasks grouped by state, lease timelines and a
   Wall mode for a shared screen, updated over SSE.
 
@@ -37,8 +38,8 @@ merged. Only a coordinator grants and extends. The coordinator records membershi
 decisions.
 
 Four files in `master-of-puppets/scripts` do the work: `coordinator.py`
-(roster, members, leases, messaging, shared-record reads, watchers, config,
-class-default votes, install), `puppet.py` (the commands a member runs: roster, memory, the
+(roster, members, leases, messaging, shared-record reads, watchers, config and
+install), `puppet.py` (the commands a member runs: roster, memory, the
 shared-record reads, lease request, wait, extension request and release), `moplib.py`
 (the state code both share) and `server.py` (dashboard, with the page shell
 `dashboard.html`). All use only the Python standard library.
@@ -59,7 +60,7 @@ Claude Code and Codex:
 npx skills add recrsn/master-of-puppets --skill master-of-puppets --skill puppet -g -a claude-code -a codex
 ```
 
-Install both: coordinators use `master-of-puppets`, members use `puppet`.
+Install both: the coordinator uses `master-of-puppets`, members use `puppet`.
 Drop `-g` to install into the current project instead (`.claude/skills/` and
 `.agents/skills/`). Update or remove them later:
 
@@ -82,21 +83,21 @@ ln -s "$PWD/skills/puppet" ~/.claude/skills/puppet
 ```
 
 Shared state lives in `$MACHINE_LEASE_DIR` (default
-`~/.local/state/machine-leases`). The first coordinator installs `moplib.py`,
+`~/.local/state/machine-leases`). The coordinator installs `moplib.py`,
 `coordinator.py` and `puppet.py` there with
 `python3 -I skills/master-of-puppets/scripts/coordinator.py install` and
 asks you for machine and project defaults. Every session runs these live
 copies, so all sessions use one version against the shared state. When the
-skill copy changes, the helpers warn that an update is due; after the
-coordinators agree, `install --replace` updates the live copies.
+skill copy changes, the helpers warn that an update is due; on your word,
+`install` updates the live copies.
 
 ## Use
 
-- In the session that should coordinate: `/master-of-puppets`, then name the
-  stack it owns.
-- In each working session: `/puppet`. The session joins the coordinator that
-  owns its PRs. Tasks a coordinator starts open with a kickoff line that makes
-  the new session run `/puppet` by itself.
+- In the session that should coordinate: `/master-of-puppets`, then describe
+  the work or stack it owns.
+- In each working session: `/puppet`. The session joins the coordinator. Tasks
+  the coordinator starts open with a kickoff line that makes the new session
+  run `/puppet` by itself.
 - Dashboard: `http://localhost:4720/`.
 
 In Codex, invoke the skills as `$master-of-puppets` and `$puppet` (or by name).
@@ -107,8 +108,8 @@ send tool, session ids, scheduler, watchers and PR binding.
 
 See `skills/master-of-puppets/SKILL.md` for the coordinator workflow,
 `skills/puppet/SKILL.md` for the member side, and
-`skills/master-of-puppets/references/` for the protocol, rules, leases, setup
-and dashboard details.
+`skills/master-of-puppets/references/` for the protocol, rules, leases, setup,
+dashboard and multi-coordinator details.
 
 ## Evals
 

@@ -93,7 +93,8 @@ the answer and the question. Only the option number crosses the post; the
 answer text comes from the state file. A decision without options has no
 buttons.
 
-A machine-scope decision (`decision add --scope machine`) lives in
+A machine-scope decision (`decision add --scope machine`, used in
+multi-coordinator setups; see `references/multi-coordinator.md`) lives in
 `dashboard/machine-state.json` and shows under the name "machine". Its answer
 counts for every coordinator, and every live coordinator gets the message.
 

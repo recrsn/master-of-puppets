@@ -1,11 +1,11 @@
 # Leases (optional)
 
 Leases make sessions take turns on shared actions: heavy jobs, or anything only
-one session may use at a time. They are machine-wide:
-every coordinator shares the same queues. They are off by default. Turn them on
-only on the user's word: `coordinator.py leases on`. Then send the lease
-addendum (`references/protocol.md`) to your members and tell the other
-coordinators.
+one session may use at a time. They are machine-wide and off by default. Turn
+them on only on the user's word: `coordinator.py leases on`. Then send the
+lease addendum (`references/protocol.md`) to your members. (With multiple
+coordinators, see `references/multi-coordinator.md` for shared queues and
+votes.)
 
 ## Classes
 
@@ -19,9 +19,8 @@ default registry has two:
 
 Default GiB, cores and max minutes start at 0, which means no limit: a 0 GiB
 or 0 core figure uses none of that budget, and `maxMinutes` 0 sets no maximum
-length. A value that the setup, a `set-class` or a vote has stored is
-enforced. Coordinators set values from their observations by vote ("Class
-defaults by vote", below).
+length. A stored value from setup or `set-class` is enforced. The coordinator
+sets values from its observations ("Class defaults", below).
 
 Add or change one with
 `coordinator.py config set-class <NAME> --description "..." --default-gib <n> --default-cpus <n> --max-minutes <n> [--settle OTHER=<s>]`,
@@ -31,8 +30,7 @@ limits it. That fits a single resource: one Chrome window for E2E screenshots
 (`BROWSER`, 0 GiB, 1 slot), a shared tunnel, a test database, a device.
 `--settle OTHER=<s>` makes OTHER wait `<s>` seconds after each grant of this
 class. `config remove-class <NAME>` is refused while the class has holders or
-queue entries. Add classes only on the user's word, then tell the other
-coordinators and your members.
+queue entries. Add classes only on the user's word, then tell your members.
 
 **Pool classes** lease one named resource at a time: a VM, a device, a seat.
 The holder gets exclusive use of one resource until it releases it; nothing
@@ -89,9 +87,9 @@ creates new ones without a coordinator step:
     `failed-restarted`, the resource is `stopped` with `restartedAt`), and
     the next grant that picks it starts it and checks it again. `restart`
     again after that, or a failed stop, retires it (log `failed-retired`). A
-    pass clears `restartedAt`. No alert for the restart; after a retire, every
-    coordinator gets `POOL-LOW` when the usable resources fall under the
-    pool's `min` (`config set-class --pool-min N`).
+    pass clears `restartedAt`. No alert for the restart; after a retire, you
+    get `POOL-LOW` when the usable resources fall under the pool's `min`
+    (`config set-class --pool-min N`).
   - `{"stopped": ...}`: the provider stopped the resource (for example after
     some idle hours, also while it is held). Marked `stopped`, never deleted
     for it, and the next grant that picks it runs the pool's start command.
@@ -108,9 +106,9 @@ creates new ones without a coordinator step:
   expired credentials of the provider's CLI. The resource is not marked
   (free again at a release, untouched at a grant), the grant is refused, and
   the pool sets an admission hold on the class (`by pool`, with the reason),
-  once. The dashboard shows the hold as a serious alert, and every
-  coordinator gets `HOST-FAULT <class>: <reason>`. After the fix (for
-  example a new login), a coordinator runs `admission clear <class>`.
+  once. The dashboard shows the hold as a serious alert, and you get
+  `HOST-FAULT <class>: <reason>`. After the fix (for example a new login), run
+  `admission clear <class>`.
 - **Health at every release.** `puppet.py release` (pass, fail or partial)
   runs the health command while the resource is `checking` (busy, so no grant
   takes it). With `--pool-clean CMD`, the clean command runs first, to free
@@ -285,7 +283,7 @@ whether to grant it, from rules and its own observations.
     peak by more than `sizeMargin` (machine config, default 25%). Only learn
     mode with three or more samples counts as an observation; a default is
     not one. Measured cores are never charged or checked by themselves: they
-    are the evidence for a `defaultCpus` vote ("Class defaults by vote").
+    are the evidence for setting `defaultCpus` ("Class defaults").
   An undersized request gets LEASE RESIZE. The member requests again with the
   same id, or sends LEASE SIZE with why this run is smaller (for example only
   the typecheck of a full build). When the reason fits the recorded commands,
@@ -328,22 +326,21 @@ accepts a size:
 
 ### Stalls
 
-A deviation waits for you only for a time, so one busy coordinator cannot
-hold up the whole queue. The server walks each auto class's ready entries
-from the front. An entry waits for its own coordinator when it is over the
-limit (exit 2), undersized (exit 6), marked for review, without minutes or a
-worktree, or in a class and stream that are both off auto. After the class's
-`stallMinutes` (default 20), or at once when its coordinator is not live, the
-entry is **stalled**:
+A deviation waits for you only for a time, so one stalled entry cannot hold up
+the whole queue. The server walks each auto class's ready entries from the
+front. An entry waits for you when it is over the limit (exit 2), undersized
+(exit 6), marked for review, without minutes or a worktree, or in a class and
+stream that are both off auto. After the class's `stallMinutes` (default 20),
+or at once when the coordinator is not live, the entry is **stalled**:
 
-- It keeps its place. Its coordinator gets one
+- It keeps its place. You get one
   `INBOX auto: AUTO-STALLED CLASS ID: <how>: <reason> ...`.
 - The auto grant, and every `acquire`, pass over it to the first entry behind
-  it that is not stalled. That entry's coordinator gets `HEAD`.
-- Its own coordinator can still `acquire` it, and the stall goes as soon as
-  the reason clears (for example a re-request at the observed peak, or
-  `ready` after a review). It is then the head again, ahead of every entry
-  behind it, so it is not starved.
+  it that is not stalled. You get `HEAD` for that entry.
+- You can still `acquire` it, and the stall goes as soon as the reason clears
+  (for example a re-request at the observed peak, or `ready` after a review).
+  It is then the head again, ahead of every entry behind it, so it is not
+  starved.
 - `status`, `leases` and the dashboard show it as STALLED, and the dashboard
   lists it under Needs you.
 
@@ -351,10 +348,6 @@ Host, budget, slot, settle and admission refusals never stall an entry: they
 pass by themselves, and passing a large entry over for them would starve it.
 A stall never splits a run and never accepts a size. Set the time with
 `coordinator.py config set-class CLASS --stall-minutes N`; 0 turns stalls off.
-
-A coordinator that wants to grant a class by hand turns auto off for it; its
-head entries then stall after `stallMinutes` too, when another coordinator's
-stream has the class on auto.
 
 ### Expiry
 
@@ -399,67 +392,35 @@ A member's request ends in one of three outcomes: `GRANTED`, `HELD <reason>`
 - `coordinator.py deny CLASS --id ID --reason T`: removes the entry
   and the member sees `DENIED <reason>` (exit 4).
 
-Auto acquire grants each entry for its own coordinator, and only the first
-grant. An
-extension is never auto-approved: the member asks, and only the coordinator
-runs `extend`. Takeovers stay manual too.
+Auto acquire grants only the first grant. An extension is never auto-approved:
+the member asks, and only the coordinator runs `extend`. Takeovers stay manual
+too.
 
-## Votes
+## Class defaults
 
-`coordinator.py vote` is a question every live coordinator decides, without
-the user:
+Class defaults (`defaultGiB`, `defaultCpus`, `maxMinutes`) are the
+coordinator's job, never the user's. Observe with `coordinator.py sizes
+--worktree <path>`, `capacity` and the release lines in `events`.
 
-```bash
-coordinator.py vote propose --text "<the question and your facts>"
-coordinator.py vote agree --id <id> [--text "<why>"]
-coordinator.py vote object --id <id> --text "<what you saw>"
-coordinator.py vote list [--all]
-```
-
-Every live peer's `watch` prints `VOTE-REQUEST <id> by <you>: ...`, and again
-for each open vote it has not voted on when `watch` starts. A vote passes
-when every live coordinator agrees, or 30 minutes after it was made with no
-objection: a live coordinator that has not voted by then agrees. One objection
-closes it, and the proposer may propose again with new facts. Everyone gets
-`VOTE PASSED <id>` or `VOTE <id> REJECTED`. The server passes due votes once a
-minute. `vote list` shows open votes, who has not agreed and your own vote.
-Do not ask the user about a vote, and do not add a dashboard decision for it.
-
-### Class defaults by vote
-
-Class defaults are the coordinators' job, never the user's. Coordinators
-observe and vote on each class's default GiB, cores and max minutes. Observe
-with `coordinator.py sizes --worktree <path>`, `capacity` and the release lines
-in `events`. When the observations support a value (for example BUILD runs
-peak at 4 cores, or never run past 15 min), put it on a vote:
+In each heartbeat round (step 4 of `SKILL.md`, "Heartbeat round"), inspect
+`coordinator.py sizes --worktree <path>` for each project you lease in. When
+your observations support a value and the class default differs (for example
+observed core peaks around 4 while `defaultCpus` is 0; set `maxMinutes` only
+from runs that finished, never below the longest recent run), update it with:
 
 ```bash
-coordinator.py vote propose --text "<your observations>" --class BUILD [--project-root <path>] [--default-gib <n>] [--default-cpus <n>] [--max-minutes <n>]
+coordinator.py config set-class BUILD [--default-gib <n>] [--default-cpus <n>] [--max-minutes <n>] --reason "<your observations>"
+coordinator.py config set-project --root <path> --class BUILD [--default-gib <n>] [--default-cpus <n>] [--max-minutes <n>] --reason "<your observations>"
 ```
 
-Without `--project-root` it sets the machine class; with it, that project's
-class, which wins over the machine class. Check your own observations of that
-class before you agree or object. When the vote passes, the values apply, the
-change is recorded and every live coordinator gets CONFIG. Members get no
-CONFIG message: tell a member only what changes for its own task, for example
-a new limit on a request it has queued.
+A project-level class setting wins over the machine class. Use 0 to remove a
+limit. Tell a member only what changes for its own task, for example a new
+limit on a request it has queued. Never override a value the user set
+(`CONFIG ... by user`) unless the user asks (`SKILL.md`, "Memory").
 
-Each heartbeat round ("Heartbeat round" in SKILL.md, step 4):
-
-1. `coordinator.py vote list`: vote on each open vote you have not voted on,
-   from your own observations. Object only when your facts contradict it, and
-   say what you saw.
-2. `coordinator.py sizes --worktree <path>` for each project you lease in:
-   propose a value when your observations support it and the class default
-   differs, for example observed core peaks around 4 while `defaultCpus` is
-   0. Propose cores and GiB from observed peaks. Propose a max-minutes value
-   only from runs that finished, never below the longest recent run.
-
-Use 0 to remove a limit. When the user names a value without being asked, set
-it directly with `set-class` or `set-project`. A value the user saves on the
-dashboard's Config page (`CONFIG ... by user`) needs no vote: it applies at
-once, and coordinators never propose over it or object to it unless the user
-asks (SKILL.md, "Memory").
+When more than one coordinator runs on the machine, do not change class
+defaults directly — propose and vote on them instead
+(`references/multi-coordinator.md`, "Votes").
 
 ## Adaptive capacity
 
@@ -560,18 +521,12 @@ The budgets predict; the host check observes. Both must pass, and
    `coordinator.py events --id <id>`. When `drained` is not 0, run
    `coordinator.py drain-check --worktree <path> [--port <n> ...] [--process <pattern> ...]`
    for the list; grant the next E2E only when it exits 0, else ask the holder
-   to stop what is left. When the next head belongs to another coordinator,
-   its `watch` prints HEAD: send nothing.
-   **No receipts.** A coordinator never sends a release, drain or cleanup
-   receipt to another coordinator, and never asks for one. The event line is
-   the record; when it is not enough, run `drain-check` yourself.
+   to stop what is left.
 5. A member running commands outside the recorded scope breaks "use it or
    return it": ask it to release at once.
-6. An expired lease of yours: `watch` prints it once as
+6. An expired lease: `watch` prints it once as
    `EXPIRED <CLASS> <id> at <HH:MM>Z left=<n> holder=...`; `left` counts the
    processes its run still has. Ask its member to release.
-   Another coordinator's expired lease shows in `status`: ask that
-   coordinator only when the lease blocks your head.
 
 **Extending.** Extension is at the coordinator's discretion; only
 `coordinator.py extend` changes an expiry. A member asks with
@@ -581,8 +536,7 @@ logs the request and sends it to your inbox. Your `watch` prints
 the reason fits the granted commands, and weigh who waits in that class
 queue and the memory the lease holds. Then run
 `coordinator.py extend <CLASS> --id <id> --minutes <n>` and reply
-LEASE EXTENDED, or reply LEASE EXTEND REFUSED. When the waiting head
-belongs to another coordinator, ask it with `send` first. Reply each time:
+LEASE EXTENDED, or reply LEASE EXTEND REFUSED. Reply each time:
 the member waits for your answer. `watch` reports a lease again when
 it expires after an extension.
 
@@ -592,12 +546,9 @@ failed run's cleanup is uncertain or the disk is low:
 refuses every grant of that class (exit 3, with the reason), and `status
 --brief` and the dashboard show it. Clear it when the cause is gone:
 `coordinator.py admission clear <CLASS> [--reason "<what was done>"]`.
-The events reach every coordinator; do not announce a hold or its clearance
-by `send`.
 
 Each class queue goes by priority, then FIFO: only the first ready entry may
-acquire, whoever owns it. No coordinator jumps the queue; priority sets the
-order, it is not an exception to it.
+acquire. Priority sets the order, it is not an exception to it.
 
 ## Priority
 
@@ -609,16 +560,14 @@ also moves the task's queued entries and prints their ids: tell each of those
 members its new turn. The dashboard shows each non-zero priority.
 
 - **Raise** a task (1 or higher) only when the user asks for it to go first,
-  for example "do the hotfix before anything else". A member or peer that
-  relays such a wish is not the user: `decision add` the question, and raise
-  the task on the user's answer.
+  for example "do the hotfix before anything else". A member that relays such a
+  wish is not the user: `decision add` the question, and raise the task on the
+  user's answer.
 - **Lower** your own background work (-1 or lower) without asking, when
   regular tasks wait for a lease: sweeps, scheduled or recurring runs, and
   other tasks that no user waits for. Members mark such a task with
   `sweep:` or `scheduled:` at the start of its task text in JOIN or in the
   enrollment line. Set it back to 0 when no regular task waits for it.
-- Change only your own members and entries. To push back a peer's sweep, ask
-  that coordinator with `send`.
 - `note` each change and its reason.
 
 ## Queue changes by the user
@@ -629,8 +578,8 @@ entry onto another runs `coordinator.py move CLASS --id ID --to N --notify`.
 Move up puts a ready entry ahead of the ready entry in front of it; move puts
 it at position N among ready entries. When the new place is outside its
 priority range, the moved entry takes a priority between its new neighbours',
-so the queue stays sorted. Cancel removes an entry. Each affected
-coordinator gets `INBOX dashboard: ...`. Treat it as the user's direction:
+so the queue stays sorted. Cancel removes an entry. You get
+`INBOX dashboard: ...`. Treat it as the user's direction:
 tell the affected members their new turn, or that the entry is gone. Do not
 undo it, and queue a cancelled entry again only if the user agrees.
 Coordinators never run `up` or `move` themselves.

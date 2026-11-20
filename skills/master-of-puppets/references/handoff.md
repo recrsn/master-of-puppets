@@ -3,7 +3,8 @@
 A handoff moves the ownership of a task from one session to another. The task
 can be a PR, a stream, its members, held decisions, and the external resources
 the task made (a test database, a container, a fixture PR). It can go between
-members, between coordinators, and between Claude and Codex.
+members, between Claude and Codex, or between coordinators (see
+`references/multi-coordinator.md`).
 
 At each moment one session owns each item. The steps below keep it that way.
 
@@ -12,8 +13,8 @@ At each moment one session owns each item. The steps below keep it that way.
 Only two things start a handoff:
 
 - The user asks for it, in the sending or the receiving session.
-- A HANDOFF reply to a general coordinator's one WORK REQUEST (SKILL.md, "When
-  your work is done").
+- In a multi-coordinator setup, a HANDOFF reply to a general coordinator's one
+  WORK REQUEST (`references/multi-coordinator.md`).
 
 These do not start a handoff:
 

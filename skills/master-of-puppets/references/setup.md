@@ -10,7 +10,7 @@ the user asks to reconfigure.
 | Scope | File | Reused | Settings |
 | --- | --- | --- | --- |
 | Machine | `$DIR/config.json` | All projects on this machine | memory and core reserve, size margin, disk alarm, pressure gate, dashboard port, optional slot caps |
-| Project | `$DIR/projects/<key>.json` | All worktrees of one repository | base branch, merge method, leases default, per class: learn mode (class values come from coordinator votes) |
+| Project | `$DIR/projects/<key>.json` | All worktrees of one repository | base branch, merge method, leases default, per class: learn mode (class defaults come from observations) |
 
 Nothing is written into the repository. Every limit is a config number that
 `coordinator.py` enforces. When the user later changes a limit, change it here
@@ -52,8 +52,7 @@ first and add "(Recommended)" to its label.
    class peaks. When they
    fits two of any class (for example two E2E stacks) but not one of every
    class alongside it, recommend "BUILD 1, E2E 1"; otherwise recommend "No
-   caps (memory budget only)". Offer "E2E 1 only" as the third option. If
-   another coordinator on the machine set caps, say so in the question.
+   caps (memory budget only)". Offer "E2E 1 only" as the third option.
 
 Then run:
 
@@ -71,9 +70,8 @@ tunnel), add each with `coordinator.py config set-class` (`references/leases.md`
 ## 3. Project questions (only when `project` is unconfigured)
 
 Ask these two questions. Do not ask about class peaks, cores or lease time
-limits: they start at 0 (no limit), and coordinators set them from their
-observations without the user (`references/leases.md`, "Class defaults by
-vote").
+limits: they start at 0 (no limit), and the coordinator sets them from its
+observations without the user (`references/leases.md`, "Class defaults").
 
 1. **Merge setup** (header "Merging"): the detected default branch with the
    allowed merge method (Recommended), for example "main + squash
@@ -83,7 +81,7 @@ vote").
 2. **Leases in this project** (header "Leases"): Off until the host swaps
    (Recommended), or On from the start.
 
-Then run (learn mode records peaks and run times, the evidence for votes):
+Then run (learn mode records peaks and run times, the evidence for class defaults):
 
 ```bash
 coordinator.py config set-project --root "$PWD" --name "<repo>" --base-branch <b> --merge-method <m> --leases-default <on|off>
@@ -102,6 +100,6 @@ learn mode stays at the starting values.
 
 - Merging: use `baseBranch` where the stack steps say `main`, and
   `mergeMethod` in SKILL.md, "Driving a stack", step 2.
-- Leases default: at coordinator start, when no coordinator has set leases
-  and the project says `on`, ask the user before you run `coordinator.py leases on`.
+- Leases default: at coordinator start, when leases are not yet set and the
+  project says `on`, ask the user before you run `coordinator.py leases on`.
 - Lease limits and the disk alarm: `references/leases.md`.

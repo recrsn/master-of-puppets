@@ -33,8 +33,8 @@ your coordinator. Never use `coordinator.py send`.
 Your prompt starts with
 `MASTER-OF-PUPPETS SCOUT ENROLLED — <coord> has enrolled you as scout <name> ...`:
 join that coordinator under that name, before any other work, without asking.
-Without that line, run `puppet.py roster`, pick the live coordinator that
-owns your target, and ask the user when none or several fit.
+Without that line, run `puppet.py roster` and join the live coordinator (ask
+the user if none runs, or if several run and more than one fits).
 
 Send one message:
 
@@ -124,10 +124,10 @@ The types and their fields are in scouts.md, "Messages". In short:
 - `DONE — <name> — <target> — <end condition met> — <evidence>`
 
 **Routing:**
-- Every P0 goes to your coordinator and to the Security Coordinator.
-- The `security` class sends everything to the Security Coordinator.
-- Everything else goes to your coordinator.
-- A credential expiry that blinds a security target also goes to the Security Coordinator.
+- Send every ALERT, UPDATE, GAP and DONE to your coordinator.
+- When a dedicated Security Coordinator also runs on the machine, route every
+  P0, all `security`-class messages, and any credential expiry that blinds a
+  security target to it as well (`multi-coordinator.md`, "Scout routing").
 
 **Acknowledgement:** a coordinator acknowledges with a ledger note. Check it
 with `puppet.py ledger --grep "ACK <fingerprint>"`. When a P0 has no ACK after

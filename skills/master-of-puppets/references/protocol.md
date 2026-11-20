@@ -51,7 +51,6 @@ observed peak unless you tell me why the run is smaller.
 | `REQUEST <CLASS> <id> ...` in `watch` (sent by the member's `puppet.py request`) | check and grant (`references/leases.md`, "Granting") |
 | `LEASE SIZE — <id> — <why this run is smaller than the observed peak>` | your decision: `acquire --accept-size` when the reason fits the commands, else LEASE RESIZE (`references/leases.md`, "Sizing") |
 | `CONFIG <what> by user: ...`, or `MEMORY <scope> <id> ...` naming `by user` (a save on the dashboard's Config or Rules page) | approve it automatically: apply it; never ask, revert or relay it (SKILL.md, "Memory") |
-| `VOTE-REQUEST <id> by <peer>: ...` in `watch` (a peer's `vote propose`) | check your own facts, then `vote agree --id <id>` or `vote object --id <id> --text`; never ask the user (`references/leases.md`, "Votes") |
 | `EXTEND <CLASS> <id> <n> min ...` in `watch` (sent by the member's `puppet.py extend`) | your decision: `coordinator.py extend`, or tell it to release (`references/leases.md`, "Extending") |
 | `IDLE — <name> — <what wakes it>` (long-running members only) | Reply in the same turn: `coordinator.py idle --name <name> --wake "<what wakes it>"` (checks the idle rules, sets status idle, sends `IDLE ACCEPTED`), or `idle --name <name> --reject --reason "<what is left>"` (sends `IDLE NOT ACCEPTED`). To wake it, send the direction and `member update --name <name> --status active` (or a new `--task`, `--pr` or `--phase`) |
 | `LEAVE — <name>` | Reply in the same turn: `coordinator.py leave --name <name> --validated "<check>"` (checks the done rules, removes the member, sends `LEAVE ACCEPTED`), or `leave --name <name> --reject --reason "<what is left>"` (sends `LEAVE NOT ACCEPTED`) |
@@ -81,32 +80,23 @@ observed peak unless you tell me why the run is smaller.
 | Handoff done, member replaced | `HANDOFF COMPLETE — <name>` (it sends LEAVE) |
 | Handoff done, member moves | `HANDOFF COMPLETE — <name> — JOIN <receiver>` |
 
-## Handoff messages between coordinators (`send`)
-
-See `references/handoff.md` for the steps around each one.
-
-| Message | Sent by |
-| --- | --- |
-| `HANDOFF — <what> — PRs <n> — streams <slug> — note <path>` | sender, after it dropped its claims, only when no member moves (members move with `member transfer` and `member accept`) |
-| `CUSTODY ACCEPTED — <you> owns <what> — successor pending` | receiver, after its user said yes, only for a `HANDOFF` without members (`member accept` is the acceptance for a member) |
-| `HANDOFF <sender> to <receiver>: ... adopt --from <sender>` | `coordinator.py resign --to`, for a whole-stack handoff; the receiver runs `adopt --from <sender>` (`references/handoff.md`, "Coordinator handoffs") |
-| `HANDOFF DECLINED — <reason>` | receiver |
-| `HANDOFF CLOSED — <what> — merged <sha> — cleanup <done\|left with the user: items>` | receiver |
-
 ## Routes
 
-Members and their coordinator communicate directly in both directions for
-every protocol message. A coordinator sends every message with
-`coordinator.py send --to <name|all> --text "..."`: it keeps the inbox record,
-delivers to a coordinator directly, and for a member or scout prints the app
-route below to send it by. Members use the app routes below.
+Members (puppets and scouts) and their coordinator communicate across threads
+in both directions for every protocol message. Cross-thread messaging is
+host-dependent ([hosts/README.md](hosts/README.md) and your host's guide) and
+is required for coordinator <-> puppet/scout messaging. A coordinator sends
+every message with `coordinator.py send --to <name> --text "..."`: it records
+the message and for a member or scout prints the host-specific app route to
+send it by; send it there. Members use their host's app route from
+`puppet.py route`.
 
 A member answers a coordinator's request for a status, investigation result,
 recommendation or other deliverable by sending it to the coordinator before
 the member's turn ends, even when the request arrived as a user message in the
 member's thread with no protocol keyword. Route: the verified originating
 thread of the request when known, else the coordinator's verified roster route
-from the list below. A final reply in the member's own thread does not reach
+from `puppet.py route` ([hosts/README.md](hosts/README.md)). A final reply in the member's own thread does not reach
 the coordinator. The answer keeps the requested format and action limits (for
 example, a discard recommendation for a worktree is not permission to delete
 it). The member checks the send result and reports any delivery failure.
@@ -134,50 +124,13 @@ in the ledger; member messages need no shared inbox copy.
   routes for when no app route connects two hosts. When `puppet.py --help`
   lists `host`, `puppet.py route` and the coordinator's printed app routes
   list only the routes your host has.
-- Coordinator to coordinator:
-  `coordinator.py send --to <name> --text "<text>"`
-  Send only what the other coordinator must act on and the shared records do
-  not show: blockers, order changes that no command records. A general
-  coordinator's one `WORK REQUEST` gets a `HANDOFF` reply only from a
-  coordinator with work to spare (SKILL.md, "When your work is done"). Do not
-  send acknowledgements of acknowledgements or per-step progress such as
-  "acquired" or "released"; `events.log` already shows them. No watcher reads
-  `events.log`: a change another coordinator must act on is an inbox message
-  that the command sends itself.
-  These have a command; never send them as a message:
-
-  | Instead of a message about | Use |
-  | --- | --- |
-  | a release, its result, a drain or cleanup receipt | the release event (`events --id <id>`), `drain-check` |
-  | "your entry is the head", a priority change | `watch` HEAD (from queue state) and PRIORITY lines |
-  | an admission hold or its clearance | `admission hold\|clear` |
-  | a rule or limit change | `memory add\|update\|remove` (messages every live coordinator and member) or `config set-*` with `--reason` (messages every live coordinator only; tell a member only what changes for its task) |
-  | a member handoff: offer, custody accepted, complete | `member transfer`, `member accept` |
-  | who owns a PR, a worktree or a task | `who` |
-  | which open PRs touch a file | `prs --path` |
-  | the user's answer that concerns every coordinator | `decision add --scope machine` |
-  | a question the coordinators decide among themselves | `vote propose` (`references/leases.md`, "Votes") |
-  (omit `--to` to reach every live coordinator). It appends to `inbox.jsonl`
-  (`coordinator.py watch` shows it), then delivers directly: a Claude session
-  through its inbox socket, a Codex thread through `codex queue`.
-  When your host's app route reaches the other coordinator better (for
-  example `send_message_to_thread` in Codex Desktop, or `t3_thread_send` in
-  T3 Code), use `send --no-direct` for the inbox record, then send once by
-  that route; do not duplicate direct delivery.
-  Keep the shared inbox record even when direct delivery succeeds: it lets a
-  coordinator catch up after it was not running. Receiving that record later
-  is expected; handle duplicate receipt as described below.
-  - The socket protocol is reverse-engineered, not an Anthropic interface
-    (https://github.com/PeterSR/claude-code-socket-transport#the-protocol).
-    The inbox record stays authoritative when direct delivery fails.
-  - A socket message from a script can be held for the user's approval in
-    Claude Desktop ([hosts/claude-desktop.md](hosts/claude-desktop.md), "Send failures").
-  - The socket frame names the receiver's current session id, so a stale
-    roster session id breaks delivery.
+- Coordinator to coordinator (multi-coordinator setups): see
+  [multi-coordinator.md](multi-coordinator.md).
 - Dashboard to coordinator: the dashboard's queue buttons run
   `coordinator.py up|unwait --notify`, which records an inbox message from
-  `dashboard` to each affected coordinator and delivers it directly, as `send`
-  does. It reports the user's action (`references/leases.md`).
+  `dashboard` to the coordinator (`watch` shows it) and attempts direct
+  delivery (Claude inbox socket or `codex queue`). It reports the user's action
+  (`references/leases.md`).
 - Never use GUI automation (pasting into another app's window) as a message
   route.
 - If no supported direct route to a member or its coordinator is available,
