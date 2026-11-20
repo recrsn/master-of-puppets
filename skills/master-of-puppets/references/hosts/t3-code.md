@@ -1,25 +1,49 @@
 # T3 Code
 
 Read this when your host is T3 Code ([README.md](README.md) tells you how to
-find your host). T3 Code runs Claude and Codex threads, and both get the same
-T3 tools. The prefix differs: `mcp__t3-code__` in Claude, `mcp__t3_code__` in
-Codex. T3 tools are often deferred: load one by name before you call it.
+find your host). T3 Code runs Claude, Codex and other providers, for example
+Antigravity ACP (Gemini models). All get the T3 tools, but the prefix and the
+set differ: `mcp__t3-code__` in Claude, `mcp__t3_code__` in Codex,
+`mcp_t3-code_` in Antigravity ACP. Match the bare name. T3 tools are often
+deferred: load one by name before you call it.
 
 | Purpose | Do this |
 | --- | --- |
-| Your session id | Claude: `$CLAUDE_CODE_SESSION_ID`. Codex: `$CODEX_THREAD_ID`, else run each command as `CODEX_THREAD_ID=<thread id> coordinator.py ...`. |
-| Your T3 thread id | Claude: `$T3CODE_THREAD_ID`. Codex has no such variable: find your thread in `t3_thread_list` or `t3_thread_search`. |
+| Your session id | Claude: `$CLAUDE_CODE_SESSION_ID`. Codex: `$CODEX_THREAD_ID`, else run each command as `CODEX_THREAD_ID=<thread id> coordinator.py ...`. Another provider (Antigravity ACP): your T3 thread id, `$T3CODE_THREAD_ID`; the helpers use it when neither of the others is set. |
+| Your T3 thread id | Claude and Antigravity ACP: `$T3CODE_THREAD_ID`. Codex has no such variable: find your thread in `t3_thread_list` or `t3_thread_search`. |
 | Find other sessions | `t3_thread_list`, `t3_thread_search`; `t3_thread_read` for a thread's latest items |
-| Send a message | `t3_thread_send` by thread id ("Routes", below). It reaches every T3 Code thread, Claude or Codex. |
+| Send a message | `t3_thread_send` by thread id ("Routes", below). It reaches every T3 Code thread, whatever its provider. |
 | Reach a Claude session in another host | Claude only: `SendMessage` and `ListAgents`, as in [claude-desktop.md](claude-desktop.md) |
 | Reach a Codex Desktop or Codex CLI thread | No app route: [README.md](README.md), "No shared route" |
-| Scheduled turn (heartbeat, scout tick) | `schedule_task`, bound to your thread. Claude may also use `CronCreate` or `ScheduleWakeup`. A scheduled turn may not send by `t3_thread_send` ("Failures", below). |
-| Watch a command | Claude: `Monitor`. Codex: as in [codex-desktop.md](codex-desktop.md), "Watchers". Wait for your own background command with `t3_background_wait`. |
-| Start a subagent | Claude `Agent`, Codex `collaboration.spawn_agent`, or `delegate_task` |
+| Scheduled turn (heartbeat, scout tick) | Claude and Codex: `schedule_task`, bound to your thread; Claude may also use `CronCreate` or `ScheduleWakeup`. Antigravity ACP has no `schedule_task` (only `list_scheduled_tasks`, `delete_scheduled_task`, `run_scheduled_task_now`): use its own `schedule` tool (`CronExpression` or `DurationSeconds`). A scheduled turn may not send by `t3_thread_send` ("Failures", below). |
+| Watch a command | Claude: `Monitor`. Codex: as in [codex-desktop.md](codex-desktop.md), "Watchers". Antigravity ACP: `run_command` with `WaitMsBeforeAsync` (or `IsDaemon`), then `manage_task` to read it. `t3_background_wait` is not in every provider's set. |
+| Start a subagent | Claude `Agent`, Codex `collaboration.spawn_agent`, Antigravity ACP `invoke_subagent`, or `delegate_task` |
 | Start an independent session (coordinators only) | Ask the user first. On yes, `t3_thread_launch` with the enrollment line first in the prompt. Start each member at or below your own runtime mode ("Starting sessions", below). |
-| Ask the user | Claude `AskUserQuestion`; Codex `request_user_input_async`; plain chat as the last choice |
+| Ask the user | Claude `AskUserQuestion`; Codex `request_user_input_async`; Antigravity ACP `ask_question`; plain chat as the last choice |
 | Bind a PR | `link_pull_request` with the full URL; `watch_pull_request` when asked to watch it |
 | Open the dashboard | Give the user `http://localhost:4720/` |
+
+## Provider switch in a thread
+
+The user can switch a T3 Code thread to another provider in place (for
+example Claude to Antigravity ACP). The session id changes; the thread id
+does not. When `puppet.py --help` lists `host`, the helpers move the roster
+entry whose `t3Thread` is your thread to your new session id and provider at
+your next command, and print `identity: <name> now runs as ...`. You keep
+your coordinator or member name: run no handoff and send no new JOIN. Before
+that install, the helpers do not know the new session: tell the user, and
+do not reuse the old session id. Codex records no `t3Thread`, so a switch to
+or from Codex needs a new JOIN (or the name handoff for a coordinator).
+
+## Sandboxed providers
+
+Some providers' terminal sandboxes (Antigravity ACP, the Codex sandbox) block
+`~/.local/state/machine-leases/`, `localhost:4720` and worktrees outside the
+project unless a command runs outside the sandbox. Ask for that approval per
+command, and keep each command in one plain shape so a prefix approval
+covers the next run:
+`python3 -I ~/.local/state/machine-leases/coordinator.py <command> ...` (or
+`puppet.py`). Use no `cd ... &&`, `timeout`, pipes or `$VARIABLES` around it.
 
 ## Routes
 
@@ -33,7 +57,7 @@ Codex. T3 tools are often deferred: load one by name before you call it.
   `host`, they record the host too. Without `route`, take the id from your
   coordinator's WELCOME, from `t3_thread_search`, or ask the user.
 - A Codex member's thread id is not recorded (Codex has no
-  `T3CODE_THREAD_ID`). The coordinator finds it with `t3_thread_search` by
+  `T3CODE_THREAD_ID`). Other providers' thread ids are, as for Claude. The coordinator finds it with `t3_thread_search` by
   the member's name and records it in its notes.
 - Send with `t3_thread_send`: `threadId` from the route, the protocol text as
   the message, and `mode: "queue"`, which runs it as a new turn after the

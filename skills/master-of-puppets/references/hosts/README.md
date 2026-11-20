@@ -28,7 +28,9 @@ only that host's guide.
 
    A tool can be deferred: search for it by name before you decide it is
    missing. Tool prefixes differ by provider (`mcp__t3-code__` in Claude,
-   `mcp__t3_code__` in Codex): match the bare name.
+   `mcp__t3_code__` in Codex, `mcp_t3-code_` in Antigravity ACP): match the
+   bare name. A provider other than Claude or Codex (Antigravity ACP) runs
+   only in T3 Code here.
 3. The environment gives hints (`env`):
    `CLAUDE_CODE_ENTRYPOINT` (`t3-code`, `claude-desktop`, `cli`, `sdk-ts`)
    for Claude, and `T3CODE_THREAD_ID` for Claude in T3 Code. For Codex,
