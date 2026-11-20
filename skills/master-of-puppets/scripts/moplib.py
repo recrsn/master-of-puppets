@@ -67,6 +67,7 @@ SAMPLES_KEPT = 5
 SAMPLES_TRUSTED = 3
 MINUTES_KEPT = 10
 MEMORY = os.path.join(DIR, "memory")
+WORKFLOWS = os.path.join(DIR, "workflows")
 
 
 # ---------------------------------------------------------------- server and clients
@@ -1774,6 +1775,11 @@ def scout_stale(m, state=None, at=None):
 def memory_path(project_root=None):
     name = project_key(project_root)[0] if project_root else "machine"
     return os.path.join(MEMORY, f"{name}.json"), name
+
+
+def workflow_path(project_root=None):
+    name = project_key(project_root)[0] if project_root else "machine"
+    return os.path.join(WORKFLOWS, f"{name}.md"), name
 
 
 def since_time(text):

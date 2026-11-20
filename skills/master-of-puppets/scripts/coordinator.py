@@ -112,7 +112,7 @@ Leases
        up and move set the entry's priority between its new neighbours' when it is
        outside that range, so the queue stays sorted by priority
        unwait, up and move take --notify (the dashboard's queue buttons and drag): each affected
-       coordinator gets an inbox message from "dashboard", delivered directly as say does
+       coordinator gets an inbox message from "dashboard", delivered directly as send does
   extend CLASS --id ID --minutes N   expires N minutes from now; exit 2 when the lease would
                                   run longer than the class limit. Extension is the coordinator's
                                   decision: members ask with puppet.py extend, and the owner's
@@ -416,7 +416,7 @@ from moplib import (
     class_names, project_key, load_project, save_project, class_peak, typical_minutes,
     suggested_minutes, over_limit, undersized, extend_lease, now, lock, unlock, log, note,
     load_roster, save_roster, live, asleep, load, save, budget, order, queue_entry,
-    say, deliver, notify, automerge_state, READS, memory_path, add_read_commands, pr_refs, gh_http, http_error,
+    say, deliver, notify, automerge_state, READS, memory_path, workflow_path, add_read_commands, pr_refs, gh_http, http_error,
     read_cmd, run, worktree_pids, drain, pool_spec, pool_env, pool_run, pool_info, find_resource, RESOURCE_NAME, parse_prefer, prefer_matches,
     set_state, stop_resource, begin_op, end_op, op_current, op_live, BUSY_STATES, POOL_STUCK_MINUTES, delete_claimed,
     mark_failed, health_run, host_hold, host_held, failed_restart, failed_restart_end, FAIL_DELETE, CLEAN_TIMEOUT, FIND_TIMEOUT, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
@@ -3086,8 +3086,9 @@ def welcome_text(me, name, project_root=None):
                  f"{m.get('targetClass')}: {m.get('targets') or '?'} (tick {m.get('tickMin', 15):g} min, until "
                  f"{m.get('end') or 'stopped: long-running'}).", "Follow the scout skill. You are read only.",
                  f"Write every tick with puppet.py scout tick --coordinator {me} --name {name}; it is how I see you.",
-                 "Send me only ALERT, UPDATE, GAP and DONE, at most one message per tick. P0 goes to me and to the Security "
-                 "Coordinator. I acknowledge with a ledger note ACK <fingerprint>; read it with puppet.py ledger --grep.",
+                 "Send me only ALERT, UPDATE, GAP and DONE, at most one message per tick (answer STATUS? only when I ask). "
+                 "P0 goes to me (and to a Security Coordinator, if one runs). I acknowledge with a ledger note ACK <fingerprint>; "
+                 "read it with puppet.py ledger --grep.",
                  "You hold no leases and no VMs, get no ACTIVE or PAUSE, and open no PRs. A read that needs a VM or a write "
                  "is a TASK REQUEST to me."]
     else:
@@ -3098,6 +3099,11 @@ def welcome_text(me, name, project_root=None):
                          "and LEAVE only when the user tells you to.")
     if not scout and os.path.exists(os.path.join(DIR, "pr-rules.md")):
         lines.append(f"Shared PR rules: {os.path.join(DIR, 'pr-rules.md')}")
+    for scope, label in ((None, "Machine workflow instructions"), (root, "Project workflow instructions")):
+        if scope is None or root:
+            wpath = workflow_path(scope)[0]
+            if os.path.exists(wpath):
+                lines.append(f"{label}: {wpath}")
     rules = []
     for scope in [None] + ([root] if root else []):
         entries = (read_json(memory_path(scope)[0]) or {}).get("entries") or []
@@ -4355,7 +4361,7 @@ def main(argv=None):
     lv.add_argument("--name", required=True)
     lv.add_argument("--reject", action="store_true", help="keep the member; --reason says what is left")
     lv.add_argument("--reason")
-    lv.add_argument("--validated", help="accept: the production check that passed, e.g. 'error rate flat 30 min in Datadog'")
+    lv.add_argument("--validated", help="accept: the production check that passed, e.g. 'error rate flat 30 min'")
     lv.add_argument("--no-release-check", action="store_true", help="accept: skip the release ancestry check (docs, CI-only)")
     lv.add_argument("--closed-by-user", nargs="+", action="extend", metavar="PR",
                     help="accept: these PRs may be CLOSED unmerged, by the user's decision (needs --quote)")
@@ -4396,7 +4402,7 @@ def main(argv=None):
     wl.set_defaults(_self=("coordinator",))
     wl.add_argument("--name", required=True)
     wl.add_argument("--project-root", help="for the project rules and lease sizes; default: the member's worktree")
-    pd = sub.add_parser("pr", help="the digest of PRs; pr read|delta|auto N for diff reads and auto-merge")
+    pd = sub.add_parser("pr", help="the digest of PRs; pr read|delta N for diff reads")
     pd.add_argument("refs", nargs="+", metavar="PR", help="N, #N or owner/repo#N; or read|delta|auto and one PR")
     pd.add_argument("--head", help="pr read: the full SHA you read; default: the current head")
     pd.add_argument("--text", help="pr read: what the diff does, for the ledger")

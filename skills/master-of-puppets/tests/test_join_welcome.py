@@ -63,6 +63,20 @@ class JoinWelcome(unittest.TestCase):
         self.assertIn(f"WELCOME w: a recorded your JOIN. Read the full WELCOME at {path}", text)
         self.assertIn(path, open(self.m.INBOX).read())
 
+    def test_welcome_includes_machine_and_project_workflow_files(self):
+        mw = self.m.workflow_path()[0]
+        pw = self.m.workflow_path(self.tmp.name)[0]
+        os.makedirs(os.path.dirname(mw), exist_ok=True)
+        open(mw, "w").write("# Machine workflows\n")
+        open(pw, "w").write("# Project workflows\n")
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = self.c.main(["join", "--text", JOIN.format(wt=self.tmp.name)])
+        self.assertEqual(code, 0)
+        welcome = open(os.path.join(self.dir, "welcome", "a-w.txt")).read()
+        self.assertIn(f"Machine workflow instructions: {mw}", welcome)
+        self.assertIn(f"Project workflow instructions: {pw}", welcome)
+
     def test_watch_and_pr_agree_on_a_queued_pr(self):
         # GitHub clears autoMergeRequest when the PR enters the merge queue
         d = {"state": "OPEN", "baseRefName": "main", "isDraft": False, "mergeStateStatus": "CLEAN",

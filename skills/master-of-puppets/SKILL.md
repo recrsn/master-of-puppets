@@ -1,6 +1,6 @@
 ---
 name: master-of-puppets
-description: Coordinate local Claude and Codex sessions and take their PR stacks to MERGED. One coordinator owns the streams, watches PRs and messages, checks members on scheduled heartbeats, moves stacks bottom-up, and runs a roster, ledger and live host/status dashboard. Optional machine-wide leases for builds, E2E or other shared actions use adaptive memory- and core-based capacity: members size their runs, and the coordinator grants from rules and its own observations. Use when asked to be the coordinator, drive or land PR stacks, track blockers across sessions, or manage shared-machine leases, queues or colliding builds. Coordinator role only; sessions joining an existing coordinator use the separate puppet skill.
+description: Coordinate local Claude and Codex sessions and take their PR stacks to MERGED. One coordinator owns the streams, watches PRs and messages, checks members on scheduled heartbeats, moves stacks bottom-up, and runs a roster, ledger and live host/status dashboard. Optional machine-wide leases for builds, E2E or other shared actions use adaptive memory- and core-based capacity: members size their runs, and the coordinator grants from rules and its own observations. Use when asked to be the coordinator, drive or land PR stacks, track blockers across sessions, or manage shared-machine leases, queues or colliding builds. Coordinator role only; sessions joining an existing coordinator use the separate puppet or scout skill.
 ---
 
 # Master of puppets
@@ -20,9 +20,8 @@ write product code.
   the roster and on the dashboard.
 - **Enrollment is voluntary, except for sessions you start.** A session joins
   by running `/puppet` (the member skill). Only a coordinator starts sessions:
-  puppets cannot have children (user rule, 5 Nov: "puppets cannot have
-  children and all child sessions should be answering to coordinator
-  instead"). Every session a coordinator starts has the enrollment line first
+  puppets cannot have children, and every child session answers to the
+  coordinator. Every session a coordinator starts has the enrollment line first
   in its prompt and answers to the coordinator; subagents stay part of their
   parent's enrollment.
 - **Leases are optional** and machine-wide. Classes are any shared action:
@@ -35,7 +34,7 @@ write product code.
 | File | What it does |
 | --- | --- |
 | `scripts/coordinator.py` | Coordinator commands: roster and members, streams, leases, messaging, shared-record reads, watchers, config and install. Run with `python3 -I`; the docstring lists every command. |
-| `scripts/puppet.py` | Member commands: roster, whoami, memory list, the shared-record reads (`inbox`, `ledger`, `events`, `who`, `sizes`), and for the member's own lease `request`, `await-grant`, `extend` (asks for more time) and `release`; for a scout, `scout tick\|alert\|resolve\|paused\|show` on its own watch state. It cannot grant or extend. Members run only this file. |
+| `scripts/puppet.py` | Member commands: roster, whoami, `host`, `route`, `tell`, memory list, the shared-record reads (`inbox`, `ledger`, `events`, `who`, `sizes`), and for the member's own lease `request`, `await-grant`, `extend` (asks for more time) and `release`; for a scout, `scout tick\|alert\|resolve\|paused\|show` on its own watch state. It cannot grant or extend. Members run only this file. |
 | `scripts/moplib.py` | State code that the server runs, and the client code that both CLIs use. |
 | `scripts/server.py` | The one dashboard, on `http://localhost:4720/`, with the page shell `scripts/dashboard.html`: host values and page links on every page. Dashboard: "Needs you" first, the work list and lease lanes. Events: the coordinator and the ledger. Config and Rules: edit machine, class and project config and memory rules. Live by SSE. It is also the one reader and writer of the state: it runs every `coordinator.py` and `puppet.py` command. Exits with "already serving" when one runs. |
 
@@ -94,6 +93,7 @@ Apply the following routes in order:
 | --- | --- |
 | The user explicitly asks this session to replace a live coordinator, or this coordinator's session id changed (after `/clear`) | The name handoff ("Name handoff", below); an enrolled member needs explicit release from its member role first |
 | The prompt starts with `MASTER-OF-PUPPETS ENROLLED`, or `whoami` identifies this session as a member | Do not coordinate: use `/puppet` |
+| The prompt starts with `MASTER-OF-PUPPETS SCOUT ENROLLED`, or `whoami` identifies this session as a scout | Do not coordinate: use `/scout` |
 | `whoami` identifies this session as the coordinator | Resume its heartbeat round; do not enroll yourself as a member |
 | Another live coordinator is already running | Ask the user: join it with `/puppet`, take over its name ("Name handoff"), or run a second coordinator (`references/multi-coordinator.md`) |
 | The user asked this unowned session to coordinate | Continue with "Coordinator start" |
@@ -141,8 +141,11 @@ Do this only on the user's word, or to get your own name back after a
    handoff", or pick another name if running multiple coordinators
    (`references/multi-coordinator.md`).
 3. Read the skill's memory: `coordinator.py memory list --project-root "$PWD"`
-   (machine rules, then this project's). Apply them, and put the project
-   rules in every WELCOME. Read the newest `ledger.jsonl` entries.
+   (machine rules, then this project's) and any workflow extension files in
+   `$MACHINE_LEASE_DIR/workflows/` (`machine.md` and `<project-key>.md`, where
+   `<project-key>` comes from `coordinator.py config project-key "$PWD"`). Apply
+   them; `welcome` and `join` include the rules and workflow paths in every
+   WELCOME. Read the newest `ledger.jsonl` entries.
    Record decisions with `coordinator.py note --text "..." [--pr <n>]`:
    joins, ACTIVE/PAUSE, stack moves, merge SHAs, user decisions. After a
    context reset, `roster`, the ledger and your dashboard file are how you
@@ -223,7 +226,7 @@ message and prints your host's app route to send it by; send it there.
   Start it as your host guide says ("Start an independent session"): ask the
   user first, or suggest a card the user starts. Subagents need no
   enrollment.
-- **Where new work goes** (user rules, 19 Nov), in this order:
+- **Where new work goes**, in this order:
   1. The member that owns the stream (`who --text`, `roster`): send it the
      work. Do not start a session for work an owner can take.
   2. Ephemeral or parallel work with an end: a delegated child (a subagent or
@@ -231,9 +234,13 @@ message and prints your host's app route to send it by; send it there.
   3. A workstream that no owner covers: one new top-level session, enrolled
      with its own `--stream`. Never start several for one stream; when
      streams overlap, merge them and hand the work to one owner.
-- **TASK REQUEST** arrives (`TASK REQUEST — <member> — <task> — <why> — PRs ...`):
-  members never start sessions themselves. Decide; when it should run, enroll
-  and start it as above. The new session answers to you, not to the member.
+- **TASK REQUEST and `<KIND> REQUEST`**: members never start sessions
+  themselves; on `TASK REQUEST — <member> — <task> — <why> — PRs ...`, decide,
+  and when it should run, enroll and start it as above (the new session answers
+  to you, not to the member). Machine or project workflow files
+  (`$MACHINE_LEASE_DIR/workflows/`) may define additional `<KIND> REQUEST`
+  subtypes (for example deploy or review requests): handle them per those
+  instructions (`references/protocol.md`, "Protocol extensions").
 - **Pending entries**: check them each round. One still pending after 30
   minutes is a task that never started (a chip not clicked): ask the user, then
   `coordinator.py member remove`.
@@ -316,7 +323,7 @@ message and prints your host's app route to send it by; send it there.
    pr delta <n>`) and send the OK again when it still meets them.
 3. **React to the `PR` lines of `watch`.** `merge=DIRTY`: the owner syncs the
    branch with `origin/<base>` and resolves. Failing checks or
-   review comments: the owner's Auto-fix (Claude) or repair work (Codex)
+   review comments: automatic PR repair or the owner's repair work
    handles them; stuck over two rounds,
    ask for the exact job, revision, test and first causal error.
    `automerge=off` on an active PR that has your OK: ask the owner why. A
@@ -376,8 +383,9 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    The round's `sessions` section compares your members with the app's live
    sessions: `STALE` (a session that is not running), `IDLE-WITH-WORK` (an
    active member whose session is idle while it has uncommitted or unpushed
-   work or an open PR) and `NOT-CHECKED` (a Codex member, or a recorded id
-   that is not a session id: ask for a new JOIN). For `IDLE-WITH-WORK`, send
+   work or an open PR) and `NOT-CHECKED` (a T3 Code thread — check it with
+   `t3_thread_read`; a Codex member; or a recorded id that is not a session
+   id: ask for a new JOIN). For `IDLE-WITH-WORK`, send
    the one resume message it prints, or run `coordinator.py sessions --send`.
    Never conclude that a member is done from its last message or from CI.
    A cloud task member cannot reply: follow `references/coderabbit-cloud.md`, "Track".
@@ -387,7 +395,7 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    A member silent for two rounds while its PR is blocked: tell the user, with
    its deep link. Check pending entries ("Members and tasks").
 6. Report meaningful changes or decisions to the user: decisions first, then
-   the table. A Codex heartbeat stays quiet when nothing actionable changed.
+   the table.
 
 ## When your work is done
 
@@ -460,6 +468,14 @@ BUILD lease", "this repo merges through a merge queue".
   agent memory: Claude's memory directory, or Codex's memory. Not into the
   skill and not into `coordinator.py memory`. Turn a lesson into a rule only when
   the user asks.
+- **Workflow and protocol extensions** (multi-step custom workflows, custom
+  `<KIND> REQUEST` subtypes such as deploy or review requests, and
+  setup-specific procedures) live in markdown state files under
+  `$MACHINE_LEASE_DIR/workflows/`: `machine.md` (machine-wide) and
+  `<project-key>.md` (per project, shared by every worktree of the repo).
+  `coordinator.py welcome` and `join` include any present workflow file paths
+  in WELCOME automatically. Keep setup-specific workflows there, never in the
+  skill text (`references/protocol.md`, "Protocol extensions").
 
 ## Scripts for your setup
 

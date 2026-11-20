@@ -50,7 +50,7 @@ first and add "(Recommended)" to its label.
 4. **Slot caps** (header "Slot caps"): a hard limit on top of the memory and
    core budgets. Compute the budgets (RAM − reserve, cores − reserve) with the
    class peaks. When they
-   fits two of any class (for example two E2E stacks) but not one of every
+   fit two of any class (for example two E2E stacks) but not one of every
    class alongside it, recommend "BUILD 1, E2E 1"; otherwise recommend "No
    caps (memory budget only)". Offer "E2E 1 only" as the third option.
 

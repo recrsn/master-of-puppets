@@ -1,9 +1,9 @@
 # Codex CLI
 
-Read this when you are Codex in a terminal (`CODEX_THREAD_ID` is set and no
-app marker is; [README.md](README.md) tells you how to find your host). Check
-each CLI command with `--help` before you use it: options change between
-versions.
+Read this when you are Codex and have neither `t3_thread_send` nor
+`send_message_to_thread` ([README.md](README.md) tells you how to find your
+host). Check each CLI command with `--help` before you use it: options change
+between versions.
 
 | Purpose | Do this |
 | --- | --- |
@@ -17,7 +17,7 @@ versions.
 | Ask the user | Plain chat |
 | Scheduled turn (heartbeat, scout tick) | The CLI has no scheduler. Tell the user: a coordinator or scout needs a host that schedules turns. A shell loop gives no agent turns. |
 | Watch a command | A background command with output saved outside the repository; read the new part each turn |
-| Bind a PR and repair blockers | Watch it with `coordinator.py watch`; repair valid review and CI blockers in the owner session |
+| Bind a PR and repair blockers | No native PR binding here; the coordinator's `watch` tracks PR state, and the owner checks `gh pr view` and repairs valid review and CI blockers |
 | Open the dashboard | Give the user `http://localhost:4720/` |
 
 ## Sandbox and permissions

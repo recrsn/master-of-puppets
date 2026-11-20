@@ -87,7 +87,7 @@ pushed and uncommitted changes are not included.
 | Situation | Who runs it | Command |
 | --- | --- | --- |
 | A live member's task, or a self-contained part of it, moves to the cloud | The member, in its own session, on its own judgment: the CLI uploads that session's transcript | `coderabbit code handoff --agent --summary <file> [--plan <file>]`, after a clean tree and a normal push of HEAD |
-| A new task that no session has started | The member that the user asked, or the coordinator when the user asks | `coderabbit code new --agent "<prompt>"` from a checkout of the branch; `--plan` writes a plan first; `--goal` works toward the prompt as a goal (1–4,000 characters; `--goal-objective` sets a separate one); `--private` hides it from the organization |
+| A new task that no session has started, or a self-contained sub-task | A member on its own judgment when the task fits, or the coordinator when the user asks | `coderabbit code new --agent "<prompt>"` from a checkout of the branch; `--plan` writes a plan first; `--goal` works toward the prompt as a goal (1–4,000 characters; `--goal-objective` sets a separate one); `--private` hides it from the organization |
 | An open PR that needs only CI, review or conflict fixes | The coordinator, or the PR owner | `coderabbit code autofix on --pr <n> --agent` |
 
 - Run each start once. Never rerun `new` or `handoff` as a retry: each run
@@ -165,13 +165,15 @@ In each heartbeat round, for each `coderabbit` member:
   (`gh pr merge <n> --auto`, no `--match-head-commit`), once per PR. Autofix resolves the conflicts after a retarget.
 - Leases do not apply. Cloud runs use no resources of this machine.
 - Commands that bill or change shared state run only when the user asks for
-  that action: `new`, `ask` (each question is billed), `autofix
-  on|resume|recover|off`, `push`, `plan --approve`, `cancel`, `archive`,
-  `goal --set|--clear`, `permissions --set`, `skills import`, and `resume`
-  with `-m`, `--steer`, `--answer` or `--interactive`. The one exception is `handoff`: a member may run it, once, for
-  its own task on its own judgment (puppet skill, section 6). Read-only commands can run at any time: `ls`, `show`, `plan`, `goal`,
-  `permissions` (without `--set`), `autofix status`, and `resume --agent` with
-  no send option.
+  that action: `new` (from a coordinator), `ask` (each question is billed),
+  `autofix on|resume|recover|off`, `push`, `plan --approve`, `cancel`,
+  `archive`, `goal --set|--clear`, `permissions --set`, `skills import`, and
+  `resume` with `-m`, `--steer`, `--answer` or `--interactive`. The exception
+  is a member starting a cloud task for its own task or a self-contained part
+  of it (`handoff` or `new`, depending on the member and the task on hand),
+  once, on its own judgment (puppet skill, section 6). Read-only commands can
+  run at any time: `ls`, `show`, `plan`, `goal`, `permissions` (without
+  `--set`), `autofix status`, and `resume --agent` with no send option.
 
 ## Done
 

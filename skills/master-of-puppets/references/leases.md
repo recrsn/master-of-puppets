@@ -63,9 +63,8 @@ command's own error. Manage the pool with
 `add` registers an existing resource, `mark` repairs a state, `remove --delete`
 runs the delete command. Free or held is derived from the leases.
 
-**Automatic VMs.** The user's rule, 6 Nov: "you manage vms, deleting and
-creating should be automatic". So the pool deletes failed resources and
-creates new ones without a coordinator step:
+**Automatic VMs.** The pool manages VMs automatically: it deletes failed
+resources and creates new ones without a coordinator step:
 
 - **Health before every grant.** With `--pool-health CMD`, `acquire` runs the
   command on the resource it picked (a free one too, not only a started or

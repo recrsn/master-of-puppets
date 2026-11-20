@@ -1,10 +1,10 @@
 # Claude Code CLI, IDE or SDK
 
-Read this when you are Claude and `CLAUDE_CODE_ENTRYPOINT` is not
-`claude-desktop` or `t3-code` (for example `cli`, `sdk-ts` or an IDE;
-[README.md](README.md) tells you how to find your host). These hosts differ in
-which tools they load: use only the tools that your session has, and search
-for a deferred tool by name before you decide it is missing.
+Read this when you are Claude and have neither `t3_thread_send` nor Claude
+Desktop (`CLAUDE_CODE_ENTRYPOINT=claude-desktop`; [README.md](README.md) tells
+you how to find your host). These hosts differ in which tools they load: use
+only the tools that your session has, and search for a deferred tool by name
+before you decide it is missing.
 
 | Purpose | Do this |
 | --- | --- |
@@ -17,7 +17,7 @@ for a deferred tool by name before you decide it is missing.
 | Start a subagent | `Agent`. Children stay part of the parent's enrollment. |
 | Start an independent session (coordinators only) | Ask the user first, with the task details. They start it with the enrollment line first in the prompt. |
 | Ask the user | `AskUserQuestion`, else plain chat |
-| Bind a PR and repair blockers | Watch it with `coordinator.py watch`; repair valid review and CI blockers in the owner session |
+| Bind a PR and repair blockers | No native PR binding here; the coordinator's `watch` tracks PR state, and the owner checks `gh pr view` and repairs valid review and CI blockers |
 | Open the dashboard | Give the user `http://localhost:4720/` |
 
 ## Send failures

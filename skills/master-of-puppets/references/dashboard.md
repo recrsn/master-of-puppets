@@ -138,11 +138,11 @@ Do not:
 
 Example:
 
-- Too long: "B1 from main 54c56d84eca: api-contracts pause contract;
-  store/control/workflow/routes behind ENABLE_PAUSE_ON_STOP (off); handler
-  client/router + resume boundary + authz entry. Edit-only subagents; one
+- Too long: "B1 from main a1b2c3d4e5f: export-api contract;
+  store/control/workflow/routes behind ENABLE_NEW_EXPORT (off); handler
+  client/router + retry boundary + authz entry. Edit-only subagents; one
   BUILD request next."
-- Good: phase "Editing B1", latest "Pause on Stop is behind a flag (off).
+- Good: phase "Editing B1", latest "New export path is behind a flag (off).
   Next: one BUILD run."
 
 When a member's UPDATE is long, shorten it before `member update`. Keep the

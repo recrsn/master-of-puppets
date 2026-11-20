@@ -91,6 +91,29 @@ closed or left with the user by name.
 
 Members use the puppet skill, section 8. Coordinators do the rest.
 
+### Within one coordinator (member to member)
+
+When one coordinator owns both the outgoing member and its successor (for
+example handing a task from a Claude member to a Codex member, or to a fresh
+session):
+
+1. **Request.** The outgoing member sends `HANDOFF REQUEST — <name> — to <coordinator> — PRs <n> — note <path>`
+   and stops work. Send it `PAUSE` for those PRs; it stays paused until
+   `HANDOFF COMPLETE`.
+2. **Enroll successor.** Read the note, verify each PR with `coordinator.py pr <n>`,
+   and run `coordinator.py enroll --task "<task>" --pr <n> --stream <stream>`.
+   Start the successor with the kickoff line first, then the note path, and for
+   a cross-tool handoff: "make a new worktree from `origin/<branch>`; do not
+   use `<old worktree>`".
+3. **Join and complete.** When the successor sends `JOIN`, run `coordinator.py join`
+   and send it `WELCOME` (and `ACTIVE` when ready). Then `note` the handoff and
+   send the outgoing member `HANDOFF COMPLETE — <name>`. On its `LEAVE`, accept
+   with `coordinator.py leave --name <name> --no-release-check`. Same tool: the
+   worktree stays for the successor. Cross-tool: the outgoing tool removes its
+   old worktree.
+
+### Between two coordinators (multi-coordinator)
+
 1. **Request.** A member that the user told to hand off its task sends its own
    coordinator `HANDOFF REQUEST — <name> — to <coordinator|any> — PRs <n> — note <path>`
    by its direct route. Then it stops work on the task. The coordinator sends

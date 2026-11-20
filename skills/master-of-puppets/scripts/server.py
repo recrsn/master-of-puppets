@@ -103,7 +103,7 @@ def configured_port():
         return 4720
 
 
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else configured_port()
+PORT = int(sys.argv[1]) if __name__ == "__main__" and len(sys.argv) > 1 else configured_port()
 
 
 # ---------------------------------------------------------------- host sampling

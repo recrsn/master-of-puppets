@@ -12,10 +12,11 @@ only that host's guide.
 
 ## Find your host
 
-1. When `puppet.py --help` (or `coordinator.py --help`) lists `host`, run
-   `puppet.py host`. It prints your host, provider, session id and guide.
-   When it prints `unknown`, use the steps below, then record the answer
-   with `puppet.py host --set <host>`.
+1. Run `puppet.py host` (or `coordinator.py host`). It prints your host,
+   provider, session id and guide. When it prints `unknown`, use the steps
+   below, then record the answer with `puppet.py host --set <host>` once you
+   are in the roster (after `register` for a coordinator, or after WELCOME for
+   a member or scout).
 2. Check your tool list. It decides over the environment:
 
    | You have | Host | Guide |
@@ -48,10 +49,9 @@ another app. When it changed, send JOIN (or SCOUT JOIN) again.
 
 ## Who reaches whom
 
-Each send tool reaches only some receivers. When `puppet.py --help` lists
-`host`, `puppet.py route` and the coordinator's printed app routes list only
-the routes from your host to the receiver's host. Otherwise they can name a
-tool that you do not have: use this table to pick.
+Each send tool reaches only some receivers. `puppet.py route` and the
+coordinator's printed app routes list only the routes from your host to the
+receiver's host. Reference table:
 
 | From (host, provider) | To | Route |
 | --- | --- | --- |
@@ -65,8 +65,8 @@ tool that you do not have: use this table to pick.
 
 When no app route connects the two hosts, use the shared inbox:
 
-- A member to its coordinator: `puppet.py tell --text "..."`, when
-  `puppet.py --help` lists it. The coordinator's `watch` shows it.
+- A member to its coordinator: `puppet.py tell --text "..."`. The
+  coordinator's `watch` shows it.
 - A coordinator to a coordinator: `coordinator.py send --to <name>`.
 - A coordinator to a member: no inbox reaches a member. Tell the user which
   member waits for which message, and ask them to paste it.

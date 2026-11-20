@@ -24,23 +24,32 @@ at once is supported as an advanced path). The coordinator:
   urgent work goes first, and the coordinator pushes back its own sweeps and
   scheduled runs while regular tasks wait;
 - serves one live dashboard: CPU, memory, swap and disk meters, what needs
-  you first, one board of all tasks grouped by state, lease timelines and a
-  Wall mode for a shared screen, updated over SSE.
+  you first, one board of all tasks grouped by stream and state, and lease
+  lanes, updated over SSE.
 
 ### `puppet`
 
 A working session joins a coordinator as a member. It reports by message
-(JOIN, UPDATE, CHILD TASK STARTED, LEAVE), follows ACTIVE and PAUSE directions,
+(JOIN, UPDATE, TASK REQUEST, IDLE, LEAVE), follows ACTIVE and PAUSE directions,
 queues its own lease requests with `puppet.py request`, waits with
 `puppet.py await-grant`, asks for more time with `puppet.py extend`,
 releases its own leases, and takes its own PRs to
 merged. Only a coordinator grants and extends. The coordinator records membership and
 decisions.
 
+### `scout`
+
+A read-only session joins a coordinator to watch one target (production
+signals, a release, the host and credentials, PRs, security, or member
+compliance). It records its ticks and open alerts in its own watch state via
+`puppet.py scout` and sends ALERT, UPDATE, GAP and DONE to its coordinator.
+Scouts never implement, hold leases or open PRs.
+
 Four files in `master-of-puppets/scripts` do the work: `coordinator.py`
 (roster, members, leases, messaging, shared-record reads, watchers, config and
-install), `puppet.py` (the commands a member runs: roster, memory, the
-shared-record reads, lease request, wait, extension request and release), `moplib.py`
+install), `puppet.py` (the commands a member or scout runs: roster, host,
+route, tell, memory, the shared-record reads, lease request, wait, extension
+request, release, and scout state), `moplib.py`
 (the state code both share) and `server.py` (dashboard, with the page shell
 `dashboard.html`). All use only the Python standard library.
 
@@ -57,10 +66,13 @@ With the [`skills` CLI](https://github.com/vercel-labs/skills), user-wide for
 Claude Code and Codex:
 
 ```bash
-npx skills add recrsn/master-of-puppets --skill master-of-puppets --skill puppet -g -a claude-code -a codex
+npx skills add recrsn/master-of-puppets --skill master-of-puppets --skill puppet --skill scout -g -a claude-code -a codex
 ```
 
-Install both: the coordinator uses `master-of-puppets`, members use `puppet`.
+Install all three (or at least `master-of-puppets` alongside `puppet` or
+`scout`, since `puppet` and `scout` link into `../master-of-puppets/references/`):
+the coordinator uses `master-of-puppets`, working sessions use `puppet`, and
+read-only watchers use `scout`.
 Drop `-g` to install into the current project instead (`.claude/skills/` and
 `.agents/skills/`). Update or remove them later:
 
@@ -69,7 +81,7 @@ npx skills update -g
 ```
 
 ```bash
-npx skills remove --global --skill master-of-puppets --skill puppet
+npx skills remove --global --skill master-of-puppets --skill puppet --skill scout
 ```
 
 From a local clone, link the skills instead so edits apply at once:
@@ -80,6 +92,10 @@ ln -s "$PWD/skills/master-of-puppets" ~/.claude/skills/master-of-puppets
 
 ```bash
 ln -s "$PWD/skills/puppet" ~/.claude/skills/puppet
+```
+
+```bash
+ln -s "$PWD/skills/scout" ~/.claude/skills/scout
 ```
 
 Shared state lives in `$MACHINE_LEASE_DIR` (default
@@ -98,18 +114,21 @@ skill copy changes, the helpers warn that an update is due; on your word,
 - In each working session: `/puppet`. The session joins the coordinator. Tasks
   the coordinator starts open with a kickoff line that makes the new session
   run `/puppet` by itself.
+- In a read-only watcher session: `/scout` (or enrolled automatically via a
+  `MASTER-OF-PUPPETS SCOUT ENROLLED` kickoff line).
 - Dashboard: `http://localhost:4720/`.
 
-In Codex, invoke the skills as `$master-of-puppets` and `$puppet` (or by name).
+In Codex, invoke the skills as `$master-of-puppets`, `$puppet` and `$scout` (or
+by name).
 Each session first finds its host (T3 Code, Claude Desktop, the Claude Code
 CLI, Codex Desktop or the Codex CLI) and reads only that host's guide in
 [references/hosts/](skills/master-of-puppets/references/hosts/README.md): its
 send tool, session ids, scheduler, watchers and PR binding.
 
 See `skills/master-of-puppets/SKILL.md` for the coordinator workflow,
-`skills/puppet/SKILL.md` for the member side, and
-`skills/master-of-puppets/references/` for the protocol, rules, leases, setup,
-dashboard and multi-coordinator details.
+`skills/puppet/SKILL.md` for the member side, `skills/scout/SKILL.md` for the
+scout side, and `skills/master-of-puppets/references/` for the protocol, rules,
+leases, setup, dashboard and multi-coordinator details.
 
 ## Evals
 

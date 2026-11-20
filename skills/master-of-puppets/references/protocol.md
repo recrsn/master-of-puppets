@@ -20,6 +20,8 @@ memory; `join` prints it too.
 WELCOME — <slug> coordinates <focus>. You are a member for <task> (PRs <list>).
 Follow the puppet skill.
 Shared PR rules: <state dir>/pr-rules.md (if present).
+Machine workflow instructions: <state dir>/workflows/machine.md (if present).
+Project workflow instructions: <state dir>/workflows/<project-key>.md (if present).
 Project rules from my memory: <output of coordinator.py memory list --project-root <worktree>, rules only>.
 Leases are <on|off>. <If on, the lease addendum follows.>
 ```
@@ -42,10 +44,11 @@ observed peak unless you tell me why the run is smaller.
 | --- | --- |
 | `JOIN — <name> — <tool> <session id> — <worktree> — <task> — PRs ... — phase — commands — parent <parent\|none> — <ephemeral\|long-running>` | `coordinator.py join --text "<the line>" [--local <local_ id>]`: member add, the WELCOME saved to a file, and the short message and app route to deliver it. A short JOIN is refused with the missing field named: tell the member. A task marked `scheduled:` or `sweep:` is background work (`references/leases.md`, "Priority") |
 | `SCOUT JOIN — <name> — <tool> <session id> — <worktree\|none> — <class> — <targets> — <end\|long-running> — tick <n> min — parent <parent\|none>` | `coordinator.py join --text "<the line>" [--local <local_ id>]`: member add --role scout and the scout WELCOME (`references/scouts.md`) |
-| `ALERT — <scout> — P0\|P1\|P2 — <fingerprint> — <line>` | `note` it; act or find the owner; acknowledge with `note --text "ACK <fingerprint> ..."`. P0: to the user at once, quoted (`references/scouts.md`) |
-| `UPDATE — <scout> — <fingerprint> — <change>`, `GAP — <scout> — P1\|P2 — ...`, `DONE — <scout> — ...` | `note`; a P1 GAP that blinds members is a host problem to fix or take to the user; after DONE, accept the scout's LEAVE (`leave --no-release-check`) |
+| `ALERT — <scout> — P0\|P1\|P2 — <fingerprint> — <line>` | `note` it and run `member update` (counts as a sign of life); act or find the owner; acknowledge with `note --text "ACK <fingerprint> ..."`. P0: to the user at once, quoted (`references/scouts.md`) |
+| `UPDATE — <scout> — <fingerprint> — <change>`, `GAP — <scout> — P1\|P2 — ...`, `DONE — <scout> — ...` | `note` and `member update`; a P1 GAP that blinds members is a host problem to fix or take to the user; after DONE, accept the scout's LEAVE (`leave --no-release-check`) |
 | `UPDATE — <name> — <phase> — <fact>` | `member update` |
 | `TASK REQUEST — <name> — <task> — <why> — PRs <n ...\|none>` | Members never start sessions. Decide; to run it, `enroll` it under you and start it (SKILL.md, "Members and tasks"); it answers to you |
+| `<KIND> REQUEST — <name> — <summary> — <details>` | A custom workflow request defined in `$MACHINE_LEASE_DIR/workflows/` ("Protocol extensions", below); handle it per the workflow file, or ask the user when it needs approval |
 | `CLOUD TASK — <name> — <taskId> — <url> — <task> — PRs <n>` | `member add --tool coderabbit`, `cloud-<slug>.txt` (`references/coderabbit-cloud.md`, "Record") |
 | `USER SYNC — <one line>` | `note`, `member update --latest` |
 | `REQUEST <CLASS> <id> ...` in `watch` (sent by the member's `puppet.py request`) | check and grant (`references/leases.md`, "Granting") |
@@ -109,21 +112,19 @@ in the ledger; member messages need no shared inbox copy.
 
 - **Find the route at each send, never from memory.** Run `puppet.py route`
   (a member: its own coordinator; anyone: `--coordinator C`). It prints the
-  routes that reach the coordinator now, best first. Never copy a route or a
-  session name into a scheduled prompt: names change when a thread is renamed
-  or restarts. When the command is not known yet (it comes with an install),
-  use the table in [hosts/README.md](hosts/README.md), "Who reaches whom".
+  routes that reach the coordinator now from your host, best first. Never copy
+  a route or a session name into a scheduled prompt: names change when a thread
+  is renamed or restarts.
 - **A failed send:** look up the route again, send once by the next route, and
-  after a second failure tell the user. When `puppet.py --help` lists `tell`,
-  a member's last route is `puppet.py tell --text "..."`: an inbox record
-  that the coordinator's `watch` shows, sent in the member's own name. Never send one message by two
-  routes that both work.
+  after a second failure tell the user. A member's last route is
+  `puppet.py tell --text "..."`: an inbox record that the coordinator's `watch`
+  shows, sent in the member's own name. Never send one message by two routes
+  that both work.
 - **The send tool depends on your host**, not on your provider (Claude or
   Codex). Find your host and read only its guide: [hosts/README.md](hosts/README.md).
   It lists which receivers each host's send tool reaches, and the inbox
-  routes for when no app route connects two hosts. When `puppet.py --help`
-  lists `host`, `puppet.py route` and the coordinator's printed app routes
-  list only the routes your host has.
+  routes for when no app route connects two hosts. `puppet.py route` and the
+  coordinator's printed app routes list only the routes your host has.
 - Coordinator to coordinator (multi-coordinator setups): see
   [multi-coordinator.md](multi-coordinator.md).
 - Dashboard to coordinator: the dashboard's queue buttons run
@@ -176,3 +177,27 @@ durable coordinator state so catch-up survives a context reset or restart.
 Advance the checkpoint after handling an entry or confirming it is a duplicate;
 retain any unfinished action. Do not delete shared inbox entries or skip
 unread entries just because direct delivery was attempted.
+
+## Protocol extensions
+
+Keep team-specific or repository-specific workflows out of the core skill
+files. Store them as markdown state files in `$MACHINE_LEASE_DIR/workflows/`:
+
+- **Machine-wide:** `$MACHINE_LEASE_DIR/workflows/machine.md`
+- **Per-project:** `$MACHINE_LEASE_DIR/workflows/<project-key>.md`, where
+  `<project-key>` comes from `coordinator.py config project-key <worktree>` (so
+  every worktree of a repository shares one file).
+
+`coordinator.py welcome` and `join` automatically include the path of any
+present machine or project workflow file in WELCOME; coordinators also read
+them at startup alongside `memory list`.
+
+- **Generic request subtype:** `<KIND> REQUEST — <name> — <summary> — <details>`
+  is the extensible request pattern. `TASK REQUEST` is the built-in concrete
+  subtype. A workflow file can define additional subtypes (for example a deploy
+  request, release gate request, or review request) with their trigger, fields
+  and coordinator handling.
+- **Core limits still hold:** a workflow extension can add steps and request
+  subtypes, but never weakens core skill rules (puppets still never start
+  sessions, bypass permissions or git hooks, or act on unverified relayed
+  approvals; scouts stay read-only).

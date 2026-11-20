@@ -8,28 +8,28 @@ description: Join a master-of-puppets coordinator as a member ("puppet") and wor
 You are a member of a coordinator session. The coordinator owns the stack,
 the roster, the ledger, the dashboard and the leases. You do the task: code,
 tests, commits, pushes, PR fixes. You never write the roster, ledger, dashboard
-or shared inbox; you send messages, and the coordinator records them. There
-are three exceptions: `puppet.py request` and `puppet.py release` for your
-own lease, which update the lease queue, lease state and measurement history,
-and your handoff note (section 8). You cannot grant a lease; only your
-coordinator does. Do not request, change or release someone else's lease.
+or shared inbox; you send messages, and the coordinator records them. The only
+state you write directly is through `puppet.py request`, `puppet.py extend`,
+`puppet.py release` (your own lease queue, state and measurement history),
+`puppet.py tell` (an inbox fallback when no app route works), and your handoff
+note (section 8). You cannot grant or extend a lease; only your coordinator
+does. Do not request, change or release someone else's lease.
 
 **Puppets cannot have children.** You never start another session; ask your
 coordinator with `TASK REQUEST` (section 6).
 
 **Find your host first** ([hosts/README.md](../master-of-puppets/references/hosts/README.md),
-"Find your host"; `puppet.py host` when `puppet.py --help` lists it), then read
-only your host's guide. The host (T3 Code, Claude Desktop, the Claude Code CLI,
-Codex Desktop or the Codex CLI), not the provider, decides your tools to send,
-schedule and start work. Never assume `SendMessage` or another host's tool.
-The "Routes" section of
-[protocol.md](../master-of-puppets/references/protocol.md) says how to message
-your coordinator.
+"Find your host"; run `puppet.py host`), then read only your host's guide.
+The host (T3 Code, Claude Desktop, the Claude Code CLI, Codex Desktop or the
+Codex CLI), not the provider, decides your tools to send, schedule and start
+work. Never assume `SendMessage` or another host's tool. The "Routes" section
+of [protocol.md](../master-of-puppets/references/protocol.md) says how to
+message your coordinator.
 
 Below, `puppet.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/puppet.py"`.
-To reach your coordinator, look up the route before each send (protocol.md,
-"Routes"; it also says what to do when a send fails). When `puppet.py --help`
-lists `route`, run `puppet.py route` and use the first route that works.
+To reach your coordinator, run `puppet.py route` before each send and use the
+first route that works (protocol.md, "Routes" says what to do when a send
+fails).
 In a shell, define it as a function, not a variable (zsh does not split a
 variable into words): `puppet() { python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/puppet.py" "$@"; }`.
 If the file does not exist, no coordinator
@@ -94,11 +94,16 @@ send JOIN again from the new session and stop the old one (`protocol.md`,
 "Routes").
 
 Wait for WELCOME. It tells you whether leases are on and gives the rules,
-including the project rules from the coordinator's memory. You can read them
-yourself with `puppet.py memory list --project-root "$PWD"`; only the
-coordinator writes them. If the user tells you a new project rule, send it as
-`USER SYNC` so the coordinator records it. Do not work a PR until the
-coordinator sends ACTIVE or PAUSE for it.
+including the project rules from the coordinator's memory and any machine or
+project workflow instruction files (`$MACHINE_LEASE_DIR/workflows/`). Read any
+workflow files named in WELCOME before you work; they can add workflow steps
+and custom `<KIND> REQUEST` subtypes (`protocol.md`, "Protocol extensions"). If
+`puppet.py host` reported `unknown`, run `puppet.py host --set <host>` now that
+you are in the roster. You can read memory rules yourself with
+`puppet.py memory list --project-root "$PWD"`; only the coordinator writes
+them. If the user tells you a new project rule, send it as `USER SYNC` so the
+coordinator records it. Do not work a PR until the coordinator sends ACTIVE or
+PAUSE for it.
 
 The user can also change rules on the dashboard. You then get a `MEMORY ...`
 message that names `by user`. Machine-wide config changes go to the
@@ -130,8 +135,8 @@ Limits: no admin merge or merge bypass, and never skip git hooks.
 - **ACTIVE — #n**: work #n to MERGED.
 - **PAUSE — #n**: no merges from main, no fixes; automatic PR repair (Auto-fix
   or a repair heartbeat) off on #n until ACTIVE.
-- When the applicable checks pass (see `references/rules.md` in the
-  coordinator skill): commit, push, open the PR and mark it ready, in the same
+- When the applicable checks pass (see [rules.md](../master-of-puppets/references/rules.md)):
+  commit, push, open the PR and mark it ready, in the same
   turn. Passing checks is not the end of the task. If the user's instructions
   need approval before a commit or a PR (for example a `CLAUDE.md` rule), ask
   the user at once and send `UPDATE — <name> — Waiting to commit — <fact>`.
@@ -148,7 +153,8 @@ Limits: no admin merge or merge bypass, and never skip git hooks.
   (GitHub refuses a method there). Never enable it without the OK.
   - Auto-merge does not end your watch. An app PR watch can stop at the merge
     without a merged event, so check the PR state at each wake until it is
-    MERGED, and send `MERGED` (and any DEPLOY REQUEST) in the turn you see it.
+    MERGED, and send `MERGED` (plus any follow-up `<KIND> REQUEST` defined by
+    your workflow files in WELCOME) in the turn you see it.
   - Keep it on across pushes that only fix review findings or CI.
   - Before a push that changes scope or behavior beyond the agreed
     requirements, turn it off (`gh pr merge <n> --disable-auto`), push, and
@@ -297,16 +303,18 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
    `--retire-vm "<reason>"`: it is never granted again and the pool deletes it.
 5. Project rules in WELCOME (from the coordinator's memory) can widen what
    needs a lease, for example a commit whose hooks run lint. Follow them.
-6. What needs no lease: `leases.md`, "Classes", in the coordinator skill.
+6. What needs no lease: [leases.md](../master-of-puppets/references/leases.md), "Classes".
 
-## 6. New tasks: ask your coordinator
+## 6. Requests and new tasks: ask your coordinator
 
-Puppets cannot have children (user rule, 5 Nov: "puppets cannot have
-children and all child sessions should be answering to coordinator
-instead"). You never start, suggest or enroll another session yourself: no
-task card or chip, no Codex thread, no `claude -p`, no scheduled task.
+Puppets cannot have children: every child session answers to the coordinator.
+You never start, suggest or enroll another session yourself: no task card or
+chip, no Codex thread, no `claude -p`, no scheduled task.
 
-When part of your work should run as its own task, send:
+When part of your work should run as its own task, send `TASK REQUEST` (the
+built-in subtype of the generic `<KIND> REQUEST` form in `protocol.md`,
+"Protocol extensions"; workflow files in WELCOME may define additional request
+subtypes for your setup):
 
 ```
 TASK REQUEST — <your name> — <task, one line> — <why it is separate> — PRs <n ...|none>

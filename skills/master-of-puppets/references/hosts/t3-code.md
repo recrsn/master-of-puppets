@@ -15,7 +15,7 @@ deferred: load one by name before you call it.
 | Send a message | `t3_thread_send` by thread id ("Routes", below). It reaches every T3 Code thread, whatever its provider. |
 | Reach a Claude session in another host | Claude only: `SendMessage` and `ListAgents`, as in [claude-desktop.md](claude-desktop.md) |
 | Reach a Codex Desktop or Codex CLI thread | No app route: [README.md](README.md), "No shared route" |
-| Scheduled turn (heartbeat, scout tick) | Claude and Codex: `schedule_task`, bound to your thread; Claude may also use `CronCreate` or `ScheduleWakeup`. Antigravity ACP has no `schedule_task` (only `list_scheduled_tasks`, `delete_scheduled_task`, `run_scheduled_task_now`): use its own `schedule` tool (`CronExpression` or `DurationSeconds`). A scheduled turn may not send by `t3_thread_send` ("Failures", below). |
+| Scheduled turn (heartbeat, scout tick) | `schedule_task`, bound to your thread; Claude may also use `CronCreate` or `ScheduleWakeup`. In Antigravity ACP, use `schedule_task` when present or its own `schedule` tool (`CronExpression` or `DurationSeconds`). A scheduled turn may not send by `t3_thread_send` ("Failures", below). |
 | Watch a command | Claude: `Monitor`. Codex: as in [codex-desktop.md](codex-desktop.md), "Watchers". Antigravity ACP: `run_command` with `WaitMsBeforeAsync` (or `IsDaemon`), then `manage_task` to read it. `t3_background_wait` is not in every provider's set. |
 | Start a subagent | Claude `Agent`, Codex `collaboration.spawn_agent`, Antigravity ACP `invoke_subagent`, or `delegate_task` |
 | Start an independent session (coordinators only) | Ask the user first. On yes, `t3_thread_launch` with the enrollment line first in the prompt. Start each member at or below your own runtime mode ("Starting sessions", below). |
@@ -27,13 +27,11 @@ deferred: load one by name before you call it.
 
 The user can switch a T3 Code thread to another provider in place (for
 example Claude to Antigravity ACP). The session id changes; the thread id
-does not. When `puppet.py --help` lists `host`, the helpers move the roster
-entry whose `t3Thread` is your thread to your new session id and provider at
-your next command, and print `identity: <name> now runs as ...`. You keep
-your coordinator or member name: run no handoff and send no new JOIN. Before
-that install, the helpers do not know the new session: tell the user, and
-do not reuse the old session id. Codex records no `t3Thread`, so a switch to
-or from Codex needs a new JOIN (or the name handoff for a coordinator).
+does not. The helpers automatically move the roster entry whose `t3Thread` is
+your thread to your new session id and provider at your next command, and print
+`identity: <name> now runs as ...`. You keep your coordinator or member name:
+run no handoff and send no new JOIN. Codex records no `t3Thread`, so a switch
+to or from Codex needs a new JOIN (or the name handoff for a coordinator).
 
 ## Sandboxed providers
 
@@ -52,10 +50,8 @@ covers the next run:
   restarts. A send to an old name fails with "No agent named ...". Route by
   the thread id, never by a display name.
 - A Claude coordinator's `heartbeat` and `register` record its thread id
-  (`t3Thread`) in the roster, and every `puppet.py` command does the same for
-  a Claude member. `puppet.py route` prints it. When `puppet.py --help` lists
-  `host`, they record the host too. Without `route`, take the id from your
-  coordinator's WELCOME, from `t3_thread_search`, or ask the user.
+  (`t3Thread`) and host in the roster, and every `puppet.py` command does the
+  same for a Claude or Antigravity ACP member. `puppet.py route` prints it.
 - A Codex member's thread id is not recorded (Codex has no
   `T3CODE_THREAD_ID`). Other providers' thread ids are, as for Claude. The coordinator finds it with `t3_thread_search` by
   the member's name and records it in its notes.
@@ -68,7 +64,7 @@ covers the next run:
 
 | Error | Meaning | Do this |
 | --- | --- | --- |
-| `parent_not_active` | Your own turn is not an active run, for example a scheduled turn | Send by the next route (`puppet.py route`), or with `puppet.py tell` when it exists |
+| `parent_not_active` | Your own turn is not an active run, for example a scheduled turn | Send by the next route (`puppet.py route`), or with `puppet.py tell` |
 | `runtime_mode_escalation_denied` | The receiver runs in a higher runtime mode than the sender, as T3 Code sees it now | Do not work around it, and do not tell the user the mode as a fact. Check the receiver's `runtimeMode` in `t3_thread_list`, tell the user what you see, and retry once by thread id when the user says to |
 | "No agent named ..." | The display name changed | Look up the route again; send by thread id |
 | A socket `ENOENT` or "stale" | The session restarted | Look up the route again |

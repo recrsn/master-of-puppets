@@ -12,7 +12,7 @@
         "puppet.py roster is read before any other action",
         "codex-billing is chosen, with the reason that it owns #210",
         "The JOIN message reaches codex-billing through native Codex send_message_to_thread with its threadId (and hostId when known), and names the member thread id, worktree /work/app-210, task and PR 210; no coordinator.py send is used",
-        "The session runs no roster-writing command: no coordinate, member, enroll, note or decision",
+        "The session runs no roster-writing command: no register, member, enroll, note or decision",
         "The session does not contact claude-stack-a or its members",
         "The plan waits for WELCOME and an ACTIVE or PAUSE direction before working on the PR; the plan enables auto-merge only after the coordinator's OK for auto-merge, with plain gh pr merge --auto"
       ]
@@ -31,13 +31,13 @@
         "commands.sh waits with puppet.py await-grant BUILD --id ... (no until/while polling loop)",
         "commands.sh runs only the granted command, then puppet.py release BUILD --id ... --result pass|fail --note ...",
         "A LEASE RELEASED message reports pass or fail with the raw summary",
-        "commands.sh runs no coordinator.py command (coordinate, member, enroll, note, decision, wait or acquire); the member never grants its own lease",
+        "commands.sh runs no coordinator.py command (register, member, enroll, note, decision, wait or acquire); the member never grants its own lease",
         "The command runs only after a GRANTED line (exit 0); DENIED, LEFT-QUEUE, TIMEOUT and NEVER-QUEUED are never treated as a grant"
       ]
     },
     {
       "prompt": "DRY RUN. You are Codex member checkpointing of coordinator codex, in worktree /work/app-sandbox on branch sandbox, PR 501 open. You hold BUILD lease codex-q-checkpointing-3 and run a local stack on port 3000. You have two local commits that are not pushed and one modified file. The user says: 'hand this task to the Claude coordinator, it will take it to merge'. MACHINE_LEASE_DIR=<fixture>/state (a copy). Do not call send_message_to_thread; write what you would send. Write <out>/plan.md, <out>/messages.md and <out>/commands.sh.",
-      "expected_output": "Commits or finishes the modified file and pushes so local equals remote (or tells the user what is left), stops its stack, releases its own lease, writes the note under $MACHINE_LEASE_DIR/handoffs/<slug>/HANDOFF.md with the protocol sections, sends HANDOFF REQUEST to its own coordinator codex by the direct route, stops work, and sends LEAVE only after HANDOFF COMPLETE; never messages the Claude coordinator directly and never uses say.",
+      "expected_output": "Commits or finishes the modified file and pushes so local equals remote (or tells the user what is left), stops its stack, releases its own lease, writes the note under $MACHINE_LEASE_DIR/handoffs/<slug>/HANDOFF.md with the protocol sections, sends HANDOFF REQUEST to its own coordinator codex by the direct route, stops work, and sends LEAVE only after HANDOFF COMPLETE; never messages the Claude coordinator directly and never uses coordinator.py send.",
       "files": [],
       "assertions": [
         "The push happens before the handoff request, and the note records the pushed SHA with local equal to remote",
@@ -102,7 +102,7 @@
     },
     {
       "id": 8,
-      "prompt": "DRY RUN. A fresh Codex session runs $puppet. `env` shows CODEX_THREAD_ID=x-77, __CFBundleIdentifier=com.t3tools.t3code and CODEX_INTERNAL_ORIGINATOR_OVERRIDE=T3 Code; your tool list has t3_thread_send and t3_thread_search, and no send_message_to_thread. Its task: fix example/app#210 (base main) in worktree /work/app-210. MACHINE_LEASE_DIR=<fixture>/state (a copy; never touch ~/.local/state/machine-leases). roster.json lists the live coordinator codex-billing (tool codex, host t3-code, focus 'billing stack', PRs 205-210). puppet.py --help lists host and route. Do not call any send tool; write what you would do. Write <out>/plan.md and <out>/commands.sh.",
+      "prompt": "DRY RUN. A fresh Codex session runs $puppet. `env` shows CODEX_THREAD_ID=x-77, __CFBundleIdentifier=com.t3tools.t3code and CODEX_INTERNAL_ORIGINATOR_OVERRIDE=T3 Code; your tool list has t3_thread_send and t3_thread_search, and no send_message_to_thread. Its task: fix example/app#210 (base main) in worktree /work/app-210. MACHINE_LEASE_DIR=<fixture>/state (a copy; never touch ~/.local/state/machine-leases). roster.json lists the live coordinator codex-billing (tool codex, host t3-code, focus 'billing stack', PRs 205-210). Do not call any send tool; write what you would do. Write <out>/plan.md and <out>/commands.sh.",
       "expected_output": "Finds its host first (puppet.py host, or the env markers): T3 Code. Reads only references/hosts/t3-code.md. Sends JOIN to codex-billing with t3_thread_send by its T3 thread id (from puppet.py route, else t3_thread_search), not with send_message_to_thread, SendMessage or codex queue.",
       "files": [
         "state/roster.json"

@@ -10,8 +10,14 @@ State lives in $MACHINE_LEASE_DIR (default ~/.local/state/machine-leases).
 
 Usage: python3 -I puppet.py <command> ...
 
-  roster | whoami --session-id ID
+  roster | whoami [--session-id ID]
        coordinators (with live: heartbeat newer than 40 minutes), members and streams
+  host [--set HOST]
+       where this session runs and which host guide to read; --set records a host not shown in env
+  route [--coordinator C]
+       the routes that reach your coordinator now, best first
+  tell --text TEXT
+       message your coordinator through the shared inbox when no app route works
   memory list [--project-root P] [--json]      machine rules and notes, then the project's
   inbox | ledger | events | who     the shared records, read-only (coordinator.py has the
        same commands and flags); for example events --id ID shows a lease's grant and release
@@ -525,7 +531,7 @@ def scout_cmd(args):
                                      "text": args.text, "firstSeen": t, "lastSeen": t})
             flap = st["resolved"].pop(args.fingerprint, None)
             out = (f"REOPENED (resolved at {flap[:19]}Z): send it once, marked flapping; resolve it only after "
-                   f"{FLAP_TICKS} clean ticks" if flap else "NEW: send it")
+                   "2 clean ticks" if flap else "NEW: send it")
         else:
             worse = SEV_RANK[args.severity] < SEV_RANK[old["severity"]]
             out = f"ESCALATED {old['severity']} to {args.severity}: send it" if worse else "SEEN: do not send it again"
