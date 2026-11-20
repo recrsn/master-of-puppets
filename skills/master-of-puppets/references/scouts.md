@@ -144,6 +144,35 @@ the primary record:
 - **Stale:** a scout is stale after 2 ticks with no tick. `member stale` and the dashboard also flag a scout that is paused or has an open P0.
 - **Dashboard:** scouts appear in their own Scouts section, not on the work board. The section shows the target, the last tick, open alerts by severity, and stale and paused marks. A stale scout, a paused scout and an open P0 go under Needs you.
 - **Ledger:** record each ALERT with `note`, and ACK it as above.
+
+### Acting on alerts and gaps
+
+An ACK records that you saw an alert. It does not handle it.
+
+- **Every P1 or P2 ALERT gets an action in the same turn.** Route it as
+  SKILL.md, "Where new work goes", says. Find the stream owner with
+  `coordinator.py who`; when it prints no owner, check the PRs and files
+  that the alert implicates. Send the owner the concrete follow-up: what
+  failed, the evidence, and what to check or fix. When the fix needs the
+  user's authorization, add a dashboard decision (`decision add`) instead.
+  When no owner exists, start a bounded task (SKILL.md, "Members and
+  tasks").
+- **Skip the routing only with a disposition in the ACK note:** for
+  example `ACK <fingerprint> assigned to <person>`, or
+  `ACK <fingerprint> benign: single event, <evidence>`. An ACK with no
+  disposition means the alert still waits for you.
+- **A recurring GAP is your problem to fix.** When the same GAP comes back
+  (a query that times out, a capped result, a tool that fails every tick),
+  read what the scout runs (`t3_thread_read` in T3 Code, or the scout's
+  session in your host) and tighten its instructions: a narrower query, a
+  smaller time window, a lower limit, or another tool. Send the scout the
+  new instruction. When the cause is a real access block (expired
+  credentials, a network denial), add one dashboard decision for the user,
+  and do not let the GAP repeat with no record.
+- **Stay quiet on routine ticks.** A quiet tick, a routine STATUS line or an
+  UPDATE with no change gets `member update` only. Do not echo it to the
+  user. Report to the user only a P0, a decision that needs them, or the
+  result of an action you took.
 - **Tick prompt:** when you schedule a scout's ticks, or send it a tick, use
   this text and add nothing to it. Never put a route, a thread id, a file to
   read or a fallback command in it: those change, and the skill says how to

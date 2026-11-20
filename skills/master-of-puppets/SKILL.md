@@ -209,7 +209,10 @@ message and prints your host's app route to send it by; send it there.
   --task "<class>: <targets>"`; its `SCOUT JOIN` goes through `join` as
   above. Scouts get no ACTIVE or PAUSE and no leases. Record each ALERT with
   `note`, and acknowledge it with `note --text "ACK <fingerprint> ..."`, which
-  costs no message. Take a P0 to the user at once, quoted. Also run
+  costs no message. Take a P0 to the user at once, quoted. Act on every
+  P1 and P2 ALERT and fix a recurring GAP in the same turn (`references/scouts.md`,
+  "Acting on alerts and gaps"): an ACK alone is not an action. Quiet ticks
+  and routine status get `member update` only, with no echo to the user. Also run
   `member update` for each scout message: it counts as a sign of life, so a
   scout that cannot write its own state does not show as stale. When
   `member stale` shows `TWIN` or a session that is not the roster's, ask the
