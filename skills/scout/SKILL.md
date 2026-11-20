@@ -69,7 +69,7 @@ Your scout state file stays as it is.
 1. Check every target with read-only tools only (scouts.md, "Permissions").
 2. For each problem: `puppet.py scout alert --coordinator <coord> --name <name> --fingerprint <id:cause> --severity P0|P1|P2 [--kind gap] --text "<one line, no secret>"`.
    It prints `NEW` or `ESCALATED` (send it), or `SEEN` (do not send it again).
-3. Resolve an open alert only after 2 clean ticks in a row, not after one good read: `puppet.py scout resolve ... --fingerprint <id:cause>`. It prints `RESOLVED`: send `UPDATE ... recovered`. When `scout alert` prints `REOPENED`, the alert flaps: send it once, say it flaps, and wait for 2 clean ticks again. Give a gap the fingerprint of the one tool or query that failed, not of the whole provider.
+3. Resolve an open alert only after 2 clean ticks in a row, not after one good read: `puppet.py scout resolve ... --fingerprint <id:cause>`. It prints `RESOLVED`: send `UPDATE ... recovered`. When it prints `NOT YET`, the alert stays open: send nothing. When `scout alert` prints `REOPENED`, the alert flaps: send it once, say it flaps, and wait for 2 clean ticks again. Give a gap the fingerprint of the one tool or query that failed, not of the whole provider.
 4. A stall is input that waits with no matching start, a stopped cursor, no
    consumers, or a growing backlog. Quiet output alone is not a stall: an
    on-demand system with no input is healthy (scouts.md, "Severity and routing").
@@ -77,7 +77,7 @@ Your scout state file stays as it is.
 6. End every tick with `puppet.py scout tick --coordinator <coord> --name <name>`. Add `--state "<counters, coverage, cursor>"` when you keep a cursor or counters; each tick replaces it. Once a day add `--summary "<counts and the state of the open alerts>"`. Never put per-tick state in `--summary`. The coordinator and the dashboard see you only through this file.
    - When it prints `LATE <n>m`, you missed ticks: it names the window and the cursor you had then. Read that window again, record what it shows, then run `scout tick --reread` (when `scout tick --help` lists it; else a plain `scout tick`). Until you do, every tick prints `LATE` again. Say `LATE` in a message only when the window had an alert.
    - When it prints `SESSION`, this session is not the one the roster names for you (a new thread, or a move to another provider): send SCOUT JOIN again before the next tick. When it prints `TWIN`, another session also ticks as you: tell your coordinator at once; one of you must stop.
-   - Read the whole output of `scout tick`; never cut it with `head` or `cut`. The `OLD` and `LATE` lines come after the first line.
+   - Read the whole output of `scout tick`; never cut it with `head` or `cut`. When the first line ends with `ACT:`, act on each tag. The `OLD` and `LATE` lines come after the first line.
    - When it lists alerts not seen for 24 h, check each one again, then resolve it or alert it again. This also applies to the alerts you take over from another scout.
    When `puppet.py` cannot run (a sandbox refuses it and escalation is refused), say so in a GAP once, then put each tick's changes in your message; your coordinator records them.
 7. Schedule your next wakeup (`references/agents.md`, scheduling). Never write a polling loop. Never put a route or a session name in the scheduled prompt: look up the route at each send.

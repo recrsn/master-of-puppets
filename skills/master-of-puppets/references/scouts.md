@@ -81,7 +81,9 @@ it only after 2 clean ticks. A write more than 2 ticks after the last one
 records the missed window and the cursor of that time; each `scout tick`
 prints them as `LATE <n>m` until the scout reads the window again and runs
 `scout tick --reread`. Alerts not seen for 24 h print as `OLD <fingerprint>`,
-one per line.
+one per line. The first line ends with `ACT: <tags>` (OLD×n, LATE, SESSION,
+TWIN) when any of them is present. `scout resolve` prints `NOT YET` and keeps
+the alert open when it was seen less than 2 ticks ago.
 
 ## Severity and routing
 
@@ -144,3 +146,11 @@ the primary record:
 - **Stale:** a scout is stale after 2 ticks with no tick. `member stale` and the dashboard also flag a scout that is paused or has an open P0.
 - **Dashboard:** scouts appear in their own Scouts section, not on the work board. The section shows the target, the last tick, open alerts by severity, and stale and paused marks. A stale scout, a paused scout and an open P0 go under Needs you.
 - **Ledger:** record each ALERT with `note`, and ACK it as above.
+- **Tick prompt:** when you schedule a scout's ticks, or send it a tick, use
+  this text and add nothing to it. Never put a route, a thread id, a file to
+  read or a fallback command in it: those change, and the skill says how to
+  find them.
+
+  ```
+  <name>: run one tick of your scout skill (section 2), then schedule the next one.
+  ```

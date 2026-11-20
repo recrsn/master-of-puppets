@@ -117,8 +117,11 @@ class ScoutState(unittest.TestCase):
     def test_an_alert_resolved_two_ticks_ago_reopens_as_a_flap(self):
         alert = ("alert", "--fingerprint", "f1", "--severity", "P2", "--text", "x")
         self.assertIn("NEW", self.scout(*alert))
+        self.assertIn("NOT YET", self.scout("resolve", "--fingerprint", "f1"))  # seen just now: not 2 clean ticks
+        self.age(seen=31)
         self.assertIn("RESOLVED", self.scout("resolve", "--fingerprint", "f1"))
         self.assertIn("REOPENED", self.scout(*alert))
+        self.age(seen=31)
         self.scout("resolve", "--fingerprint", "f1")
         self.age(resolved=61)  # more than 4 tick lengths of 15 min: a new alert again
         self.assertIn("NEW", self.scout(*alert))
@@ -128,6 +131,7 @@ class ScoutState(unittest.TestCase):
         self.assertNotIn("24 h", self.scout("tick"))
         self.age(seen=25 * 60)
         out = self.scout("tick")
+        self.assertIn("ACT: OLD×1", out.splitlines()[0])  # on line 1: a scout that cuts the output still sees it
         self.assertIn("1 not seen for 24 h", out)
         self.assertIn("\n  OLD old", out)
 

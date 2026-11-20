@@ -473,17 +473,19 @@ def scout_cmd(args):
     out = ""
     tick_min = float(st["tickMin"])
     sid = session_or_none()[0]
-    warn = ""
+    warn, acts = "", []  # acts: tags on the first line, so a scout that reads only line 1 still sees them
     if sid and args.scmd != "show":
         st.setdefault("sessions", {})[sid] = t
         st["lastSession"] = sid
         st["sessions"] = {k: v for k, v in st["sessions"].items()
                           if now() - dt.datetime.fromisoformat(v) < dt.timedelta(days=1)}
         if m.get("sessionId") and sid != m["sessionId"]:
+            acts.append("SESSION")
             warn += (f"\nSESSION: this session ({sid}) is not {args.name}'s roster session ({m['sessionId']}): "
                      f"send SCOUT JOIN again, or stop if another session is {args.name}")
         twins = [x for x in scout_twins(st) if x != sid]
         if twins:
+            acts.append("TWIN")
             warn += f"\nTWIN: session {', '.join(twins)} also ticks as {args.name}: tell your coordinator; one of you must stop"
     # a fingerprint resolved less than FLAP_TICKS ticks ago that opens again is a flap, not a new alert
     st["resolved"] = {f: at for f, at in st.get("resolved", {}).items()
@@ -508,9 +510,11 @@ def scout_cmd(args):
             out += f"; window {missed['from'][:19]}Z to {missed['to'][:19]}Z read again"
             missed = None
         if old_alerts:
+            acts.append(f"OLD×{len(old_alerts)}")
             out += f"; {len(old_alerts)} not seen for 24 h, check each one again, then alert it again or resolve it:"
             out += "".join(f"\n  OLD {f}" for f in old_alerts)  # one per line: a cut summary line must not hide them
         if missed:
+            acts.append("LATE")
             out += (f"\nLATE {missed['minutes']}m: no tick from {missed['from'][:19]}Z to {missed['to'][:19]}Z; "
                     f"the cursor then was: {missed['cursor'] or '(none)'}. Read that window again, then run "
                     f"scout tick --reread; until then each tick prints this")
@@ -529,8 +533,13 @@ def scout_cmd(args):
                         "severity": args.severity if worse else old["severity"]})
         st["lastTick"] = t
     elif args.scmd == "resolve":
-        left = [a for a in st["openAlerts"] if a["fingerprint"] != args.fingerprint]
-        out = ("RESOLVED: send UPDATE recovered" if len(left) < len(st["openAlerts"])
+        cur = next((a for a in st["openAlerts"] if a["fingerprint"] == args.fingerprint), None)
+        quiet = (now() - dt.datetime.fromisoformat(cur["lastSeen"])).total_seconds() / 60 if cur else 0
+        early = cur and quiet < 2 * tick_min  # the 2-clean-tick rule: one good read after a flaky one is not recovery
+        left = [a for a in st["openAlerts"] if a["fingerprint"] != args.fingerprint or early]
+        out = (f"NOT YET: {args.fingerprint} was seen {quiet:.0f} min ago; resolve it after 2 clean ticks "
+               f"(in about {2 * tick_min - quiet:.0f} min); send nothing" if early
+               else "RESOLVED: send UPDATE recovered" if len(left) < len(st["openAlerts"])
                else f"{args.fingerprint} is not open")
         if len(left) < len(st["openAlerts"]):
             st["resolved"][args.fingerprint] = t
@@ -544,7 +553,10 @@ def scout_cmd(args):
             st.setdefault("pausedSince", t)
             out = f"paused since {st['pausedSince'][:19]}Z"
     write_json(scout_path(args.name), st)
-    print(out + warn)
+    lines = (out + warn).split("\n")
+    if acts:
+        lines[0] += f"  ACT: {' '.join(acts)}"
+    print("\n".join(lines))
     return 0
 
 
