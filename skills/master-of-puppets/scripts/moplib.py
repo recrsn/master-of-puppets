@@ -34,7 +34,7 @@ PROJECTS = os.path.join(DIR, "projects")
 ROSTER = os.path.join(DIR, "roster.json")
 LEDGER = os.path.join(DIR, "ledger.jsonl")
 LIVE_MINUTES = 40
-TOOLS = ("claude", "codex")
+TOOLS = ("claude", "codex", "antigravity", "t3")  # t3: another provider in a T3 Code thread, known by the thread id
 MEMBER_TOOLS = TOOLS + ("coderabbit",)  # a CodeRabbit cloud task: tracked, never messaged
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}$")
 PEAKS = os.path.join(DIR, "peaks")
@@ -82,7 +82,8 @@ CLIENT_ENV = ("CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "XD
               "MOP_FOLLOW_OFFSETS",  # where a resumed run's follow starts
               "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID",  # who calls: session_identity
               "T3CODE_THREAD_ID",  # the caller's T3 Code thread, a route that outlives renames: routes_to
-              "CLAUDE_CODE_ENTRYPOINT", "__CFBundleIdentifier", "CODEX_INTERNAL_ORIGINATOR_OVERRIDE")  # where it runs: detect_host
+              "CLAUDE_CODE_ENTRYPOINT", "__CFBundleIdentifier", "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",  # where it runs: detect_host
+              "ANTIGRAVITY_SOURCE_METADATA")  # an Antigravity ACP session (T3 Code): session_or_none. Never a T3_ACP_MCP_* value
 PATH_FLAGS = ("--worktree", "--root", "--path", "--project-root")
 RESUMABLE = ("watch", "await-grant", "calm-wait", "measure-peak")  # rerun after a server restart
 SERVER_LOG = os.path.join(DIR, "server.log")
@@ -108,7 +109,8 @@ def nap(seconds):
 
 
 def session_or_none():
-    """(session id, tool) of the calling Claude session or Codex thread, or (None, None)."""
+    """(session id, tool) of the calling Claude session or Codex thread, or (None, None). A T3 Code thread whose
+    provider sets neither variable (Antigravity ACP, others) is known by its T3 thread id."""
     ids = {"claude": cenv("CLAUDE_CODE_SESSION_ID"), "codex": cenv("CODEX_THREAD_ID")}
     if ids["claude"] and ids["codex"]:  # one inherited the other's: a Codex thread started from a Claude session, or back
         tool = agent_tool(cenv("MOP_CLIENT_PID") or str(os.getpid())) or "codex"
@@ -116,7 +118,43 @@ def session_or_none():
     for tool, sid in ids.items():
         if sid:
             return sid, tool
+    thread = cenv("T3CODE_THREAD_ID")
+    if thread:
+        return thread, "antigravity" if cenv("ANTIGRAVITY_SOURCE_METADATA") else "t3"
     return None, None
+
+
+def adopt_thread_identity():
+    """After an in-place provider switch in a T3 Code thread (Claude to Antigravity ACP, for example), the
+    session id changes but the thread does not. Move each live roster entry whose t3Thread is the caller's
+    thread to the caller's new session id and tool, so the coordinator or member keeps its name. Runs before
+    every command; writes only on a change. Skipped when the caller carries both a Claude and a Codex id: a
+    child that one started from the other's shell inherits the thread variable and is not that thread."""
+    thread = cenv("T3CODE_THREAD_ID")
+    if not thread or (cenv("CLAUDE_CODE_SESSION_ID") and cenv("CODEX_THREAD_ID")):
+        return
+    sid, tool = session_or_none()
+    if not sid:
+        return
+    def moved(roster):
+        entries = list(roster["coordinators"].items()) + [(m["name"], m) for ms in roster["members"].values() for m in ms]
+        return [(n, e) for n, e in entries if e.get("t3Thread") == thread and e.get("status") != "done"
+                and e.get("sessionId") != sid]
+    roster = read_json(ROSTER) or {}
+    if not roster or not moved(roster) or not STATE_LOCK.acquire(timeout=5):
+        return  # a busy lock never fails the command: the next one moves it
+    try:
+        roster = load_roster()
+        changed = moved(roster)
+        for name, e in changed:
+            log(f"identity {name}: session {str(e.get('sessionId'))[:12]} ({e.get('tool')}) -> {sid[:12]} ({tool}), "
+                f"same T3 thread")
+            print(f"identity: {name} now runs as {tool} session {sid} (same T3 Code thread)", file=sys.stderr)
+            e["priorSessionId"], e["sessionId"], e["tool"] = e.get("sessionId"), sid, tool
+        if changed:
+            save_roster(roster)
+    finally:
+        unlock()
 
 
 def session_identity():
@@ -124,7 +162,7 @@ def session_identity():
     sid, tool = session_or_none()
     if sid:
         return sid, tool
-    print("no session identity: Claude Code sets CLAUDE_CODE_SESSION_ID; in Codex, run the command as "
+    print("no session identity: Claude Code sets CLAUDE_CODE_SESSION_ID and T3 Code sets T3CODE_THREAD_ID; in Codex, run the command as "
           "CODEX_THREAD_ID=<this thread's id> coordinator.py ... (references/hosts/ says where to find the id)", file=sys.stderr)
     sys.exit(2)
 
@@ -1509,6 +1547,8 @@ def send_codex(thread_id, text):
 def deliver(name, tool, session_id, text):
     if not session_id:
         return f"{name}: no session id (inbox only)"
+    if tool not in ("claude", "codex"):  # a T3 Code thread of another provider: only its host's app route reaches it
+        return f"{name}: {tool} takes no script delivery (inbox only)"
     return f"{name}: {send_codex(session_id, text) if tool == 'codex' else send_claude(session_id, text)}"
 
 
@@ -1568,7 +1608,7 @@ def routes_to(target, last):
             rows.append(f"t3_thread_send with threadId {th} (references/hosts/t3-code.md)")
         elif host == "t3-code" and rhost in (None, "t3-code"):
             rows.append("t3_thread_search for its name, then t3_thread_send by that thread id (references/hosts/t3-code.md)")
-    if tool in ("claude", None) and host != "codex-desktop" and rtool == "claude" and rsid:
+    if (tool == "claude" or (tool is None and host == "unknown")) and rtool == "claude" and rsid:  # None: no identity at all (the dashboard)
         rows.append(f"SendMessage to {target.get('session') or rsid}, or to its name from ListAgents")
     if host in ("codex-desktop", "unknown") and rtool == "codex" and rsid and rhost in (None, "codex-desktop"):
         rows.append(f"send_message_to_thread with threadId {rsid} (references/hosts/codex-desktop.md)")
@@ -1672,7 +1712,7 @@ def tell_member(sender, coord, name, message):
     m = next((x for x in load_roster()["members"].get(coord, []) if x["name"] == name), None)
     if not m:
         return f"{name}: not a member of {coord} (inbox only)"
-    if m.get("tool") not in ("claude", "codex"):
+    if m.get("tool") not in TOOLS:
         return f"{name}: tool {m.get('tool')} takes no messages (inbox only)"
     return deliver(name, m.get("tool"), m.get("sessionId"), message)
 

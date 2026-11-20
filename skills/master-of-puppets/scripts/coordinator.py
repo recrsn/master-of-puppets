@@ -422,6 +422,7 @@ from moplib import (
     mark_failed, health_run, host_hold, host_held, failed_restart, failed_restart_end, FAIL_DELETE, CLEAN_TIMEOUT, FIND_TIMEOUT, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
     SCOUT_CLASSES, scout_path, scout_state, scout_stale, scout_twins, stalled, queue_head, blocked_by, STALL_MINUTES,
     RECLAIM_MINUTES, reclaim_minutes, clean_run, record_health, clear_short, tell_member, session_or_none, detect_host, routes_to,
+    adopt_thread_identity,
 )
 
 
@@ -2867,6 +2868,10 @@ def session_report(me, send=False):
     for m in roster["members"].get(me, []):
         if m.get("status") in ("done", "idle"):
             continue
+        if m.get("host") == "t3-code" or m.get("t3Thread"):  # the claude agents listing does not cover T3 Code threads
+            lines.append(f"NOT-CHECKED {m['name']}: a T3 Code thread; check it with t3_thread_read "
+                         f"{m.get('t3Thread') or '(find it with t3_thread_search)'}")
+            continue
         if m.get("tool") != "claude":
             if m.get("tool") == "codex":
                 lines.append(f"NOT-CHECKED {m['name']}: Codex has no session listing")
@@ -4629,6 +4634,7 @@ def main(argv=None):
     sub.add_parser("install").add_argument("--allow-rollback", action="store_true",
                                            help="install even when this copy is older than the installed commit")
     args, extra = p.parse_known_args(argv)
+    adopt_thread_identity()  # before any identity lookup: a provider switch in a T3 Code thread keeps the name
     if getattr(args, "_self", None):
         me = caller()
         for attr in args._self:
