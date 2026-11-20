@@ -106,8 +106,8 @@ def nap(seconds):
         raise ClientGone()
 
 
-def session_identity():
-    """(session id, tool) of the calling Claude session or Codex thread; exits 2 without one."""
+def session_or_none():
+    """(session id, tool) of the calling Claude session or Codex thread, or (None, None)."""
     ids = {"claude": cenv("CLAUDE_CODE_SESSION_ID"), "codex": cenv("CODEX_THREAD_ID")}
     if ids["claude"] and ids["codex"]:  # one inherited the other's: a Codex thread started from a Claude session, or back
         tool = agent_tool(cenv("MOP_CLIENT_PID") or str(os.getpid())) or "codex"
@@ -115,6 +115,14 @@ def session_identity():
     for tool, sid in ids.items():
         if sid:
             return sid, tool
+    return None, None
+
+
+def session_identity():
+    """(session id, tool) of the calling Claude session or Codex thread; exits 2 without one."""
+    sid, tool = session_or_none()
+    if sid:
+        return sid, tool
     print("no session identity: Claude Code sets CLAUDE_CODE_SESSION_ID; in Codex, run the command as "
           "CODEX_THREAD_ID=<this thread's id> coordinator.py ...", file=sys.stderr)
     sys.exit(2)
@@ -1614,6 +1622,15 @@ def scout_state(name):
     lastSeen}], state {at, text} (the latest tick state), summary {at, text} (daily) and pausedSince. Missing or unreadable: {}."""
     s = read_json(scout_path(name))
     return s if isinstance(s, dict) else {}
+
+
+def scout_twins(state, at=None):
+    """Sessions other than the latest writer that wrote this scout's state within the last 2 ticks: two sessions
+    working as one scout (a provider handoff that left the old one running, or a second enrollment)."""
+    tick = float(state.get("tickMin") or 15)
+    recent = {sid: t for sid, t in (state.get("sessions") or {}).items()
+              if (at or now()) - dt.datetime.fromisoformat(t) <= dt.timedelta(minutes=2 * tick)}
+    return sorted(recent) if len(recent) > 1 else []
 
 
 def scout_stale(m, state=None, at=None):

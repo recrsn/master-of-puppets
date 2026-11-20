@@ -75,8 +75,11 @@ coordinator can then put regular work first.
 Send it, and every later message (UPDATE, MERGED, USER SYNC, STATUS replies,
 TASK REQUEST, LEASE SIZE, LEASE RELEASED, IDLE, LEAVE), by the direct route
 for your coordinator's tool (`protocol.md`, "Routes"). Never use `coordinator.py send`
-and never write shared inbox records, even with `--no-direct`. When your
-session id changes, send JOIN again (`protocol.md`, "Routes").
+and never write shared inbox records, even with `--no-direct`; the one
+exception is `puppet.py tell`, when no app route works. When your session id
+changes (a `/clear`, a new thread, or a move from Claude to Codex or back),
+send JOIN again from the new session and stop the old one (`protocol.md`,
+"Routes").
 
 Wait for WELCOME. It tells you whether leases are on and gives the rules,
 including the project rules from the coordinator's memory. You can read them

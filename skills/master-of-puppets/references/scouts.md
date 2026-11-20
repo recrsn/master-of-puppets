@@ -122,6 +122,7 @@ the primary record:
   - `openAlerts`: fingerprint, severity, kind, text, `firstSeen`, `lastSeen`
   - `resolved`: fingerprints resolved in the last 4 tick lengths, with the time, so a flap prints `REOPENED`
   - `missed`: a window with no tick and the cursor of that time, until `scout tick` prints it
+  - `sessions` and `lastSession`: the sessions that wrote the file in the last day. A write from a session that is not the roster's prints `SESSION`; two sessions within 2 ticks print `TWIN`, and `member stale` shows both
   - `state`: the latest `tick --state` text and its time
   - `summary`: the daily summary and its time
   - `pausedSince`

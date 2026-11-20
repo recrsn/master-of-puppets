@@ -420,7 +420,7 @@ from moplib import (
     read_cmd, run, worktree_pids, drain, pool_spec, pool_env, pool_run, pool_info, find_resource, RESOURCE_NAME, parse_prefer, prefer_matches,
     set_state, stop_resource, begin_op, end_op, op_current, op_live, BUSY_STATES, POOL_STUCK_MINUTES, delete_claimed,
     mark_failed, health_run, host_hold, host_held, failed_restart, failed_restart_end, FAIL_DELETE, CLEAN_TIMEOUT, FIND_TIMEOUT, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
-    SCOUT_CLASSES, scout_path, scout_state, scout_stale, stalled, queue_head, blocked_by, STALL_MINUTES,
+    SCOUT_CLASSES, scout_path, scout_state, scout_stale, scout_twins, stalled, queue_head, blocked_by, STALL_MINUTES,
     RECLAIM_MINUTES, reclaim_minutes, clean_run, record_health, clear_short, tell_member,
 )
 
@@ -1162,6 +1162,11 @@ def roster_cmd(args):
                 flags = [f"paused since {st['pausedSince'][:16]}"] if st.get("pausedSince") else []
                 p0 = [a["fingerprint"] for a in st.get("openAlerts") or [] if a.get("severity") == "P0"]
                 flags += [f"open P0 {' '.join(p0)}"] if p0 else []
+                twins = scout_twins(st)
+                flags += [f"TWIN: sessions {', '.join(twins)} all tick; stop all but one"] if twins else []
+                writer = st.get("lastSession")
+                if writer and x.get("sessionId") and writer != x["sessionId"]:
+                    flags.append(f"ticks from session {writer}, not its roster session {x['sessionId']}: ask it to send SCOUT JOIN")
                 if stale or flags:
                     rows.append(f"{x['name']} scout {'stale' if stale else 'ticking'} last update {age if age is not None else '?'} min ago — "
                                 f"{x.get('targetClass', '?')}: {x.get('targets', '')[:50]}" + (f" ({'; '.join(flags)})" if flags else ""))

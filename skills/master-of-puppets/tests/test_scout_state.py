@@ -24,6 +24,7 @@ class ScoutState(unittest.TestCase):
             sys.modules.pop(name, None)
         self.m = importlib.import_module("moplib")
         self.p = importlib.import_module("puppet")
+        self.m.RUN.env = {}  # no caller session unless a test sets one
         roster = self.m.load_roster()
         roster["coordinators"]["a"] = {"heartbeat": self.m.now().isoformat(), "focus": "test", "prs": []}
         roster["members"]["a"] = [{"name": "sc", "role": "scout", "status": "active", "tickMin": 15}]
@@ -37,6 +38,28 @@ class ScoutState(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(self.p.main(["scout", "tick", "--coordinator", "a", "--name", "sc", *extra]), 0)
         return self.m.scout_state("sc")
+
+    def as_session(self, sid):
+        self.m.RUN.env = {"CLAUDE_CODE_SESSION_ID": sid}
+
+    def test_two_sessions_ticking_as_one_scout_are_twins(self):
+        roster = self.m.load_roster()
+        roster["members"]["a"][0]["sessionId"] = "old"
+        self.m.save_roster(roster)
+        self.as_session("old")
+        self.assertNotIn("SESSION", self.scout("tick"))
+        self.as_session("new")  # a provider handoff left the old session running
+        out = self.scout("tick")
+        self.assertIn("SESSION: this session (new) is not sc's roster session (old)", out)
+        self.assertIn("TWIN: session old also ticks as sc", out)
+        self.m.RUN.env = {"MOP_ACTOR": "a"}
+        sys.modules.pop("coordinator", None)
+        c = importlib.import_module("coordinator")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            c.main(["member", "stale"])
+        self.assertIn("TWIN: sessions new, old all tick", buf.getvalue())
+        self.assertIn("ticks from session new, not its roster session old", buf.getvalue())
 
     def test_tick_state_replaces_itself_and_keeps_the_daily_summary(self):
         daily = self.tick("--summary", "day: 3 alerts, all resolved", "--state", "cursor 100")["summary"]

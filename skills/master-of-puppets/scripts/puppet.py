@@ -91,7 +91,7 @@ from moplib import (
     load, save, load_roster, queue_entry, extension_refusal, READS, add_read_commands, read_cmd, version_warning, drain,
     find_resource, set_state, mark_failed, parse_prefer, RESOURCE_NAME, pool_spec,
     begin_op, recycle_run, recycle_note, destroy_recycled, recycle_released, health_released,
-    write_json, scout_path, scout_state, SCOUT_SEVERITIES, SEND_MAX, member_of_session, session_identity, deliver, note_member_route,
+    write_json, scout_path, scout_state, SCOUT_SEVERITIES, SEND_MAX, member_of_session, session_identity, deliver, note_member_route, scout_twins, session_or_none,
 )
 
 MAX_RECYCLE_DESTROYS = 3  # resources one await-grant may destroy for failed recycles before it stops re-queueing
@@ -465,6 +465,19 @@ def scout_cmd(args):
     st["tickMin"] = m.get("tickMin", 15)
     out = ""
     tick_min = float(st["tickMin"])
+    sid = session_or_none()[0]
+    warn = ""
+    if sid and args.scmd != "show":
+        st.setdefault("sessions", {})[sid] = t
+        st["lastSession"] = sid
+        st["sessions"] = {k: v for k, v in st["sessions"].items()
+                          if now() - dt.datetime.fromisoformat(v) < dt.timedelta(days=1)}
+        if m.get("sessionId") and sid != m["sessionId"]:
+            warn += (f"\nSESSION: this session ({sid}) is not {args.name}'s roster session ({m['sessionId']}): "
+                     f"send SCOUT JOIN again, or stop if another session is {args.name}")
+        twins = [x for x in scout_twins(st) if x != sid]
+        if twins:
+            warn += f"\nTWIN: session {', '.join(twins)} also ticks as {args.name}: tell your coordinator; one of you must stop"
     # a fingerprint resolved less than FLAP_TICKS ticks ago that opens again is a flap, not a new alert
     st["resolved"] = {f: at for f, at in st.get("resolved", {}).items()
                       if now() - dt.datetime.fromisoformat(at) < dt.timedelta(minutes=FLAP_TICKS * tick_min)}
@@ -524,7 +537,7 @@ def scout_cmd(args):
             st.setdefault("pausedSince", t)
             out = f"paused since {st['pausedSince'][:19]}Z"
     write_json(scout_path(args.name), st)
-    print(out)
+    print(out + warn)
     return 0
 
 

@@ -53,6 +53,10 @@ While you wait, tick and record (section 2), but send nothing. When no
 WELCOME comes within 2 ticks, look up the route again (protocol.md, "Routes")
 and send SCOUT JOIN once more. After a second miss, tell the user.
 
+When your session changes (a `/clear`, a new thread, or a move from Claude to
+Codex or back), send SCOUT JOIN again from the new session before its first
+tick, and stop the old session. Your state file stays as it is.
+
 When your coordinator hands its whole stack to another one, the new
 coordinator sends `HANDOFF COMPLETE — <name> — SCOUT JOIN <coordinator>`.
 Send your SCOUT JOIN line to that coordinator, wait for its WELCOME, and from
@@ -72,6 +76,7 @@ Your scout state file stays as it is.
 5. When a read of yours fails (expired credentials, a timeout, a denied query), you are blind: record it with `--kind gap` and send `GAP`. Never go silent.
 6. End every tick with `puppet.py scout tick --coordinator <coord> --name <name>`. Add `--state "<counters, coverage, cursor>"` when you keep a cursor or counters; each tick replaces it. Once a day add `--summary "<counts and the state of the open alerts>"`. Never put per-tick state in `--summary`. The coordinator and the dashboard see you only through this file.
    - When it prints `LATE <n>m`, you missed ticks: it names the window and the cursor you had then. Read that window again, record what it shows, then run `scout tick --reread` (when `scout tick --help` lists it; else a plain `scout tick`). Until you do, every tick prints `LATE` again. Say `LATE` in a message only when the window had an alert.
+   - When it prints `SESSION`, this session is not the one the roster names for you (a new thread, or a move to another provider): send SCOUT JOIN again before the next tick. When it prints `TWIN`, another session also ticks as you: tell your coordinator at once; one of you must stop.
    - Read the whole output of `scout tick`; never cut it with `head` or `cut`. The `OLD` and `LATE` lines come after the first line.
    - When it lists alerts not seen for 24 h, check each one again, then resolve it or alert it again. This also applies to the alerts you take over from another scout.
 7. Schedule your next wakeup (`references/agents.md`, scheduling). Never write a polling loop. Never put a route or a session name in the scheduled prompt: look up the route at each send.
