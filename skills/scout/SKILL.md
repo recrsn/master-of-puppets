@@ -91,8 +91,15 @@ written in your scheduled prompt or remembered from an earlier tick can be
 stale. When that send fails, use the next route, then `puppet.py tell`.
 
 Send at most one message per tick. When several items are new, put them in
-one message, with the worst first. Never message on a schedule. A QUIET tick
-sends nothing.
+one message, with the worst first. A QUIET tick sends nothing, except that
+when you have sent your coordinator nothing for 60 minutes, the next tick
+sends one short `STATUS — <name> — quiet — <open alerts by severity> — <last
+tick time>` line. Silence for longer than an hour reads as a dead scout.
+
+A tick started by a schedule (cron or wakeup) often cannot use a T3
+`t3_thread_send` route: it fails with `parent_not_active`. That is a failed
+send: use the next route at once, and say which route worked in your next
+STATUS line.
 
 ## 3. Messages
 
@@ -103,6 +110,10 @@ The types and their fields are in scouts.md, "Messages". In short:
   - the onset time in IST, with UTC in brackets;
   - the confidence;
   - the suspected change (PR, SHA, deploy time against onset);
+  - your read-only diagnosis: the first failed phase, the cause with
+    evidence (log lines, metrics, file:line), the customer impact, and the
+    proposed fix. Diagnose before you alert when the reads take minutes;
+    send the alert first and the diagnosis as an UPDATE when they take longer;
   - the proposed owner type.
 - `UPDATE — <name> — <fingerprint> — <escalated|threshold|recovered ...>`
 - `UPDATE — <name> — <target> — <milestone>`: only for a milestone your coordinator asked for (for example "report the first deploy").
