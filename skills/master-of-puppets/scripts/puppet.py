@@ -569,6 +569,18 @@ def scout_cmd(args):
         else:
             st.setdefault("pausedSince", t)
             out = f"paused since {st['pausedSince'][:19]}Z"
+    if args.scmd == "tick":  # a tag that stays for 2 ticks was not acted on: say so, and member stale shows it
+        keys = {a.split("×")[0] for a in acts} & {"OLD", "LATE"}
+        since = {k: v for k, v in (st.get("actSince") or {}).items() if k in keys}
+        for k in keys:
+            since.setdefault(k, t)
+        st["actSince"] = since
+        stuck = sorted(k for k, v in since.items()
+                       if now() - dt.datetime.fromisoformat(v) >= dt.timedelta(minutes=2 * tick_min))
+        if stuck:
+            acts.append("UNHANDLED")
+            warn += (f"\nUNHANDLED {' '.join(stuck)} since {min(since[k] for k in stuck)[:16]}Z: act on each line above "
+                     "in this tick (scout skill, section 2); your coordinator sees this in member stale")
     write_json(scout_path(args.name), st)
     lines = (out + warn).split("\n")
     if acts:

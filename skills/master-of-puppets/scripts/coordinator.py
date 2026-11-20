@@ -1167,6 +1167,9 @@ def roster_cmd(args):
                 flags = [f"paused since {st['pausedSince'][:16]}"] if st.get("pausedSince") else []
                 p0 = [a["fingerprint"] for a in st.get("openAlerts") or [] if a.get("severity") == "P0"]
                 flags += [f"open P0 {' '.join(p0)}"] if p0 else []
+                unhandled = [k for k, v in (st.get("actSince") or {}).items()
+                             if now() - dt.datetime.fromisoformat(v) >= dt.timedelta(minutes=2 * float(st.get("tickMin") or 15))]
+                flags += [f"UNHANDLED {' '.join(sorted(unhandled))}: nudge it"] if unhandled else []
                 twins = scout_twins(st)
                 flags += [f"TWIN: sessions {', '.join(twins)} all tick; stop all but one"] if twins else []
                 writer = st.get("lastSession")

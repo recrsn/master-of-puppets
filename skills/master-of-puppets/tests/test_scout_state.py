@@ -137,6 +137,15 @@ class ScoutState(unittest.TestCase):
         self.assertIn("ACT: OLD×1", out.splitlines()[0])  # on line 1: a scout that cuts the output still sees it
         self.assertIn("1 not seen for 24 h", out)
         self.assertIn("\n  OLD old", out)
+        self.assertNotIn("UNHANDLED", out)  # the first tick with the tag
+        st = self.m.read_json(self.m.scout_path("sc"))
+        st["actSince"]["OLD"] = (self.m.now() - self.m.dt.timedelta(minutes=31)).isoformat()  # 2 ticks ago
+        self.m.write_json(self.m.scout_path("sc"), st)
+        out = self.scout("tick")
+        self.assertIn("UNHANDLED", out.splitlines()[0])
+        self.assertIn("UNHANDLED OLD since", out)
+        self.scout("resolve", "--fingerprint", "old")
+        self.assertNotIn("UNHANDLED", self.scout("tick"))  # acted on: the tag and its age are gone
 
 
 if __name__ == "__main__":
