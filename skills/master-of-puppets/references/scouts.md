@@ -114,8 +114,8 @@ session (a push notification). It reports only, and never asks for approval.
 
 ## Message budget
 
-The desktop pauses a session after 10 cross-session messages with no user
-message. A scout that only messages could vanish, so the watch state is
+Some hosts pause a session after 10 cross-session messages with no user
+message (hosts/claude-desktop.md, "Send failures"). A scout that only messages could vanish, so the watch state is
 the primary record:
 
 - `$MACHINE_LEASE_DIR/scouts/<name>.json` holds:

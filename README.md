@@ -100,9 +100,10 @@ coordinators agree, `install --replace` updates the live copies.
 - Dashboard: `http://localhost:4720/`.
 
 In Codex, invoke the skills as `$master-of-puppets` and `$puppet` (or by name).
-The [agent equivalents](skills/master-of-puppets/references/agents.md) cover
-Codex messaging, thread IDs, heartbeat automations, command watchers and PR
-attachment/repair alongside the Claude tools.
+Each session first finds its host (T3 Code, Claude Desktop, the Claude Code
+CLI, Codex Desktop or the Codex CLI) and reads only that host's guide in
+[references/hosts/](skills/master-of-puppets/references/hosts/README.md): its
+send tool, session ids, scheduler, watchers and PR binding.
 
 See `skills/master-of-puppets/SKILL.md` for the coordinator workflow,
 `skills/puppet/SKILL.md` for the member side, and

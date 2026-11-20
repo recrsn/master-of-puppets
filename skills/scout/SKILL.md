@@ -20,8 +20,11 @@ In a shell, define it as a function, not a variable (zsh does not split a
 variable into words): `puppet() { python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/puppet.py" "$@"; }`.
 If the file does not exist, no coordinator runs on this machine: tell the user.
 
-Read [agents.md](../master-of-puppets/references/agents.md) for session ids,
-and the "Routes" section of
+**Find your host first** ([hosts/README.md](../master-of-puppets/references/hosts/README.md),
+"Find your host"; `puppet.py host` when `puppet.py --help` lists it), then read
+only your host's guide. It names your session id and your tools to send and
+schedule ticks; never assume `SendMessage` or another host's tool. Read the
+"Routes" section of
 [protocol.md](../master-of-puppets/references/protocol.md) for how to message
 your coordinator. Never use `coordinator.py send`.
 
@@ -80,7 +83,7 @@ Your scout state file stays as it is.
    - Read the whole output of `scout tick`; never cut it with `head` or `cut`. When the first line ends with `ACT:`, act on each tag. The `OLD` and `LATE` lines come after the first line.
    - When it lists alerts not seen for 24 h, check each one again, then resolve it or alert it again. This also applies to the alerts you take over from another scout.
    When `puppet.py` cannot run (a sandbox refuses it and escalation is refused), say so in a GAP once, then put each tick's changes in your message; your coordinator records them.
-7. Schedule your next wakeup (`references/agents.md`, scheduling). Never write a polling loop. Never put a route or a session name in the scheduled prompt: look up the route at each send.
+7. Schedule your next wakeup (the "Scheduled turn" row of your host guide). Never write a polling loop. Never put a route or a session name in the scheduled prompt: look up the route at each send.
 
 Keep a QUIET tick small: put your reads in one script of your own, outside
 the repository, and run it with one call, then `scout tick`. A tick that
@@ -96,10 +99,10 @@ when you have sent your coordinator nothing for 60 minutes, the next tick
 sends one short `STATUS — <name> — quiet — <open alerts by severity> — <last
 tick time>` line. Silence for longer than an hour reads as a dead scout.
 
-A tick started by a schedule (cron or wakeup) often cannot use a T3
-`t3_thread_send` route: it fails with `parent_not_active`. That is a failed
-send: use the next route at once, and say which route worked in your next
-STATUS line.
+A send from a scheduled tick can fail where a send from a user turn works
+(in T3 Code, `parent_not_active`: hosts/t3-code.md, "Failures"). That is a
+failed send: use the next route at once, and say which route worked in your
+next STATUS line.
 
 ## 3. Messages
 
@@ -131,7 +134,7 @@ with `puppet.py ledger --grep "ACK <fingerprint>"`. When a P0 has no ACK after
 15 min, tell the user directly in your own session (a push notification),
 quoting the alert. You report only; never ask the user to approve anything.
 
-**Paused sends:** when a send returns "Paused" (the desktop allows 10
+**Paused sends:** when a send returns "Paused" (Claude hosts allow 10
 cross-session messages without a user message), run
 `puppet.py scout paused --coordinator <coord> --name <name>` and keep ticking.
 The dashboard shows that you are paused. When sends work again, run

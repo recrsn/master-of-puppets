@@ -17,9 +17,13 @@ coordinator does. Do not request, change or release someone else's lease.
 **Puppets cannot have children.** You never start another session; ask your
 coordinator with `TASK REQUEST` (section 6).
 
-Read [agents.md](../master-of-puppets/references/agents.md) for Claude/Codex
-tool equivalents and session ids, and the "Routes" section of
-[protocol.md](../master-of-puppets/references/protocol.md) for how to message
+**Find your host first** ([hosts/README.md](../master-of-puppets/references/hosts/README.md),
+"Find your host"; `puppet.py host` when `puppet.py --help` lists it), then read
+only your host's guide. The host (T3 Code, Claude Desktop, the Claude Code CLI,
+Codex Desktop or the Codex CLI), not the provider, decides your tools to send,
+schedule and start work. Never assume `SendMessage` or another host's tool.
+The "Routes" section of
+[protocol.md](../master-of-puppets/references/protocol.md) says how to message
 your coordinator.
 
 Below, `puppet.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/puppet.py"`.
@@ -42,7 +46,7 @@ session that should coordinate.
   `focus` covers your task. A coordinator is live while its heartbeat is newer
   than 40 minutes. When none fits, or several do, ask the user.
 - Your name: the one from the enrollment line, else your session title as a
-  short slug. Your session id: `agents.md`.
+  short slug. Your session id: your host guide.
 - After you join, a coordinator that looks stale (not live) is not a reason to
   JOIN another one. Ask the user.
 
@@ -73,8 +77,8 @@ started), start `<task>` with `sweep:` or `scheduled:` in JOIN. The
 coordinator can then put regular work first.
 
 Send it, and every later message (UPDATE, MERGED, USER SYNC, STATUS replies,
-TASK REQUEST, LEASE SIZE, LEASE RELEASED, IDLE, LEAVE), by the direct route
-for your coordinator's tool (`protocol.md`, "Routes"). Never use `coordinator.py send`
+TASK REQUEST, LEASE SIZE, LEASE RELEASED, IDLE, LEAVE), by the app route
+that your host and your coordinator's host share (`protocol.md`, "Routes"). Never use `coordinator.py send`
 and never write shared inbox records, even with `--no-direct`; the one
 exception is `puppet.py tell`, when no app route works. Never import the
 helper modules (`moplib`) to send a message.
@@ -122,17 +126,16 @@ own authority.
 Limits: no admin merge or merge bypass, and never skip git hooks.
 
 - **ACTIVE — #n**: work #n to MERGED.
-- **PAUSE — #n**: no merges from main, no fixes; Claude Auto-fix off or Codex
-  repair heartbeat paused on #n until ACTIVE.
+- **PAUSE — #n**: no merges from main, no fixes; automatic PR repair (Auto-fix
+  or a repair heartbeat) off on #n until ACTIVE.
 - When the applicable checks pass (see `references/rules.md` in the
   coordinator skill): commit, push, open the PR and mark it ready, in the same
   turn. Passing checks is not the end of the task. If the user's instructions
   need approval before a commit or a PR (for example a `CLAUDE.md` rule), ask
   the user at once and send `UPDATE — <name> — Waiting to commit — <fact>`.
-  Claude owners bind the PR with `ccd_pr`; turn on Auto-fix only while the PR
-  is ACTIVE. Codex owners
-  use `attach_artifact` with the PR URL and repair valid hosted review/CI
-  blockers only while ACTIVE; attachment does not enable Auto-fix. PAUSE
+  Bind the PR as your host guide says ("Bind a PR and repair blockers"), and
+  repair valid hosted review and CI blockers, or keep Auto-fix on, only while
+  the PR is ACTIVE. PAUSE
   takes precedence over repair instructions. The coordinator retargets bases.
   You do every commit, push, conflict fix and review reply.
 - **Auto-merge.** Your coordinator's `OK for auto-merge — #<n> — <method>`

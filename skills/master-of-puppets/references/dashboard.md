@@ -190,14 +190,12 @@ coordinator slug; it labels your section and your decisions.
   `decision add`, not by hand.
 - A task row's lease ETA matches lease holder names against the task id,
   so start each lease `--holder` with the task id (for example `"S9 build"`).
-- For Claude `session` deep links, use the session id that `ListAgents` shows for
-  that session (Claude Desktop ids look like `local_...`). The
-  `$CLAUDE_CODE_SESSION_ID` a member gives in its JOIN message identifies it in the
-  roster; it may not open as a deep link.
-- For Codex, use `codex://threads/<threadId>` for both `coordinator.href` and
-  a task's `session`. Use the thread ID returned by `list_threads` or exported
-  as `$CODEX_THREAD_ID`, not a subagent ID. The JSON above shows Claude links;
-  replace them for Codex sessions. Open the live dashboard with
-  `mcp__codex_app__open_in_codex` using a browser target when available.
+- Deep links depend on the host. Claude Desktop: `claude://claude.ai/epitaxy/<id>`
+  with the id that `ListAgents` shows (`local_...`); the
+  `$CLAUDE_CODE_SESSION_ID` in a JOIN identifies the member in the roster but
+  may not open as a link. Codex Desktop: `codex://threads/<threadId>` with the
+  id from `list_threads` or `$CODEX_THREAD_ID`, never a subagent id. Other
+  hosts (T3 Code, a CLI): leave `href` and `session` out. The JSON above shows
+  Claude Desktop links. Open the dashboard as your host guide says (`hosts/`).
 - Your focus and PRs come from the roster (`register` / `heartbeat`), not
   from this file.

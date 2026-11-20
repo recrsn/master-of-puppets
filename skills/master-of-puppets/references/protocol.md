@@ -63,7 +63,7 @@ observed peak unless you tell me why the run is smaller.
 | --- | --- |
 | Active PR | `ACTIVE — #<n>. Goal: MERGED. Next: <one step>.` |
 | Work done and meets the agreed requirements (once per PR) | `OK for auto-merge — #<n> — <squash\|merge\|rebase\|auto>`: the owner enables plain `gh pr merge <n> --auto`, no `--match-head-commit`, and keeps it on across review and CI fixes |
-| Paused PR | `PAUSE — #<n> waits for #<m>. No merges from main, no fixes, Claude Auto-fix off / Codex repair heartbeat paused on #<n>.` |
+| Paused PR | `PAUSE — #<n> waits for #<m>. No merges from main, no fixes, automatic PR repair (Auto-fix or a repair heartbeat) off on #<n>.` |
 | Bottom merged | `ACTIVE — #<n>: #<m> merged (<sha>). I retargeted #<n> to main. Merge origin/main into your branch, resolve, push.` |
 | Heartbeat round | `STATUS? — phase, PR state, blockers, anything the user decided.` |
 | Not a member | `Run /puppet to join a coordinator first.` |
@@ -122,25 +122,17 @@ in the ledger; member messages need no shared inbox copy.
   routes that reach the coordinator now, best first. Never copy a route or a
   session name into a scheduled prompt: names change when a thread is renamed
   or restarts. When the command is not known yet (it comes with an install),
-  use the routes below.
+  use the table in [hosts/README.md](hosts/README.md), "Who reaches whom".
 - **A failed send:** look up the route again, send once by the next route, and
   after a second failure tell the user. When `puppet.py --help` lists `tell`,
   a member's last route is `puppet.py tell --text "..."`: an inbox record
   that the coordinator's `watch` shows, sent in the member's own name. Never send one message by two
   routes that both work.
-- If you use T3 Code, read [t3-code.md](t3-code.md): route by thread id there.
-- Claude session to Claude session: `SendMessage` to the session name from
-  `ListAgents`, or to its session id. A session-id route can stop after about
-  10 messages until the user types in that session; prefer the name route.
-- Codex Desktop to a Codex thread: `mcp__codex_app__list_threads` to identify
-  it, then `mcp__codex_app__send_message_to_thread` with `threadId` and
-  `hostId` when available, and the protocol text in `prompt`. Resolve the
-  thread id from the roster `sessionId`. Prefer this route over the CLI.
-- CLI to a Codex thread, when app messaging is unavailable:
-  `codex queue --thread <thread-id> --message "<text>"` when supported by the
-  installed CLI (`codex queue --help`).
-- Codex subagents in the same tree: `collaboration.send_message` (or
-  `collaboration.followup_task` for new work). These IDs are not app thread IDs.
+- **The send tool depends on your host**, not on your provider (Claude or
+  Codex). Find your host and read only its guide: [hosts/README.md](hosts/README.md).
+  It lists which receivers each host's send tool reaches, and the inbox
+  routes for when no app route connects two hosts. `puppet.py route` and the
+  coordinator's printed app routes list only the routes your host has.
 - Coordinator to coordinator:
   `coordinator.py send --to <name> --text "<text>"`
   Send only what the other coordinator must act on and the shared records do
@@ -167,18 +159,18 @@ in the ledger; member messages need no shared inbox copy.
   (omit `--to` to reach every live coordinator). It appends to `inbox.jsonl`
   (`coordinator.py watch` shows it), then delivers directly: a Claude session
   through its inbox socket, a Codex thread through `codex queue`.
-  For Desktop direct delivery, use `send --no-direct` for the inbox record,
-  then `send_message_to_thread` once; do not duplicate direct delivery.
+  When your host's app route reaches the other coordinator better (for
+  example `send_message_to_thread` in Codex Desktop, or `t3_thread_send` in
+  T3 Code), use `send --no-direct` for the inbox record, then send once by
+  that route; do not duplicate direct delivery.
   Keep the shared inbox record even when direct delivery succeeds: it lets a
   coordinator catch up after it was not running. Receiving that record later
   is expected; handle duplicate receipt as described below.
   - The socket protocol is reverse-engineered, not an Anthropic interface
     (https://github.com/PeterSR/claude-code-socket-transport#the-protocol).
     The inbox record stays authoritative when direct delivery fails.
-  - A receiver that bypasses permission prompts holds a socket message from a
-    script for the user's approval; the Desktop app cannot show that dialog and
-    drops it after `dialogExpiry`. The user decides whether to set
-    `crossSessionInbound` to `accept` for that session; never change it yourself.
+  - A socket message from a script can be held for the user's approval in
+    Claude Desktop ([hosts/claude-desktop.md](hosts/claude-desktop.md), "Send failures").
   - The socket frame names the receiver's current session id, so a stale
     roster session id breaks delivery.
 - Dashboard to coordinator: the dashboard's queue buttons run

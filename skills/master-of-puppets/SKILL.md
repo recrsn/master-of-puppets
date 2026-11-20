@@ -63,9 +63,15 @@ coordinator's helpers. Install only when the user says so.
 
 Your identity comes from your session. The server finds the calling
 coordinator from `$CLAUDE_CODE_SESSION_ID` (Claude) or `$CODEX_THREAD_ID`
-(Codex), so no command takes your own name. In a Codex thread without
-`CODEX_THREAD_ID`, run each command as
-`CODEX_THREAD_ID=<thread id> coordinator.py ...`.
+(Codex), so no command takes your own name. Your host guide says what to do
+when the variable is missing.
+
+**Find your host first.** The app that runs you (T3 Code, Claude Desktop,
+the Claude Code CLI, Codex Desktop or the Codex CLI) decides your tools to
+send, list sessions, schedule turns and start sessions; the provider does not.
+Follow [references/hosts/README.md](references/hosts/README.md) ("Find your
+host"), then read only your host's guide. Tool names in this skill come from
+that guide; never assume `SendMessage` or any other host's tool.
 
 Read `references/setup.md` on the first run in a project,
 `references/protocol.md` before you message anyone, `references/rules.md` for
@@ -75,10 +81,6 @@ file, `references/handoff.md` before you send or take a handoff, and
 Read these only when your setup uses CodeRabbit: `references/coderabbit.md`
 for its code review, and `references/coderabbit-cloud.md` before you
 suggest, start or track a CodeRabbit cloud task.
-Read `references/t3-code.md` only when your sessions run in T3 Code.
-
-Read [references/agents.md](references/agents.md) for Claude/Codex tool
-equivalents, session identity, messaging, watchers, scheduling and PR repair.
 
 ## Before you start
 
@@ -97,7 +99,7 @@ Apply the following routes in order:
 
 A coordinator is live while its heartbeat is newer than 40 minutes. A running
 `watch` renews it once a minute; the heartbeat round renews it too. Session
-ids are in `references/agents.md`. What members send and do is in the `puppet`
+ids are in your host guide (`references/hosts/`). What members send and do is in the `puppet`
 skill; `references/protocol.md` lists the coordinator side.
 
 ### Name handoff
@@ -166,11 +168,11 @@ Do this only on the user's word, or to get your own name back after a
    Arm it once and re-arm it when it ends. It survives a server restart on
    its own. Auto acquire and pool upkeep run inside the server; there is
    nothing else to arm.
-5. Schedule the heartbeat round (required): Claude `CronCreate`, session-only, every
-   15 minutes, prompt "master-of-puppets heartbeat round for <slug>: follow
-   the Heartbeat round steps". Inside `/loop` dynamic mode, use
-   `ScheduleWakeup` instead. Codex Desktop uses an `automation_update` thread
-   heartbeat; reuse an existing matching automation (`references/agents.md`).
+5. Schedule the heartbeat round (required) with your host's scheduler (the
+   "Scheduled turn" row of your host guide): every 15 minutes, prompt
+   "master-of-puppets heartbeat round for <slug>: follow the Heartbeat round
+   steps". Reuse a matching schedule after a context reset. When your host
+   has no scheduler, tell the user.
    The round sends your heartbeat and checks on
    every member, because members forget to send updates. Keep it running
    while you coordinate, and verify it after a context reset. Without
@@ -223,9 +225,8 @@ message and prints the app route to send it by; send it there.
   `coordinator.py enroll --task "<one line>" --stream <stream-slug> [--pr <n>]`.
   The printed kickoff line tells the new session to run `/puppet` and join you
   under its enrolled name. Put it first in the prompt of every task you start.
-  On Claude, suggest a task card or chip; the user starts it. On Codex, ask the
-  user first with the ask-user tool (task, worktree or branch, PRs) and start
-  the session only on yes (`references/agents.md`). Subagents need no
+  Start it as your host guide says ("Start an independent session"): ask the
+  user first, or suggest a card the user starts. Subagents need no
   enrollment.
 - **Where new work goes** (user rules, 19 Nov), in this order:
   1. The member that owns the stream (`who --text`, `roster`): send it the
@@ -357,8 +358,9 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    timeout. Read new ledger entries. When it ends with `ROUND INCOMPLETE`,
    those sections were not checked: say so in your report, and never report
    their PRs or leases as fine.
-2. Re-arm `watch` if it ended; on Codex, consume new watcher output and
-   recover unread inbox/ledger entries (`references/agents.md`). Disregard
+2. Re-arm `watch` if it ended. When your host has no `Monitor`, read the new
+   watcher output and recover unread inbox and ledger entries (the "Watch a
+   command" row of your host guide). Disregard
    already-handled messages using `references/protocol.md`, "Duplicate receipt
    and catch-up"; keep the shared inbox for recovery.
 3. Compare each stack with the latest `PR` lines; act on steps 3 and 4

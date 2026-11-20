@@ -18,7 +18,7 @@ with `config set-machine`, `set-class` or `set-project` (each with an
 optional `--reason`), never with `memory add`.
 
 Ask the question groups below with the agent's question tool
-(`agents.md`, "Ask setup questions"). Wait for required choices before
+(the "Ask the user" row of your host guide, `hosts/`). Wait for required choices before
 writing their configuration.
 
 ## 1. Detect
