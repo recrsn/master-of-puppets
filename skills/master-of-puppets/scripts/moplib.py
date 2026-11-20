@@ -1473,9 +1473,11 @@ def helpers_differ(src):
     return [n for n in FILES if read(os.path.join(src, n)) is None or read(os.path.join(src, n)) != read(os.path.join(DIR, n))]
 
 
-def version_warning():
+def version_warning(member=False):
     """Tell the session on stderr when an update of the live helpers is due: the skill copy
-    differs from the live copies, or an obsolete helper is still in the state dir."""
+    differs from the live copies, or an obsolete helper is still in the state dir. A member gets one
+    note to ignore: the install is the coordinator's and the user's, and members that passed the full
+    warning on all asked the user the same question."""
     here = os.path.dirname(os.path.realpath(__file__))
     if here == os.path.realpath(DIR):
         try:
@@ -1489,6 +1491,10 @@ def version_warning():
         return
     differ = helpers_differ(src)
     obsolete = [n for n in OBSOLETE if os.path.exists(os.path.join(DIR, n))]
+    if differ and member:
+        print("note: the live helpers are older than the skill copy; your coordinator and the user handle the "
+              "install. Do not report this.", file=sys.stderr)
+        return
     if differ:
         print(f"warning: the live {', '.join(differ)} in {DIR} {'differs' if len(differ) == 1 else 'differ'} from the skill copy in {src}. "
               f"Do not install: tell the user, who decides when to run python3 -I {os.path.join(src, 'coordinator.py')} install "

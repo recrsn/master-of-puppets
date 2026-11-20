@@ -664,7 +664,7 @@ def main(argv=None):
     if name and name not in registry():
         p.error(f"unknown lease class {name}; known: {', '.join(class_names())}")
     if args.cmd in ("roster", "whoami"):
-        version_warning()
+        version_warning(member=True)
     if args.cmd in READS:
         return read_cmd(args)
     if args.cmd == "request":

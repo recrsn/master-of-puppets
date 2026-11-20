@@ -114,5 +114,18 @@ class Hosts(unittest.TestCase):
         self.assertIn("codex queue --thread x9", self.routes(CODEX_CLI, {"tool": "codex", "sessionId": "x9"})[0])
 
 
+    def test_a_member_gets_a_short_drift_note(self):
+        from contextlib import redirect_stderr
+        self.m.helpers_differ = lambda src: ["moplib.py"]
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.m.version_warning(member=True)
+        self.assertIn("Do not report this", err.getvalue())
+        self.assertNotIn("tell the user", err.getvalue())
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.m.version_warning()
+        self.assertIn("tell the user", err.getvalue())  # the coordinator still gets the full warning
+
 if __name__ == "__main__":
     unittest.main()
