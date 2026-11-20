@@ -24,7 +24,7 @@ or a `T3CODE_THREAD_ID` variable in the shell). Other setups skip it.
 | Error | Meaning | Do this |
 | --- | --- | --- |
 | `parent_not_active` | Your own turn is not an active run, for example a scheduled turn | Send by the next route (protocol.md, "Routes"), or with `puppet.py tell` when it exists |
-| `runtime_mode_escalation_denied` | The receiver runs in a higher runtime mode than the sender | Do not work around it. Report who is unreachable to the user (see below) |
+| `runtime_mode_escalation_denied` | The receiver runs in a higher runtime mode than the sender, as T3 Code sees it now | Do not work around it, and do not tell the user the mode as a fact. Check the receiver's `runtimeMode` in `t3_thread_list`, tell the user what you see, and retry once by thread id when the user says to |
 | "No agent named ..." | The display name changed | Look up the route again; send by thread id |
 | A socket `ENOENT` or "stale" | The session restarted | Look up the route again |
 

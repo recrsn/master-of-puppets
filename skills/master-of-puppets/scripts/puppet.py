@@ -91,7 +91,7 @@ from moplib import (
     load, save, load_roster, queue_entry, extension_refusal, READS, add_read_commands, read_cmd, version_warning, drain,
     find_resource, set_state, mark_failed, parse_prefer, RESOURCE_NAME, pool_spec,
     begin_op, recycle_run, recycle_note, destroy_recycled, recycle_released, health_released,
-    write_json, scout_path, scout_state, SCOUT_SEVERITIES, SEND_MAX, member_of_session, session_identity, deliver,
+    write_json, scout_path, scout_state, SCOUT_SEVERITIES, SEND_MAX, member_of_session, session_identity, deliver, note_member_route,
 )
 
 MAX_RECYCLE_DESTROYS = 3  # resources one await-grant may destroy for failed recycles before it stops re-queueing
@@ -599,6 +599,7 @@ def main(argv=None):
         if name == "paused":
             x.add_argument("--clear", action="store_true", help="sends work again")
     args = p.parse_args(argv)
+    note_member_route()
     if args.cmd == "scout":
         return scout_cmd(args)
     if args.cmd == "tell":

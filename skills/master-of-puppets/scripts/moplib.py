@@ -1529,6 +1529,26 @@ def member_of_session(roster, sid):
     return None, None
 
 
+def note_member_route():
+    """Record the calling member's T3 Code thread on its roster entry, so the coordinator's routes to it
+    survive thread renames. Runs on every puppet.py command; writes only when the thread changed."""
+    thread = cenv("T3CODE_THREAD_ID")
+    sids = {cenv("CLAUDE_CODE_SESSION_ID"), cenv("CODEX_THREAD_ID")} - {None}
+    if not thread or not sids:
+        return
+    def stale(roster):
+        return [m for m in (member_of_session(roster, sid)[1] for sid in sids) if m and m.get("t3Thread") != thread]
+    if not stale(load_roster()) or not STATE_LOCK.acquire(timeout=5):
+        return  # a busy lock never fails the member's own command: the next one records it
+    try:
+        roster = load_roster()
+        for m in stale(roster):
+            m["t3Thread"] = thread
+        save_roster(roster)
+    finally:
+        unlock()
+
+
 def route_cmd(args):
     """route: how to reach a coordinator now. Default: the caller's own coordinator."""
     roster = load_roster()

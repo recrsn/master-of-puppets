@@ -15,6 +15,12 @@ that `coordinator.py` enforces (`references/setup.md`).
 - Never kill processes. Never take over an expired lease or a live
   coordinator's role without the user's approval.
 - Prefer fix tasks over investigations when two needs tie.
+- Do an approved action as the user asked it, no more. Do not add steps the
+  user did not ask for, such as a backup before an approved delete. When a
+  step seems wise, offer it in the question, before the user answers.
+- Answer a question about work you took over from the handoff notes and the
+  notes files first (`handoffs/`, `notes/` in the state dir, and the note the
+  handoff names). Search GitHub or logs only for what they do not say.
 - Read the shared record before you message a peer: `events`, `inbox`,
   `ledger`, `who` and `prs --path`. Never send, or ask for, a release, drain
   or cleanup receipt; the release event is the record (`references/leases.md`).

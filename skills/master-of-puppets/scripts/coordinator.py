@@ -738,7 +738,10 @@ def config_cmd(args):
 
 
 def native_route(m):
-    """The app route that reaches member m: a Claude SendMessage target or a Codex thread id."""
+    """The app route that reaches member m: its T3 Code thread when it runs there (it survives renames),
+    else a Claude SendMessage target or a Codex thread id."""
+    if m.get("t3Thread"):
+        return f"t3_thread_send with threadId {m['t3Thread']} (references/t3-code.md)"
     if m.get("tool") == "codex":
         return f"send_message_to_thread with threadId {m.get('sessionId')} (or codex queue --thread {m.get('sessionId')})"
     return f"SendMessage to {m.get('session') or m.get('sessionId') or '(no session recorded: ask it to send JOIN again)'}"
@@ -2919,7 +2922,7 @@ def round_cmd(args):
                 ("votes", lambda: main(["vote", "list"])), ("prs", lambda: round_prs(me, args.open, args.open_hours))]
     if args.release_repo:
         sections.append(("release", lambda: release_state(args.release_repo, args.release_workflow)))
-    worst = 0
+    worst, missed = 0, []
     version_warning()
     for label, fn in sections:
         out, code = timed(fn, args.timeout)
@@ -2928,6 +2931,9 @@ def round_cmd(args):
             print(out)
         if code in (124,) or (code and label in ("heartbeat", "prs", "release")):
             worst = 1
+            missed.append(f"{label} ({'timed out' if code == 124 else f'exit {code}'})")
+    if missed:  # a long round hides a failed section in its middle
+        print(f"ROUND INCOMPLETE — not checked: {', '.join(missed)}. Say so in your report and run it again next round.")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     write_json(path, {"at": started})
     return worst

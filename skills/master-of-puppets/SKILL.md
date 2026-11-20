@@ -350,7 +350,9 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    `--release-repo`/`--release-workflow` while a release is open). It runs the
    heartbeat and prints your leases, silent members, new inbox lines, open
    votes, the `pr` digest of your PRs and the release runs, each under a
-   timeout. Read new ledger entries.
+   timeout. Read new ledger entries. When it ends with `ROUND INCOMPLETE`,
+   those sections were not checked: say so in your report, and never report
+   their PRs or leases as fine.
 2. Re-arm `watch` if it ended; on Codex, consume new watcher output and
    recover unread inbox/ledger entries (`references/agents.md`). Disregard
    already-handled messages using `references/protocol.md`, "Duplicate receipt

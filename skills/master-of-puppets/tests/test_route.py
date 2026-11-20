@@ -75,6 +75,14 @@ class Route(unittest.TestCase):
         self.assertIn("puppet.py tell", lines[3])
         self.assertEqual(self.run_cli(self.p, {"CLAUDE_CODE_SESSION_ID": "s2"}, "route")[0], 3)  # a done member
 
+    def test_a_members_command_records_its_thread_for_the_coordinators_route(self):
+        self.run_cli(self.p, {"CLAUDE_CODE_SESSION_ID": "s1", "T3CODE_THREAD_ID": "mt-1"}, "route")
+        m = self.m.load_roster()["members"]["a"][0]
+        self.assertEqual(m["t3Thread"], "mt-1")
+        self.assertIn("t3_thread_send with threadId mt-1", self.c.native_route(m))
+        self.run_cli(self.p, {"CLAUDE_CODE_SESSION_ID": "stranger", "T3CODE_THREAD_ID": "x"}, "route", "--coordinator", "a")
+        self.assertNotIn("t3Thread", self.m.load_roster()["members"]["a"][1])  # nobody else's entry changes
+
     def test_tell_writes_the_inbox_in_the_callers_own_name(self):
         code, out = self.run_cli(self.p, {"CLAUDE_CODE_SESSION_ID": "s1"}, "tell", "--text", "UPDATE — w — blocked")
         self.assertEqual(code, 0, out)
