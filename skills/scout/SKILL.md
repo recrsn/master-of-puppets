@@ -60,9 +60,10 @@ While you wait, tick and record (section 2), but send nothing. When no
 WELCOME comes within 2 ticks, look up the route again (protocol.md, "Routes")
 and send SCOUT JOIN once more. After a second miss, tell the user.
 
-When your session changes (a `/clear`, a new thread, or a move from Claude to
-Codex or back), send SCOUT JOIN again from the new session before its first
+Outside T3 Code, when your session changes (a `/clear`, a new thread, or a move
+from Claude to Codex or back), send SCOUT JOIN again from the new session before its first
 tick, and stop the old session. Your state file stays as it is.
+**After a context handoff, a summary or a provider switch, run `puppet.py whoami` first,** before any other work. In T3 Code a provider switch keeps the thread, and that command moves your roster entry to the new session (hosts/t3-code.md, "Provider switch in a thread"). The handoff text may not say that you are a member: trust `whoami`, not the summary. Send SCOUT JOIN again only when it says you are not in the roster.
 
 When your coordinator hands its whole stack to another one, the new
 coordinator sends `HANDOFF COMPLETE — <name> — SCOUT JOIN <coordinator>`.
@@ -83,7 +84,7 @@ Your scout state file stays as it is.
 5. When a read of yours fails (expired credentials, a timeout, a denied query), you are blind: record it with `--kind gap` and send `GAP`. Never go silent.
 6. End every tick with `puppet.py scout tick --coordinator <coord> --name <name>`. Add `--state "<counters, coverage, cursor>"` when you keep a cursor or counters; each tick replaces it. Once a day add `--summary "<counts and the state of the open alerts>"`. Never put per-tick state in `--summary`. The coordinator and the dashboard see you only through this file.
    - When it prints `LATE <n>m`, you missed ticks: it names the window and the cursor you had then. Read that window again, record what it shows, then run `scout tick --reread`. Until you do, every tick prints `LATE` again. Say `LATE` in a message only when the window had an alert.
-   - When it prints `SESSION`, this session is not the one the roster names for you (a new thread, or a move to another provider): send SCOUT JOIN again before the next tick. When it prints `TWIN`, another session also ticks as you: tell your coordinator at once; one of you must stop.
+   - When it prints `SESSION`, this session is not the one the roster names for you (a new thread, or a move to another provider): send SCOUT JOIN again before the next tick (when the tick prints a `SCOUT JOIN` line under it, send that line as it is). A report of the mismatch in an UPDATE is not enough. When it prints `TWIN`, another session also ticks as you: tell your coordinator at once; one of you must stop.
    - Read the whole output of `scout tick`; never cut it with `head` or `cut`. When the first line ends with `ACT:`, act on each tag. The `OLD` and `LATE` lines come after the first line.
    - When it lists alerts not seen for 24 h, check each one again, then resolve it or alert it again. This also applies to the alerts you take over from another scout.
    When `puppet.py` cannot run (a sandbox refuses it and escalation is refused), say so in a GAP once, then put each tick's changes in your message; your coordinator records them.

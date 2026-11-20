@@ -90,10 +90,12 @@ helper modules (`moplib`) to send a message.
 When a send is refused or rejected (for example an approval reviewer says the
 destination is not trusted), do not go quiet. Run `puppet.py route`, send once
 by the route it prints, and if that fails too, use `puppet.py tell`. Answer a
-coordinator's request by one of these routes, never only in your own thread. When your session id
+coordinator's request by one of these routes, never only in your own thread. Outside T3 Code, when your session id
 changes (a `/clear`, a new thread, or a move from Claude to Codex or back),
 send JOIN again from the new session and stop the old one (`protocol.md`,
 "Routes").
+
+**After a context handoff, a summary or a provider switch, run `puppet.py whoami` first,** before any other work. In T3 Code a provider switch keeps the thread, and that command moves your roster entry to the new session (hosts/t3-code.md, "Provider switch in a thread"). The handoff text may not say that you are a member: trust `whoami`, not the summary. Send JOIN again only when it says you are not in the roster.
 
 Wait for WELCOME. It tells you whether leases are on and gives the rules,
 including the project rules from the coordinator's memory and any machine or
