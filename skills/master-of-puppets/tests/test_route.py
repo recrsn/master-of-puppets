@@ -73,7 +73,13 @@ class Route(unittest.TestCase):
         self.assertIn("t3_thread_send with threadId th-1", lines[1])
         self.assertIn("SendMessage to sa", lines[2])
         self.assertIn("puppet.py tell", lines[3])
-        self.assertEqual(self.run_cli(self.p, {"CLAUDE_CODE_SESSION_ID": "s2"}, "route")[0], 3)  # a done member
+        code, out = self.run_cli(self.p, {"CLAUDE_CODE_SESSION_ID": "s2"}, "route")  # a done member
+        self.assertEqual(code, 0)  # the one live coordinator is still the route, with a whoami hint
+        self.assertIn("run puppet.py whoami", out)
+        roster = self.m.load_roster()
+        roster["coordinators"]["b"] = dict(roster["coordinators"]["a"], sessionId="sb")
+        self.m.save_roster(roster)
+        self.assertEqual(self.run_cli(self.p, {"CLAUDE_CODE_SESSION_ID": "s2"}, "route")[0], 3)  # two: it must choose
 
     def test_a_members_command_records_its_thread_for_the_coordinators_route(self):
         self.run_cli(self.p, {"CLAUDE_CODE_SESSION_ID": "s1", "T3CODE_THREAD_ID": "mt-1"}, "route")

@@ -176,6 +176,8 @@ def request(args):
         why = code == 0 and undersized(args.cls, project_key(args.worktree)[0], args.gib, machine["sizeMargin"])
         if why:
             print(f"warning: {why}")
+            print(f"  to resize: puppet.py request {args.cls} --id {args.id} --gib <the observed peak> "
+                  f"(with the same other flags), or send LEASE SIZE — {args.id} — <why this run is smaller>")
         return code
     finally:
         unlock()
@@ -555,6 +557,9 @@ def scout_cmd(args):
                else f"{args.fingerprint} is not open")
         if len(left) < len(st["openAlerts"]):
             st["resolved"][args.fingerprint] = t
+            if args.text:
+                st.setdefault("resolvedWhy", {})[args.fingerprint] = args.text[:300]
+                st["resolvedWhy"] = {f: w for f, w in st["resolvedWhy"].items() if f in st["resolved"]}
         st["openAlerts"] = left
         st["lastTick"] = t
     elif args.scmd == "paused":
@@ -640,6 +645,8 @@ def main(argv=None):
             x.add_argument("--severity", required=True, choices=SCOUT_SEVERITIES)
             x.add_argument("--kind", choices=("alert", "gap"), default="alert", help="gap: your own read failed")
             x.add_argument("--text", required=True, help="one line; the location of a secret, never its value")
+        if name == "resolve":
+            x.add_argument("--text", help="why it is resolved (one line), kept with the resolution")
         if name == "paused":
             x.add_argument("--clear", action="store_true", help="sends work again")
     args = p.parse_args(argv)

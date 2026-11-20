@@ -1707,6 +1707,11 @@ def route_cmd(args):
     name = args.coordinator
     if not name:
         name = member_of_session(roster, session_identity()[0])[0]
+        live_coords = [n for n, c in roster["coordinators"].items() if live(c)]
+        if not name and len(live_coords) == 1:
+            name = live_coords[0]
+            print(f"this session is not in the roster under its id: the routes to the one live coordinator, {name}; "
+                  "run puppet.py whoami, and send JOIN when it finds no entry")
         if not name:
             print("this session is not a member in the roster: give --coordinator, or send JOIN first")
             return 3
