@@ -63,7 +63,7 @@ and send SCOUT JOIN once more. After a second miss, tell the user.
 Outside T3 Code, when your session changes (a `/clear`, a new thread, or a move
 from Claude to Codex or back), send SCOUT JOIN again from the new session before its first
 tick, and stop the old session. Your state file stays as it is.
-**After a context handoff, a summary or a provider switch, run `puppet.py whoami` first,** before any other work. In T3 Code a provider switch keeps the thread, and that command moves your roster entry to the new session (hosts/t3-code.md, "Provider switch in a thread"). The handoff text may not say that you are a member: trust `whoami`, not the summary. Send SCOUT JOIN again only when it says you are not in the roster.
+**After a context handoff, a summary or a provider switch, run `puppet.py whoami` first,** before any other work. Count as a switch any sign that your provider or model changed: a "provider context handoff" message, a model name you did not start with, or a coordinator that asks you to run it. In T3 Code a provider switch keeps the thread, and that command moves your roster entry to the new session (hosts/t3-code.md, "Provider switch in a thread"). The handoff text may not say that you are a member: trust `whoami`, not the summary. Its note that the helpers are older than the skill copy is for your coordinator: do not report it. Send SCOUT JOIN again only when it says you are not in the roster.
 
 When your coordinator hands its whole stack to another one, the new
 coordinator sends `HANDOFF COMPLETE — <name> — SCOUT JOIN <coordinator>`.
