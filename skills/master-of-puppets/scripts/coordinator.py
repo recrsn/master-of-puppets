@@ -3527,9 +3527,11 @@ def idle_cmd(args):
                  f"wakes you; then send UPDATE as usual.")
         record(me, "idle", f"IDLE of {args.name} accepted; wakes on: {args.wake.strip()}", name=args.name, accepted=True)
     print(reply)
-    if m.get("sessionId") and m.get("tool") in ("claude", "codex"):
-        print(deliver(args.name, m["tool"], m["sessionId"], reply))
-    print(f"send it yourself if the line above does not say delivered: SendMessage to {m.get('session') or m.get('sessionId') or 'the member'}")
+    sent = deliver(args.name, m["tool"], m["sessionId"], reply) if m.get("sessionId") and m.get("tool") in ("claude", "codex") else ""
+    if sent:
+        print(sent)
+    if not sent or "inbox only" in sent:  # a second copy by hand after a written socket made members get it twice
+        print(f"not delivered: send the line above once, by {native_route(m)}")
     return 0
 
 
@@ -3602,9 +3604,11 @@ def leave_cmd(args):
         reply = f"LEAVE ACCEPTED — {args.name}" + (f" — {'; '.join(facts)}" if facts else "") + ". You may archive your session."
         record(me, "leave", f"LEAVE of {args.name} accepted" + (f": {'; '.join(facts)}" if facts else ""), name=args.name, accepted=True)
     print(reply)
-    if m.get("sessionId") and m.get("tool") in ("claude", "codex"):
-        print(deliver(args.name, m["tool"], m["sessionId"], reply))
-    print(f"send it yourself if the line above does not say delivered: SendMessage to {m.get('session') or m.get('sessionId') or 'the member'}")
+    sent = deliver(args.name, m["tool"], m["sessionId"], reply) if m.get("sessionId") and m.get("tool") in ("claude", "codex") else ""
+    if sent:
+        print(sent)
+    if not sent or "inbox only" in sent:  # a second copy by hand after a written socket made members get it twice
+        print(f"not delivered: send the line above once, by {native_route(m)}")
     return 0
 
 
@@ -3997,8 +4001,10 @@ def cloud_state(task):
 
 
 def watch_cloud(path, interval):
-    """CLOUD lines for watch: a cloud task's state check can take two minutes, so it runs beside the main loop."""
-    last = {}
+    """CLOUD lines for watch: a cloud task's state check can take two minutes, so it runs beside the main loop.
+    The last state per task is kept beside the watch list, so a restarted watch prints only changes."""
+    seen = path[:-4] + "-last.json" if path.endswith(".txt") else path + "-last.json"
+    last = read_json(seen) or {}
     while True:
         for raw in open(path).read().splitlines():
             f = raw.split()
@@ -4008,6 +4014,7 @@ def watch_cloud(path, interval):
             if last.get(f[0]) != line:
                 print(f"CLOUD {f[0]} {f[1] if len(f) > 1 else '-'} {line}", flush=True)
                 last[f[0]] = line
+                write_json(seen, last)
         nap(interval)
 
 

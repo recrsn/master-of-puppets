@@ -96,12 +96,16 @@ class Idle(unittest.TestCase):
         code, out = self.run_cmd(["idle", "--name", "gw", "--reject", "--reason", "PR #7 is open"])
         self.assertEqual(code, 0)
         self.assertIn("IDLE NOT ACCEPTED", self.sent[-1][1])
+        self.c.deliver = lambda name, tool, sid, text: f"{name}: claude: session not running (inbox only)"
+        code, out = self.run_cmd(["idle", "--name", "gw", "--reject", "--reason", "PR #7 is open"])
+        self.assertIn("not delivered: send the line above once", out)
 
     def test_idle_member_is_quiet_and_wakes_on_new_work(self):
         self.join(prs="PRs #7")  # #7 is MERGED
         code, out = self.run_cmd(["idle", "--name", "gw", "--wake", "a new question from the user"])
         self.assertEqual(code, 0, out)
         self.assertIn("IDLE ACCEPTED", self.sent[-1][1])
+        self.assertNotIn("not delivered:", out)  # the socket took it: no second copy by hand
         m = self.member()
         self.assertEqual((m["status"], m["wake"]), ("idle", "a new question from the user"))
 
