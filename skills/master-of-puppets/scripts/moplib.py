@@ -139,8 +139,8 @@ def adopt_thread_identity():
         return
     def moved(roster):
         entries = list(roster["coordinators"].items()) + [(m["name"], m) for ms in roster["members"].values() for m in ms]
-        return [(n, e) for n, e in entries if e.get("t3Thread") == thread and e.get("status") != "done"
-                and e.get("sessionId") != sid]
+        return [(n, e) for n, e in entries if thread in (e.get("t3Thread"), e.get("sessionId")) and e.get("status") != "done"
+                and e.get("sessionId") != sid]  # sessionId: a thread launched by T3 Code joined under its thread id
     roster = read_json(ROSTER) or {}
     if not roster or not moved(roster) or not STATE_LOCK.acquire(timeout=5):
         return  # a busy lock never fails the command: the next one moves it
@@ -152,6 +152,12 @@ def adopt_thread_identity():
                 f"same T3 thread")
             print(f"identity: {name} now runs as {tool} session {sid} (same T3 Code thread)", file=sys.stderr)
             e["priorSessionId"], e["sessionId"], e["tool"] = e.get("sessionId"), sid, tool
+            e["t3Thread"] = thread
+            if e.get("role") == "scout":  # the old session's ticks are this scout's own, not a twin's
+                st = read_json(scout_path(name)) or {}
+                if e["priorSessionId"] in (st.get("sessions") or {}):
+                    st["sessions"].pop(e["priorSessionId"])
+                    write_json(scout_path(name), st)
         if changed:
             save_roster(roster)
     finally:
@@ -332,6 +338,17 @@ def agent_tool(pid):
 
 
 def forward(script, argv):
+    """forward_run, with a sandbox refusal reported in one line instead of a traceback."""
+    try:
+        return forward_run(script, argv)
+    except PermissionError as exc:
+        print(f"the sandbox blocked {script} ({exc.strerror}: {exc.filename or 'the lease server'}): run this "
+              "command outside the sandbox (Codex: escalate it; Antigravity ACP: BypassSandbox), and every later "
+              "helper command too (references/hosts/)", file=sys.stderr)
+        return 77
+
+
+def forward_run(script, argv):
     """Run `script argv` in the server and print its output as it streams; returns the exit code.
     Starts the server when none answers. A resumable command (watch, await-grant, ...) runs again
     after a server restart; any other command whose stream breaks exits 75."""

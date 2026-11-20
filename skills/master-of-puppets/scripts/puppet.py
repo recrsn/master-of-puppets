@@ -518,7 +518,9 @@ def scout_cmd(args):
         if old_alerts:
             acts.append(f"OLD×{len(old_alerts)}")
             out += f"; {len(old_alerts)} not seen for 24 h, check each one again, then alert it again or resolve it:"
-            out += "".join(f"\n  OLD {f}" for f in old_alerts)  # one per line: a cut summary line must not hide them
+            out += "".join(f"\n  OLD {f}: read it again now; still bad: puppet.py scout alert --name {args.name} ... --fingerprint {f}; "
+                           f"clean: puppet.py scout resolve --name {args.name} --fingerprint {f}"
+                           for f in old_alerts)  # one per line: a cut summary line must not hide them
         if missed:
             acts.append("LATE")
             out += (f"\nLATE {missed['minutes']}m: no tick from {missed['from'][:19]}Z to {missed['to'][:19]}Z; "

@@ -79,6 +79,40 @@ class ProviderSwitch(unittest.TestCase):
         self.m.adopt_thread_identity()
         self.assertEqual(self.m.load_roster()["coordinators"]["a"]["sessionId"], "sa")
 
+    def test_a_switched_scout_is_no_twin_of_its_old_session(self):
+        roster = self.m.load_roster()
+        roster["members"]["a"].append({"name": "sc", "role": "scout", "tool": "claude", "sessionId": "old-1",
+                                       "status": "active", "t3Thread": "th-3", "tickMin": 15})
+        self.m.save_roster(roster)
+        t = self.m.now().isoformat()
+        self.m.write_json(self.m.scout_path("sc"), {"tickMin": 15, "sessions": {"old-1": t}, "lastSession": "old-1"})
+        self.m.RUN.env = {"CODEX_THREAD_ID": "x-3", "T3CODE_THREAD_ID": "th-3"}
+        with redirect_stderr(io.StringIO()):
+            self.m.adopt_thread_identity()
+        self.assertNotIn("old-1", self.m.read_json(self.m.scout_path("sc"))["sessions"])
+        sc = self.m.load_roster()["members"]["a"][-1]
+        self.assertEqual((sc["sessionId"], sc["tool"]), ("x-3", "codex"))
+
+    def test_an_entry_joined_under_its_thread_id_is_adopted(self):
+        roster = self.m.load_roster()
+        roster["members"]["a"].append({"name": "l", "tool": "codex", "sessionId": "mcp:launch:abc", "status": "active"})
+        self.m.save_roster(roster)
+        self.m.RUN.env = {"CODEX_THREAD_ID": "x-4", "T3CODE_THREAD_ID": "mcp:launch:abc"}
+        with redirect_stderr(io.StringIO()):
+            self.m.adopt_thread_identity()
+        lm = self.m.load_roster()["members"]["a"][-1]
+        self.assertEqual((lm["sessionId"], lm["t3Thread"]), ("x-4", "mcp:launch:abc"))
+
+    def test_a_sandbox_refusal_is_one_line(self):
+        def refused(script, argv):
+            raise PermissionError(1, "Operation not permitted", "/state/puppet.py")
+        self.m.forward_run = refused
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(self.m.forward("puppet.py", ["roster"]), 77)
+        self.assertIn("outside the sandbox", err.getvalue())
+        self.assertEqual(len(err.getvalue().strip().splitlines()), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
