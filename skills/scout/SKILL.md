@@ -77,14 +77,14 @@ Your scout state file stays as it is.
 Command card (use these; do not read the helper source or the state file, and do not run `--help`; when `resolve` refuses `--text`, run it without it):
 
 ```
-puppet.py scout tick    --name N [--state "<cursor>"] [--reread]
+puppet.py scout tick    --name N [--state "<cursor>"] [--reread]   # no --state: the last one stays
 puppet.py scout alert   --name N --fingerprint <id:cause> --severity P0|P1|P2 [--kind gap] --text "<one line>"
 puppet.py scout resolve --name N --fingerprint <id:cause> [--text "<why>"]
 puppet.py scout show    --name N        # your state: never read scouts/<name>.json yourself
 puppet.py route                         # just before a send
 ```
 
-0. Schedule the next tick first (step 7), so a tick that hangs (for example across a machine sleep) does not break the chain. When the last tick was less than half an interval ago (a catch-up run after a wake), record `scout tick` and stop; the tick prints `EARLY` then, once the helpers have it. A tick your coordinator asked for runs in full.
+0. Schedule the next tick first (step 7), so a tick that hangs (for example across a machine sleep) does not break the chain. When the last tick was less than half an interval ago (a catch-up run after a wake), record `scout tick` and stop; the tick prints `EARLY` then, once the helpers have it. Until then, read `lastTick` in `scout show` before you start. A tick your coordinator asked for runs in full.
 1. Check every target with read-only tools only (scouts.md, "Permissions").
 2. For each problem: `puppet.py scout alert --coordinator <coord> --name <name> --fingerprint <id:cause> --severity P0|P1|P2 [--kind gap] --text "<one line, no secret>"`.
    It prints `NEW` or `ESCALATED` (send it), or `SEEN` (do not send it again).
@@ -92,7 +92,7 @@ puppet.py route                         # just before a send
 4. A stall is input that waits with no matching start, a stopped cursor, no
    consumers, or a growing backlog. Quiet output alone is not a stall: an
    on-demand system with no input is healthy (scouts.md, "Severity and routing").
-5. When a read of yours fails (expired credentials, a timeout, a denied query), you are blind: record it with `--kind gap` and send `GAP`. Never go silent.
+5. When a read of yours fails (expired credentials, a timeout, a denied query), you are blind: record it with `--kind gap` and send `GAP`. Never go silent. When your coordinator acknowledged the gap, probe that source again at most once an hour, with a timeout (for example `timeout 60`), not every tick.
 6. End every tick with `puppet.py scout tick --coordinator <coord> --name <name>`. Add `--state "<counters, coverage, cursor>"` when you keep a cursor or counters; each tick replaces it. Once a day add `--summary "<counts and the state of the open alerts>"`. Never put per-tick state in `--summary`. The coordinator and the dashboard see you only through this file.
    - When it prints `LATE <n>m`, you missed ticks: it names the window and the cursor you had then. Read that window again, record what it shows, then run `scout tick --reread`. When you cannot read it again (the data is gone, or access is blocked), send one GAP that names the window, then run `scout tick --reread`. Until you do, every tick prints `LATE` again. Say `LATE` in a message only when the window had an alert.
    - When it prints `SESSION`, this session is not the one the roster names for you (a new thread, or a move to another provider): send SCOUT JOIN again before the next tick (when the tick prints a `SCOUT JOIN` line under it, send that line as it is). A report of the mismatch in an UPDATE is not enough. When it prints `TWIN`, another session also ticks as you: tell your coordinator at once; one of you must stop.

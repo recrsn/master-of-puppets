@@ -15,7 +15,7 @@ deferred: load one by name before you call it.
 | Send a message | `t3_thread_send` by thread id ("Routes", below). It reaches every T3 Code thread, whatever its provider. |
 | Reach a Claude session in another host | Claude only: `SendMessage` and `ListAgents`, as in [claude-desktop.md](claude-desktop.md) |
 | Reach a Codex Desktop or Codex CLI thread | No app route: [README.md](README.md), "No shared route" |
-| Scheduled turn (heartbeat, scout tick) | `schedule_task`, bound to your thread; Claude may also use `CronCreate` or `ScheduleWakeup`. In Antigravity ACP, use `schedule_task` when present or its own `schedule` tool (`CronExpression` or `DurationSeconds`). A scheduled turn may not send by `t3_thread_send` ("Failures", below). |
+| Scheduled turn (heartbeat, scout tick) | `schedule_task`, bound to your thread; Claude may also use `CronCreate` or `ScheduleWakeup`. In Antigravity ACP, use `schedule_task` when present or its own `schedule` tool (`CronExpression` or `DurationSeconds`). A scheduled turn may not send by `t3_thread_send` ("Failures", below). Keep one schedule: note its `scheduledTaskId` and update that task in place. An overdue one-shot task (`nextRunAt` null) is still pending; never make a second one beside it. |
 | Watch a command | Claude: `Monitor`. Codex: as in [codex-desktop.md](codex-desktop.md), "Watchers". Antigravity ACP: `run_command` with `WaitMsBeforeAsync` (or `IsDaemon`), then `manage_task` to read it. `t3_background_wait` is not in every provider's set. |
 | Start a subagent | Claude `Agent`, Codex `collaboration.spawn_agent`, Antigravity ACP `invoke_subagent`, or `delegate_task` |
 | Start an independent session (coordinators only) | Ask the user first. On yes, `t3_thread_launch` with the enrollment line first in the prompt. Start each member at or below your own runtime mode ("Starting sessions", below). |
@@ -72,6 +72,7 @@ command in one plain shape so a prefix approval covers the next run:
 | `runtime_mode_escalation_denied` | The receiver runs in a higher runtime mode than the sender, as T3 Code sees it now | Do not work around it, and do not tell the user the mode as a fact. Check the receiver's `runtimeMode` in `t3_thread_list`, tell the user what you see, and retry once by thread id when the user says to |
 | "No agent named ..." | The display name changed | Look up the route again; send by thread id |
 | A socket `ENOENT` or "stale" | The session restarted | Look up the route again |
+| "automatic permission approval review did not finish before its deadline" | The approval reviewer timed out; nothing was sent | Retry once with the same `clientRequestId`. When it times out again, send with `puppet.py tell` |
 
 After one failed send, look up the route again and send once by the next
 route. After a second failure, tell the user and keep the message for the

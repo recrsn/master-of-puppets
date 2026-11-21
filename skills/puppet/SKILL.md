@@ -178,7 +178,7 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
   none. The coordinator checks on silent members each round, but your report
   is the record. A turn that a schedule started (a scheduled task, a cron)
   and that finds a change sends an UPDATE by your route, even when its
-  prompt has no send step: text in your own thread is not a report. A scheduled turn with no change sends nothing and ends with one line in your thread that says what you checked. It goes on the dashboard: keep
+  prompt has no send step: text in your own thread is not a report. A scheduled turn with no change sends nothing and ends with one line in your thread that says what you checked, for example "Checked #123 checks and the HUTCH queue: no change." It goes on the dashboard: keep
   the phase to 5 words and the fact to one plain sentence of 20 words. Write
   PRs as `#123`. No SHAs, test counts, paths or commands.
 - `MERGED — #<n> — <merge sha>` for each merged PR.
@@ -201,6 +201,16 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
   recommendation does not authorize you to delete the worktree.
 
 ## 5. Leases (only when WELCOME says leases are on)
+
+Command card (use these; do not guess commands or read the helper source):
+
+```
+puppet.py request <CLASS> --coordinator C --name N --minutes M --commands "..." --worktree W [--gib G] [--cpus K]
+puppet.py await-grant <CLASS> --id ID          # waits; prints QUEUED position, GRANTED, or TIMEOUT
+puppet.py extend <CLASS> --coordinator C --name N --id ID --minutes M --reason "..."
+puppet.py release <CLASS> --id ID --result pass|fail|partial [--note "..."]
+puppet.py events --id ID                       # what happened to your request or lease
+```
 
 1. Finish all edits first. Queue the request yourself; no message is needed:
    `puppet.py request <CLASS> --coordinator <coord> --name <name> --minutes <estimate> --commands "<exact commands>" --worktree <worktree> [--gib <n>] [--cpus <n>] [--what "<short label>"]`.
