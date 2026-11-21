@@ -110,7 +110,9 @@ class ScoutState(unittest.TestCase):
         self.assertIn("LATE 45m", out)
         self.assertIn("cursor then was: cursor 100", out)
         self.assertIn("LATE 45m", self.scout("tick"))  # a plain tick does not clear it
-        self.assertIn("read again", self.scout("tick", "--reread"))
+        out = self.scout("tick", "--reread")
+        self.assertIn("read again", out)
+        self.assertNotIn("EARLY", out)  # the reread closes this turn's LATE tick: it is no catch-up run
         self.assertNotIn("LATE", self.scout("tick"))
 
     def test_a_late_tick_that_starts_with_an_alert_still_says_late(self):
