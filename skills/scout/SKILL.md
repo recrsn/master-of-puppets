@@ -86,7 +86,7 @@ schedule: update your one schedule by its scheduledTaskId; never make a new one 
 sandbox: run each puppet.py line outside the sandbox on the first try, every tick (in it, each exits 77)
 ```
 
-0. Schedule the next tick first (step 7), so a tick that hangs (for example across a machine sleep) does not break the chain. When the last tick was less than half an interval ago (a catch-up run after a wake), record `scout tick` and stop; the tick prints `EARLY` then. A `tick --reread` after LATE in the same turn is never EARLY. A tick your coordinator asked for runs in full.
+0. Schedule the next tick first (step 7), so a tick that hangs (for example across a machine sleep) does not break the chain. When the last tick was less than half an interval ago (a catch-up run after a wake), record `scout tick` and stop; the tick prints `EARLY` then. A `tick --reread` after LATE in the same turn is never EARLY; another second tick in the same turn (to add `--state`) prints EARLY, and you go on. Run one tick per turn where you can, with `--state` on it. A tick your coordinator asked for runs in full.
 1. Check every target with read-only tools only (scouts.md, "Permissions").
 2. For each problem: `puppet.py scout alert --coordinator <coord> --name <name> --fingerprint <id:cause> --severity P0|P1|P2 [--kind gap] --text "<one line, no secret>"`.
    It prints `NEW` or `ESCALATED` (send it), or `SEEN` (do not send it again).

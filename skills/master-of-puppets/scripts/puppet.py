@@ -513,8 +513,9 @@ def scout_cmd(args):
         gap = (now() - dt.datetime.fromisoformat(last_cmd)).total_seconds() / 60 if last_cmd else None
         if gap is not None and gap < tick_min / 2 and not args.reread:  # --reread follows LATE in the same turn
             acts.append("EARLY")
-            warn += (f"\nEARLY: the last tick was {gap:.0f} min ago (tick {tick_min:g} min): a catch-up run after a wake; "
-                     "it is recorded; send nothing and stop this turn, unless your coordinator asked for this tick")
+            warn += (f"\nEARLY: the last tick was {gap:.0f} min ago (tick {tick_min:g} min). When this turn ran no tick "
+                     "before, it is a catch-up run after a wake: it is recorded; send nothing and stop this turn, unless your "
+                     "coordinator asked for this tick. When this turn already ran a tick, this one only updated it: go on")
         st["tickAt"] = t
         st["lastTick"] = t
         if args.state:
