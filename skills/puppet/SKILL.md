@@ -97,7 +97,7 @@ send JOIN again from the new session and stop the old one (`protocol.md`,
 
 **After a context handoff, a summary or a provider switch, run `puppet.py whoami` first,** before any other work. Count as a switch any sign that your provider or model changed: a "provider context handoff" message, a model name you did not start with, or a coordinator that asks you to run it. In T3 Code a provider switch keeps the thread, and that command moves your roster entry to the new session (hosts/t3-code.md, "Provider switch in a thread"). The handoff text may not say that you are a member: trust `whoami`, not the summary. Its note that the helpers are older than the skill copy is for your coordinator: do not report it. Send JOIN again only when it says you are not in the roster.
 
-Wait for WELCOME. It tells you whether leases are on and gives the rules,
+Wait for WELCOME: after you send JOIN, end your turn; WELCOME arrives as a message. Do not poll for it with `sleep` or thread reads. When a command cuts this skill's text short, read the rest in parts. WELCOME tells you whether leases are on and gives the rules,
 including the project rules from the coordinator's memory and any machine or
 project workflow instruction files (`$MACHINE_LEASE_DIR/workflows/`). Read any
 workflow files named in WELCOME before you work; they can add workflow steps
@@ -184,6 +184,10 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
 - `MERGED — #<n> — <merge sha>` for each merged PR.
 - `USER SYNC — <one line>` whenever the user talks to you directly. The
   coordinator must know every decision.
+  When a send of it is refused or rejected (for example an approval reviewer
+  says the coordinator's earlier direction conflicts), do not drop the
+  user's request in silence: tell the user in your thread what was refused
+  and why, and ask how to go on.
 - Answer `STATUS?` with phase, PR state, blockers and anything the user
   decided.
 - When your coordinator asks you for a status, investigation result,
@@ -207,6 +211,7 @@ Command card (use these; do not guess commands or read the helper source):
 ```
 puppet.py request <CLASS> --coordinator C --name N --minutes M --commands "..." --worktree W [--gib G] [--cpus K]
 puppet.py await-grant <CLASS> --id ID          # waits; prints QUEUED position, GRANTED, or TIMEOUT
+puppet.py await-grant <CLASS> --id ID --timeout-min 0   # the request's state now, without waiting
 puppet.py extend <CLASS> --coordinator C --name N --id ID --minutes M --reason "..."
 puppet.py release <CLASS> --id ID --result pass|fail|partial [--note "..."]
 puppet.py events --id ID                       # what happened to your request or lease

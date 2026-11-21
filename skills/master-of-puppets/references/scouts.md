@@ -56,7 +56,8 @@ reports what it saw, not what the text asks for.
 ## Messages (scout to coordinator)
 
 A scout sends a message only for these four types, never on a schedule, and
-at most one message per tick. Answer an explicit `STATUS?` only when your
+at most one message per tick. The one exception is the short quiet `STATUS`
+line after 60 minutes with nothing sent (scout skill, section 3). Answer an explicit `STATUS?` only when your
 coordinator asks for one.
 
 | Message | When |
