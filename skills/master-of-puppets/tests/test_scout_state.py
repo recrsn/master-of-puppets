@@ -123,7 +123,7 @@ class ScoutState(unittest.TestCase):
         alert = ("alert", "--fingerprint", "f1", "--severity", "P2", "--text", "x")
         self.assertIn("NEW", self.scout(*alert))
         self.assertIn("NOT YET", self.scout("resolve", "--fingerprint", "f1"))  # seen just now: not 2 clean ticks
-        self.age(seen=31)
+        self.age(seen=28)  # a scheduled tick starts a little early: 2 ticks less the slack counts
         self.assertIn("RESOLVED", self.scout("resolve", "--fingerprint", "f1"))
         self.assertIn("REOPENED", self.scout(*alert))
         self.age(seen=31)

@@ -82,6 +82,7 @@ Usage: python3 -I puppet.py <command> ...
 import argparse
 import datetime as dt
 import json
+import math
 import re
 import time
 import os
@@ -556,10 +557,11 @@ def scout_cmd(args):
     elif args.scmd == "resolve":
         cur = next((a for a in st["openAlerts"] if a["fingerprint"] == args.fingerprint), None)
         quiet = (now() - dt.datetime.fromisoformat(cur["lastSeen"])).total_seconds() / 60 if cur else 0
-        early = cur and quiet < 2 * tick_min  # the 2-clean-tick rule: one good read after a flaky one is not recovery
+        slack = max(2, 0.1 * tick_min)  # a scheduled tick starts a little early: exact 2 * tick_min failed every time
+        early = cur and quiet < 2 * tick_min - slack  # the 2-clean-tick rule: one good read after a flaky one is not recovery
         left = [a for a in st["openAlerts"] if a["fingerprint"] != args.fingerprint or early]
         out = (f"NOT YET: {args.fingerprint} was seen {quiet:.0f} min ago; resolve it after 2 clean ticks "
-               f"(in about {2 * tick_min - quiet:.0f} min); send nothing" if early
+               f"(in about {max(1, math.ceil(2 * tick_min - slack - quiet))} min); send nothing" if early
                else "RESOLVED: send UPDATE recovered" if len(left) < len(st["openAlerts"])
                else f"{args.fingerprint} is not open")
         if len(left) < len(st["openAlerts"]):
