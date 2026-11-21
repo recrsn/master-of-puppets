@@ -508,6 +508,13 @@ def scout_cmd(args):
         # kept until the next tick prints it: alert and resolve also move lastTick before the closing tick
         st["missed"] = {"from": prev, "to": t, "minutes": round(late), "cursor": (st.get("state") or {}).get("text")}
     if args.scmd == "tick":
+        last_cmd = st.get("tickAt")  # set by tick only: alert and resolve also move lastTick within one tick
+        gap = (now() - dt.datetime.fromisoformat(last_cmd)).total_seconds() / 60 if last_cmd else None
+        if gap is not None and gap < tick_min / 2:
+            acts.append("EARLY")
+            warn += (f"\nEARLY: the last tick was {gap:.0f} min ago (tick {tick_min:g} min): a catch-up run after a wake; "
+                     "it is recorded; send nothing and stop this turn, unless your coordinator asked for this tick")
+        st["tickAt"] = t
         st["lastTick"] = t
         if args.state:
             st["state"] = {"at": t, "text": args.state}

@@ -93,6 +93,8 @@ class ScoutState(unittest.TestCase):
         back = lambda iso, mins: (self.m.dt.datetime.fromisoformat(iso) - self.m.dt.timedelta(minutes=mins)).isoformat()
         if "tick" in fields:
             st["lastTick"] = back(st["lastTick"], fields["tick"])
+            if st.get("tickAt"):
+                st["tickAt"] = back(st["tickAt"], fields["tick"])
         if "seen" in fields:
             for a in st["openAlerts"]:
                 a["lastSeen"] = back(a["lastSeen"], fields["seen"])
@@ -134,7 +136,7 @@ class ScoutState(unittest.TestCase):
         self.assertNotIn("24 h", self.scout("tick"))
         self.age(seen=25 * 60)
         out = self.scout("tick")
-        self.assertIn("ACT: OLD×1", out.splitlines()[0])  # on line 1: a scout that cuts the output still sees it
+        self.assertIn("OLD×1", out.splitlines()[0].split("ACT:")[1])  # on line 1: a scout that cuts the output still sees it
         self.assertIn("1 not seen for 24 h", out)
         self.assertIn("\n  OLD old", out)
         self.assertNotIn("UNHANDLED", out)  # the first tick with the tag
@@ -147,6 +149,17 @@ class ScoutState(unittest.TestCase):
         self.scout("resolve", "--fingerprint", "old")
         self.assertNotIn("UNHANDLED", self.scout("tick"))  # acted on: the tag and its age are gone
 
+
+    def test_a_second_tick_soon_after_the_first_is_early(self):
+        self.assertNotIn("EARLY", self.scout("tick"))
+        self.scout("alert", "--fingerprint", "f1", "--severity", "P2", "--text", "x")  # moves lastTick, not tickAt
+        out = self.scout("tick")
+        self.assertIn("EARLY", out.splitlines()[0])
+        self.assertIn("send nothing", out)
+        st = self.m.read_json(self.m.scout_path("sc"))
+        st["tickAt"] = (self.m.now() - self.m.dt.timedelta(minutes=10)).isoformat()  # more than half of 15 min
+        self.m.write_json(self.m.scout_path("sc"), st)
+        self.assertNotIn("EARLY", self.scout("tick"))
 
 if __name__ == "__main__":
     unittest.main()
