@@ -670,6 +670,11 @@ def main(argv=None):
             x.add_argument("--text", help="why it is resolved (one line), kept with the resolution")
         if name == "paused":
             x.add_argument("--clear", action="store_true", help="sends work again")
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["status"]:  # members guess it from coordinator.py; point to the commands that exist
+        print("puppet.py has no status: your lease: await-grant CLASS --id ID --timeout-min 0; "
+              "the leases on this machine: events; your entry: whoami", file=sys.stderr)
+        return 2
     args = p.parse_args(argv)
     adopt_thread_identity()  # a provider switch in a T3 Code thread keeps the member's name
     note_member_route()

@@ -127,5 +127,13 @@ class Hosts(unittest.TestCase):
             self.m.version_warning()
         self.assertIn("tell the user", err.getvalue())  # the coordinator still gets the full warning
 
+    def test_status_names_the_commands_that_exist(self):
+        from contextlib import redirect_stderr
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(self.p.main(["status"]), 2)
+        self.assertIn("await-grant CLASS --id ID --timeout-min 0", err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

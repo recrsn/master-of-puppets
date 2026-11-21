@@ -83,6 +83,7 @@ puppet.py scout resolve --name N --fingerprint <id:cause> [--text "<why>"]
 puppet.py scout show    --name N        # your state: never read scouts/<name>.json yourself
 puppet.py route                         # just before a send
 schedule: update your one schedule by its scheduledTaskId; never make a new one each tick
+sandbox: run each puppet.py line outside the sandbox on the first try, every tick (in it, each exits 77)
 ```
 
 0. Schedule the next tick first (step 7), so a tick that hangs (for example across a machine sleep) does not break the chain. When the last tick was less than half an interval ago (a catch-up run after a wake), record `scout tick` and stop; the tick prints `EARLY` then. A `tick --reread` after LATE in the same turn is never EARLY. A tick your coordinator asked for runs in full.
