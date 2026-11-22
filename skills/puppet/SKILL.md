@@ -262,7 +262,7 @@ puppet.py events --id ID                       # what happened to your request o
    | `GRANTED` | 0 | Run. This is the only grant. Your coordinator also sends LEASE GRANTED with the expiry. |
    | `DENIED` | 4 | Do not run and do not retry. Ask your coordinator why. |
    | `LEFT-QUEUE` | 3 | Do not run. Ask your coordinator. |
-   | `TIMEOUT` | 5 | Do not run. You are still queued (or not queued yet): run `await-grant` again. |
+   | `TIMEOUT` | 5 | Do not run. You are still queued (or not queued yet): run `await-grant` again. With nothing else to do, wait with the default timeout (30 min), not `--timeout-min 1` in a loop: each short poll costs a turn and changes nothing. |
    | `NEVER-QUEUED` | 6 | Do not run. Check the id with your coordinator. |
 
    **Run only on exit 0.** Gate the command on the exit code of the bare
