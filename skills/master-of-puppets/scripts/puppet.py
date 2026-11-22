@@ -71,6 +71,7 @@ Usage: python3 -I puppet.py <command> ...
        When the class has a recycle command, release then resets the resource (it stays busy until
        done) and logs `resource recycled ... free=N GiB`; a failed reset destroys it with the class's
        delete command and logs `resource destroyed ... reason="..."`.
+       A request not granted yet is withdrawn instead: WITHDRAWN, event `unwait CLASS ID by=member`.
   scout tick|alert|resolve|paused|show [--coordinator C] --name NAME ...   (scouts only)
        a scout's own watch state file, scouts/NAME.json, which C's heartbeat and the dashboard read.
        tick [--state TEXT] [--summary TEXT]: a check (QUIET ticks, the tick state and the daily summary go here, never in a message).
@@ -359,6 +360,13 @@ def release(args):
         state, machine = load(), load_machine()
         holders = state[args.cls]
         if not any(h["id"] == args.id for h in holders):
+            queue = state["queue"][args.cls]
+            if any(q["id"] == args.id for q in queue):  # never granted: withdraw the request; nothing ran
+                state["queue"][args.cls] = [q for q in queue if q["id"] != args.id]
+                save(state, machine)
+                log(f"unwait {args.cls} {args.id} by=member")
+                print(f"WITHDRAWN {args.cls} {args.id}: removed from the queue; no lease was granted")
+                return 0
             print(f"{args.cls} not held by {args.id}: {json.dumps(holders)}")
             return 3
         peak, cores = args.peak_gib, args.peak_cpus

@@ -213,7 +213,7 @@ puppet.py request <CLASS> --coordinator C --name N --minutes M --commands "..." 
 puppet.py await-grant <CLASS> --id ID          # waits; prints QUEUED position, GRANTED, or TIMEOUT
 puppet.py await-grant <CLASS> --id ID --timeout-min 0   # the request's state now, without waiting
 puppet.py extend <CLASS> --coordinator C --name N --id ID --minutes M --reason "..."
-puppet.py release <CLASS> --id ID --result pass|fail|partial [--note "..."]
+puppet.py release <CLASS> --id ID --result pass|fail|partial [--note "..."]   # a request not granted yet: WITHDRAWN
 puppet.py events --id ID                       # what happened to your request or lease
 ```
 
@@ -252,8 +252,8 @@ puppet.py events --id ID                       # what happened to your request o
    same id; your coordinator sees the change. On `LEASE RESIZE`, do the same,
    or send `LEASE SIZE` with your reason. You cannot set a priority or
    jump the queue. When the user wants your task to go first, send it as
-   `USER SYNC`; the coordinator decides. To drop a queued request, ask your
-   coordinator.
+   `USER SYNC`; the coordinator decides. To drop a request that was not
+   granted yet, run `release` with its id: it prints `WITHDRAWN`.
 2. Start waiting at once: `puppet.py await-grant <CLASS> --id <id>`. It ends
    with one final line, and each line has its own exit code:
 

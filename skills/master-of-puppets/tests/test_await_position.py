@@ -60,5 +60,16 @@ class AwaitPosition(unittest.TestCase):
         self.assertEqual(lines[2], "GRANTED BUILD me-1")
 
 
+    def test_release_withdraws_a_request_not_granted_yet(self):
+        args = types.SimpleNamespace(cls=CLASS, id="me-1", peak_gib=None, peak_cpus=None, retire_vm=None,
+                                     result="pass", note=None)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(self.p.release(args), 0)
+        self.assertIn("WITHDRAWN BUILD me-1", out.getvalue())
+        self.assertEqual([q["id"] for q in self.m.load()["queue"][CLASS]], ["x-1", "x-2"])
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(self.p.release(args), 3)  # neither held nor queued
+
 if __name__ == "__main__":
     unittest.main()
