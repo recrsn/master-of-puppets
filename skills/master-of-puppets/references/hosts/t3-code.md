@@ -110,3 +110,6 @@ When the Codex sandbox refuses `puppet.py` and escalation is refused too, the
 member cannot record its own state. A scout then puts its tick result in its
 UPDATE (once per tick that changed something), and the coordinator records
 each report with `member update`. That keeps the scout live in `member stale`.
+A thread whose runtime mode does not allow escalation (for example `auto`)
+refuses every helper call: only the user can change the thread's mode. Ask
+the user once; until they do, use the UPDATE path above.
