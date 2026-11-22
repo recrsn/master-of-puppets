@@ -213,7 +213,7 @@ puppet.py request <CLASS> --coordinator C --name N --minutes M --commands "..." 
 puppet.py await-grant <CLASS> --id ID          # waits; prints QUEUED position, GRANTED, or TIMEOUT
 puppet.py await-grant <CLASS> --id ID --timeout-min 0   # the request's state now, without waiting
 puppet.py extend <CLASS> --coordinator C --name N --id ID --minutes M --reason "..."
-puppet.py release <CLASS> --id ID --result pass|fail|partial [--note "..."]   # a request not granted yet: WITHDRAWN
+puppet.py release <CLASS> --id ID --result pass|fail|partial [--note "..."]   # a request not granted yet: no --result; WITHDRAWN
 puppet.py events --id ID                       # what happened to your request or lease
 ```
 

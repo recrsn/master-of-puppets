@@ -60,7 +60,7 @@ Usage: python3 -I puppet.py <command> ...
        replies LEASE EXTENDED or tells you to release.
        exit 0 asked, 2 the lease would run longer than the class limit (release it and
        request the rest), 3 refused: not a member of C, not your lease, or not held
-  release [CLASS] --id ID --result pass|fail|partial [--note TEXT] [--peak-gib N] [--peak-cpus N]
+  release [CLASS] --id ID [--result pass|fail|partial] [--note TEXT] [--peak-gib N] [--peak-cpus N]
           [--port N ...] [--process PATTERN ...] [--ignore-pid PID ...]
        release your own lease, never another's; records its run minutes and peaks, then
        counts what the run left in the lease's worktree (agent session processes, bare
@@ -71,7 +71,7 @@ Usage: python3 -I puppet.py <command> ...
        When the class has a recycle command, release then resets the resource (it stays busy until
        done) and logs `resource recycled ... free=N GiB`; a failed reset destroys it with the class's
        delete command and logs `resource destroyed ... reason="..."`.
-       A request not granted yet is withdrawn instead: WITHDRAWN, event `unwait CLASS ID by=member`.
+       A request not granted yet is withdrawn instead (no --result): WITHDRAWN, event `unwait CLASS ID by=member`.
   scout tick|alert|resolve|paused|show [--coordinator C] --name NAME ...   (scouts only)
        a scout's own watch state file, scouts/NAME.json, which C's heartbeat and the dashboard read.
        tick [--state TEXT] [--summary TEXT]: a check (QUIET ticks, the tick state and the daily summary go here, never in a message).
@@ -369,6 +369,9 @@ def release(args):
                 return 0
             print(f"{args.cls} not held by {args.id}: {json.dumps(holders)}")
             return 3
+        if not args.result:
+            print("release of a held lease needs --result pass|fail|partial", file=sys.stderr)
+            return 2
         peak, cores = args.peak_gib, args.peak_cpus
         files = [os.path.join(PEAKS, f"{args.id}.{ext}") for ext in ("gib", "cpus")]
         if peak is None:
@@ -648,7 +651,7 @@ def main(argv=None):
                    "again, and the pool deletes it. A plain --result fail keeps it when its health check passes")
     r.add_argument("--peak-gib", type=float, help="measured peak; default: peaks/<id>.gib from measure-peak")
     r.add_argument("--peak-cpus", type=float, help="measured peak cores; default: peaks/<id>.cpus from measure-peak")
-    r.add_argument("--result", required=True, choices=("pass", "fail", "partial"), help="the outcome of the granted commands")
+    r.add_argument("--result", choices=("pass", "fail", "partial"), help="the outcome of the granted commands (required for a held lease)")
     r.add_argument("--note", help="one short line, for example 'pushed #123' or the first failure")
     r.add_argument("--port", type=int, action="append", help="also check for listeners on this port (E2E)")
     r.add_argument("--process", action="append", help="also count processes matching this pattern (pgrep -f)")

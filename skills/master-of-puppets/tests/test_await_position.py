@@ -62,7 +62,7 @@ class AwaitPosition(unittest.TestCase):
 
     def test_release_withdraws_a_request_not_granted_yet(self):
         args = types.SimpleNamespace(cls=CLASS, id="me-1", peak_gib=None, peak_cpus=None, retire_vm=None,
-                                     result="pass", note=None)
+                                     result=None, note=None)
         out = io.StringIO()
         with redirect_stdout(out):
             self.assertEqual(self.p.release(args), 0)
@@ -70,6 +70,11 @@ class AwaitPosition(unittest.TestCase):
         self.assertEqual([q["id"] for q in self.m.load()["queue"][CLASS]], ["x-1", "x-2"])
         with redirect_stdout(io.StringIO()):
             self.assertEqual(self.p.release(args), 3)  # neither held nor queued
+        self.edit(lambda st: st[CLASS].append(st["queue"][CLASS].pop(0)))
+        args.id = "x-1"
+        from contextlib import redirect_stderr
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(self.p.release(args), 2)  # a held lease still needs --result
 
 if __name__ == "__main__":
     unittest.main()
