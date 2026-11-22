@@ -72,7 +72,7 @@ Usage: python3 -I puppet.py <command> ...
        done) and logs `resource recycled ... free=N GiB`; a failed reset destroys it with the class's
        delete command and logs `resource destroyed ... reason="..."`.
        A request not granted yet is withdrawn instead (no --result): WITHDRAWN, event `unwait CLASS ID by=member`.
-  scout tick|alert|resolve|paused|show [--coordinator C] --name NAME ...   (scouts only)
+  scout tick|alert|resolve|note|paused|show [--coordinator C] --name NAME ...   (scouts only)
        a scout's own watch state file, scouts/NAME.json, which C's heartbeat and the dashboard read.
        tick [--state TEXT] [--summary TEXT]: a check (QUIET ticks, the tick state and the daily summary go here, never in a message).
        alert --fingerprint F --severity P0|P1|P2 [--kind alert|gap] --text TEXT: prints NEW or
@@ -583,6 +583,10 @@ def scout_cmd(args):
                 st["resolvedWhy"] = {f: w for f, w in st["resolvedWhy"].items() if f in st["resolved"]}
         st["openAlerts"] = left
         st["lastTick"] = t
+    elif args.scmd == "note":  # add to the state between ticks (a coordinator's REGISTER, say): no tick, so no EARLY
+        old = (st.get("state") or {}).get("text") or ""
+        st["state"] = {"at": t, "text": f"{old} | {args.text}" if old else args.text}
+        out = f"state: {st['state']['text']}\nno tick recorded; the next tick --state replaces it, so carry what still matters"
     elif args.scmd == "paused":
         if args.clear:
             st.pop("pausedSince", None)
@@ -663,7 +667,7 @@ def main(argv=None):
     scs = sc.add_subparsers(dest="scmd", required=True)
     for name, what in (("tick", "record a check; QUIET ticks go here only"), ("alert", "open or refresh an alert; prints whether to send it"),
                        ("resolve", "close an alert; prints whether to send UPDATE"), ("paused", "a send returned Paused"),
-                       ("show", "print the state file")):
+                       ("show", "print the state file"), ("note", "add a line to the state without a tick")):
         x = scs.add_parser(name, help=what)
         x.add_argument("--coordinator", help="default: the one coordinator whose roster has you as a scout")
         x.add_argument("--name", required=True, help="your scout name")
@@ -680,6 +684,8 @@ def main(argv=None):
             x.add_argument("--text", required=True, help="one line; the location of a secret, never its value")
         if name == "resolve":
             x.add_argument("--text", help="why it is resolved (one line), kept with the resolution")
+        if name == "note":
+            x.add_argument("--text", required=True, help="one line added to the state; never a secret")
         if name == "paused":
             x.add_argument("--clear", action="store_true", help="sends work again")
     argv = sys.argv[1:] if argv is None else argv

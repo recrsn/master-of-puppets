@@ -163,5 +163,14 @@ class ScoutState(unittest.TestCase):
         self.m.write_json(self.m.scout_path("sc"), st)
         self.assertNotIn("EARLY", self.scout("tick"))
 
+    def test_a_note_adds_to_the_state_without_a_tick(self):
+        self.scout("tick", "--state", "cursor 100")
+        tick_at = self.m.scout_state("sc")["tickAt"]
+        out = self.scout("note", "--text", "REGISTER #7")
+        self.assertIn("cursor 100 | REGISTER #7", out)
+        st = self.m.scout_state("sc")
+        self.assertEqual((st["tickAt"], st["state"]["text"]), (tick_at, "cursor 100 | REGISTER #7"))
+        self.assertNotIn("EARLY", out)
+
 if __name__ == "__main__":
     unittest.main()

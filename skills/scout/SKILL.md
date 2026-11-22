@@ -81,6 +81,7 @@ puppet.py scout tick    --name N [--state "<cursor>"] [--reread]   # no --state:
 puppet.py scout alert   --name N --fingerprint <id:cause> --severity P0|P1|P2 [--kind gap] --text "<one line>"
 puppet.py scout resolve --name N --fingerprint <id:cause> [--text "<why>"]
 puppet.py scout show    --name N        # your state: never read scouts/<name>.json yourself
+puppet.py scout note    --name N --text "<line>"   # add to your state between ticks (a REGISTER, say): no tick, no jq
 puppet.py route                         # just before a send
 schedule: update your one schedule by its scheduledTaskId; never make a new one each tick
 sandbox: run each puppet.py line outside the sandbox on the first try, every tick (in it, each exits 77)
