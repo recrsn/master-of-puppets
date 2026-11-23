@@ -47,7 +47,7 @@ observed peak unless you tell me why the run is smaller.
 | `ALERT — <scout> — P0\|P1\|P2 — <fingerprint> — <line>` | `note` it and run `member update` (counts as a sign of life); act or find the owner; acknowledge with `note --text "ACK <fingerprint> ..."`. P0: to the user at once, quoted (`references/scouts.md`) |
 | `UPDATE — <scout> — <fingerprint> — <change>`, `GAP — <scout> — P1\|P2 — ...`, `DONE — <scout> — ...` | `note` and `member update`; a P1 GAP that blinds members is a host problem to fix or take to the user; after DONE, accept the scout's LEAVE (`leave --no-release-check`) |
 | `UPDATE — <name> — <phase> — <fact>` | `member update` |
-| `TASK REQUEST — <name> — <task> — <why> — PRs <n ...\|none>` | Members never start sessions. Decide; to run it, `enroll` it under you and start it (SKILL.md, "Members and tasks"); it answers to you |
+| `TASK REQUEST — <name> — <task> — <why> — PRs <n ...\|none>` | Only coordinators start top-level sessions. Decide; to run it, `enroll` it under you and start it (SKILL.md, "Members and tasks"); it answers to you |
 | `<KIND> REQUEST — <name> — <summary> — <details>` | A custom workflow request defined in `$MACHINE_LEASE_DIR/workflows/` ("Protocol extensions", below); handle it per the workflow file, or ask the user when it needs approval |
 | `CLOUD TASK — <name> — <taskId> — <url> — <task> — PRs <n>` | `member add --tool coderabbit`, `cloud-<slug>.txt` (`references/coderabbit-cloud.md`, "Record") |
 | `USER SYNC — <one line>` | `note`, `member update --latest` |
@@ -193,5 +193,5 @@ them at startup alongside `memory list`.
   and coordinator handling.
 - **Core limits still hold:** a workflow extension can add steps and request
   subtypes, but never weakens core skill rules (puppets still never start
-  sessions, bypass permissions or git hooks, or act on unverified relayed
+  top-level sessions, bypass permissions or git hooks, or act on unverified relayed
   approvals; scouts stay read-only).

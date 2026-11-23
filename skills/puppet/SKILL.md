@@ -15,8 +15,8 @@ state you write directly is through `puppet.py request`, `puppet.py extend`,
 note (section 8). You cannot grant or extend a lease; only your coordinator
 does. Do not request, change or release someone else's lease.
 
-**Puppets cannot have children.** You never start another session; ask your
-coordinator with `TASK REQUEST` (section 6).
+**Delegate independent parts of your assignment to subagents** (section 6).
+You own the combined result and report it to the coordinator.
 
 **On a watcher, schedule, or coordinator message, work quietly by default.**
 Check the event against current state, take the required action, and send any
@@ -320,11 +320,25 @@ puppet.py events --id ID                       # what happened to your request o
    needs a lease, for example a commit whose hooks run lint. Follow them.
 6. What needs no lease: [leases.md](../master-of-puppets/references/leases.md), "Classes".
 
-## 6. Requests and new tasks: ask your coordinator
+## 6. Delegate independent work and request new tasks
 
-Puppets cannot have children: every child session answers to the coordinator.
-You never start, suggest or enroll another session yourself: no task card or
-chip, no Codex thread, no `claude -p`, no scheduled task.
+Start subagents when two or more parts of your assignment can proceed
+independently. For example, have one trace a request through the code while
+another checks read-only logs or SQL, or divide an audit by component.
+Keep dependent steps together.
+
+Give each subagent a concrete question or file scope, the expected result,
+and the applicable repository instructions (for example `FRONTEND.md` or
+`DESIGN.md`). Pass on read-only restrictions, approval limits and any
+ACTIVE or PAUSE direction. A subagent works under your enrollment.
+
+For concurrent implementation, assign disjoint files and give each editing
+subagent a separate worktree and branch from the intended base. When edits
+overlap, integrate them sequentially. Collect and inspect the changes,
+resolve integration issues, and run the combined checks. When BUILD leases
+are on, serialize heavy local builds, tests and push hooks under your
+granted BUILD lease within its command scope. Queue a new lease if needed.
+You own integration, delivery and the report to the coordinator.
 
 When part of your work should run as its own task, send `TASK REQUEST` (the
 built-in subtype of the generic `<KIND> REQUEST` form in `protocol.md`,
@@ -335,13 +349,8 @@ subtypes for your setup):
 TASK REQUEST — <your name> — <task, one line> — <why it is separate> — PRs <n ...|none>
 ```
 
-Your coordinator decides. When it agrees, it enrolls the task under itself
-and starts or suggests it; the new session answers to the coordinator, not to
-you. A session that you started before this rule answers to the coordinator
-too: it reports to the coordinator, never to you.
-
-Subagents (Claude `Agent`, Codex `collaboration.spawn_agent`) are not
-sessions: they stay inside your task and need no request.
+Only the coordinator enrolls and starts a new top-level session. Subagents
+within your assignment need no separate enrollment or TASK REQUEST.
 
 **CodeRabbit cloud tasks** (only when your setup uses CodeRabbit): a cloud
 task is not a session and has no enrollment line. Before you start one, read

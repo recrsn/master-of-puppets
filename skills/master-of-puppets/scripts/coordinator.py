@@ -197,7 +197,7 @@ Roster and members (coordinators write; members send messages, and request and r
        round runs it as its streams section.
   enroll --task TEXT [--by MEMBER] [--name NAME] [--pr N ...] [--stream SLUG] [--priority N] [--role scout]
        registers a task before it starts and prints the kickoff line for its prompt. Only
-       coordinators start sessions (puppets cannot have children); --by records the member
+       coordinators start top-level sessions; --by records the member
        whose TASK REQUEST it answers. The task answers to C, not to that member
   join --text "JOIN — ..." [--local local_ID] [--repo owner/repo] [--project-root P] [--dry-run]
        parses a member's JOIN line (name, tool and id, worktree, task, PRs, phase, commands,
@@ -218,7 +218,7 @@ Roster and members (coordinators write; members send messages, and request and r
        --role scout: a read-only watcher (references/scouts.md); it needs --target-class. Scout
        names are unique on the machine. member stale reports a scout with no tick for 2 ticks,
        or one that is paused or has an open P0, from its scouts/NAME.json
-       --parent: a member that started this session before puppets lost children (a record
+       --parent: a member that started this session outside coordinator enrollment (a record
        only; the member answers to C). On add, it takes over a pending entry of that parent
        with the same --session-id, else the same --task, else its only one
        --priority: the task's priority (default 0; higher first, below 0 for background
@@ -921,14 +921,14 @@ def kickoff_line(coord, name, parent, role="puppet"):
         return (
             f"{SCOUT_MARK} — {coord} has enrolled you as scout {name}{by}. "
             f"You must enroll: your first action is to run /scout and send {coord} your SCOUT JOIN message as {name}, before any other work; "
-            f"then watch and report to {coord}. You are read only: never implement, never hold a lease, and never start another session "
+            f"then watch and report to {coord}. You are read only: never implement, never hold a lease, and never start another top-level session "
             f"(ask {coord} with TASK REQUEST)."
         )
     with_parent = ""  # every session answers to its coordinator: JOIN says parent none
     return (
         f"{KICKOFF_MARK} — {coord} has enrolled you as member {name}{by}. "
         f"You must enroll: your first action is to run /puppet and send {coord} your JOIN message as {name}{with_parent}, before any other work; "
-        f"then follow {coord}'s directions. Never start another session yourself: ask {coord} with "
+        f"then follow {coord}'s directions. Start subagents for independent work. For a top-level session, ask {coord} with "
         f"TASK REQUEST (the puppet skill, section 6)."
     )
 
@@ -1219,9 +1219,9 @@ def roster_cmd(args):
         print(f"{args.parent} is not a member of {args.coordinator}")
         return 3
     if args.mcmd == "add" and args.parent and args.parent != args.coordinator:
-        # Puppets cannot have children (machine rule m-0a2948). The session already runs, so add it (it answers to
+        # Only coordinators enroll top-level sessions. The session already runs, so add it (it answers to
         # the coordinator), but say who broke the rule, so the coordinator tells that member.
-        warn = (f"rule break: member {args.parent} started {args.name}; puppets cannot have children (m-0a2948). "
+        warn = (f"rule break: member {args.parent} started {args.name}; only coordinators start top-level sessions. "
                 f"{args.name} answers to {args.coordinator}; tell {args.parent} to send TASK REQUEST next time")
         print(f"warning: {warn}", file=sys.stderr)
         log(f"child-rule-break {args.coordinator} parent={args.parent} child={args.name}")

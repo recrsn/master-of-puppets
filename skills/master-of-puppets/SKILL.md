@@ -19,11 +19,9 @@ write product code.
   grants. The coordinator records every enrollment, member and task update in
   the roster and on the dashboard.
 - **Enrollment is voluntary, except for sessions you start.** A session joins
-  by running `/puppet` (the member skill). Only a coordinator starts sessions:
-  puppets cannot have children, and every child session answers to the
-  coordinator. Every session a coordinator starts has the enrollment line first
-  in its prompt and answers to the coordinator; subagents stay part of their
-  parent's enrollment.
+  by running `/puppet` (the member skill). Only the coordinator starts top-level sessions.
+  Put the enrollment line first in each session's prompt. A member's
+  subagents work under that member's enrollment.
 - **Leases are optional** and machine-wide. Classes are any shared action:
   BUILD and E2E by default, others added with `config set-class`. Turn leases
   on only on the user's word, for example when heavy jobs overlap and the host
@@ -210,8 +208,7 @@ message and prints your host's app route to send it by; send it there.
 - **JOIN** arrives: `coordinator.py join --text "<the JOIN line>" [--local <local_ id>]`
   (it runs `member add`, saves the WELCOME to a file and prints the short
   message and app route that deliver it; send that message at once). A JOIN that names a
-  member as `parent` comes from a session that member started before puppets
-  lost children: record it under you as any other member; it answers to you.
+  member as `parent` still belongs to your roster and answers to you.
 - **Scouts** are read-only members that watch one target (production
   signals, a release, the host and credentials, PRs, security or member
   compliance) and report. Start one with `coordinator.py enroll --role scout
@@ -240,14 +237,16 @@ message and prints your host's app route to send it by; send it there.
   enrollment.
 - **Where new work goes**, in this order:
   1. The member that owns the stream (`who --text`, `roster`): send it the
-     work. Do not start a session for work an owner can take.
+     work. Ask the owner to start subagents for independent investigations or
+     disjoint implementation slices and to integrate their results. Follow
+     [puppet section 6](../puppet/SKILL.md#6-delegate-independent-work-and-request-new-tasks)
+     for checkout isolation, project rules and BUILD leases.
   2. Ephemeral or parallel work with an end: a delegated child (a subagent or
      a delegated task), not a new top-level session.
   3. A workstream that no owner covers: one new top-level session, enrolled
      with its own `--stream`. Never start several for one stream; when
      streams overlap, merge them and hand the work to one owner.
-- **TASK REQUEST and `<KIND> REQUEST`**: members never start sessions
-  themselves; on `TASK REQUEST — <member> — <task> — <why> — PRs ...`, decide,
+- **TASK REQUEST and `<KIND> REQUEST`**: only coordinators start top-level sessions; on `TASK REQUEST — <member> — <task> — <why> — PRs ...`, decide,
   and when it should run, enroll and start it as above (the new session answers
   to you, not to the member). Machine or project workflow files
   (`$MACHINE_LEASE_DIR/workflows/`) may define additional `<KIND> REQUEST`
