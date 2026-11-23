@@ -108,18 +108,13 @@ Keep a QUIET tick small: put your reads in one script of your own, outside
 the repository, and run it with one call, then `scout tick`. A tick that
 makes many tool calls in a long session costs a lot of context.
 
-Before each send, run `puppet.py route` and send by its first route. A route
-written in your scheduled prompt or remembered from an earlier tick can be
-stale. When that send fails, use the next route, then `puppet.py tell`.
-
 Send at most one message per tick. When several items are new, put them in
 one message, with the worst first. A QUIET tick sends nothing. Answer
 `STATUS?` only when your coordinator explicitly asks for one, never on a
 schedule.
 
-A send from a scheduled tick can fail where a send from a user turn works
-(see your host guide, "Failures"). That is a failed send: use the next route
-at once, and note which route worked when you next report.
+For a failed scheduled send, follow Protocol routes and your host guide's
+“Failures” section. Note which route worked in your next report.
 
 ## 3. Messages
 

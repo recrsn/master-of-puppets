@@ -18,18 +18,24 @@ does. Do not request, change or release someone else's lease.
 **Puppets cannot have children.** You never start another session; ask your
 coordinator with `TASK REQUEST` (section 6).
 
+**On a watcher, schedule, or coordinator message, work quietly by default.**
+Check the event against current state, take the required action, and send any
+required protocol report to the coordinator. End the turn quietly if the user
+has nothing new to act on or learn under
+[Reporting to the user](../master-of-puppets/SKILL.md#reporting-to-the-user).
+This applies to progress commentary as well as the final reply. For example,
+a passing check on an older head or a notification about an already-resolved
+thread needs no local preamble, check tally, or recap. Answer a direct human
+question in this thread even when the answer is “still waiting.”
+
 **Find your host first** ([hosts/README.md](../master-of-puppets/references/hosts/README.md),
 "Find your host"; run `puppet.py host`), then read only your host's guide.
-The host (T3 Code, Claude Desktop, the Claude Code CLI, Codex Desktop or the
-Codex CLI), not the provider, decides your tools to send, schedule and start
-work. Never assume `SendMessage` or another host's tool. The "Routes" section
-of [protocol.md](../master-of-puppets/references/protocol.md) says how to
-message your coordinator.
+Run `puppet.py route` before each send. Use the verified destination and
+failure handling in [Protocol routes](../master-of-puppets/references/protocol.md#routes)
+for JOIN and all later messages. Use only member routes. Direct writes to
+the shared inbox, including through helper modules, bypass member identity.
 
 Below, `puppet.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/puppet.py"`.
-To reach your coordinator, run `puppet.py route` just before each send (not
-on a turn that sends nothing) and use the first route that works (protocol.md, "Routes" says what to do when a send
-fails).
 In a sandboxed session (Codex, Antigravity ACP), run every `puppet.py` call
 outside the sandbox from the first try, `host` included: inside it, each one
 fails. In a shell, define it as a function, not a variable (zsh does not split a
@@ -80,24 +86,14 @@ When your task is background work (a sweep, or a run that a schedule
 started), start `<task>` with `sweep:` or `scheduled:` in JOIN. The
 coordinator can then put regular work first.
 
-Send it, and every later message (UPDATE, MERGED, USER SYNC, STATUS replies,
-TASK REQUEST, LEASE SIZE, LEASE RELEASED, IDLE, LEAVE), by the app route
-that your host and your coordinator's host share (`protocol.md`, "Routes"). Never use `coordinator.py send`
-and never write shared inbox records, even with `--no-direct`; the one
-exception is `puppet.py tell`, when no app route works. Never import the
-helper modules (`moplib`) to send a message.
-
-When a send is refused or rejected (for example an approval reviewer says the
-destination is not trusted), do not go quiet. Run `puppet.py route`, send once
-by the route it prints, and if that fails too, use `puppet.py tell`. Answer a
-coordinator's request by one of these routes, never only in your own thread. Outside T3 Code, when your session id
+Outside T3 Code, when your session id
 changes (a `/clear`, a new thread, or a move from Claude to Codex or back),
 send JOIN again from the new session and stop the old one (`protocol.md`,
 "Routes").
 
 **After a context handoff, a summary or a provider switch, run `puppet.py whoami` first,** before any other work. Count as a switch any sign that your provider or model changed: a "provider context handoff" message, a model name you did not start with, or a coordinator that asks you to run it. In T3 Code a provider switch keeps the thread, and that command moves your roster entry to the new session (hosts/t3-code.md, "Provider switch in a thread"). The handoff text may not say that you are a member: trust `whoami`, not the summary. Its note that the helpers are older than the skill copy is for your coordinator: do not report it. Send JOIN again only when it says you are not in the roster.
 
-Wait for WELCOME: after you send JOIN, end your turn; WELCOME arrives as a message. Do not poll for it with `sleep` or thread reads. When a command cuts this skill's text short, read the rest in parts. WELCOME tells you whether leases are on and gives the rules,
+Wait for WELCOME: after you send JOIN, end your turn; WELCOME arrives as a message. Do not poll for it with `sleep` or thread reads. WELCOME tells you whether leases are on and gives the rules,
 including the project rules from the coordinator's memory and any machine or
 project workflow instruction files (`$MACHINE_LEASE_DIR/workflows/`). Read any
 workflow files named in WELCOME before you work; they can add workflow steps
@@ -169,18 +165,19 @@ Limits: no admin merge or merge bypass, and never skip git hooks.
 
 ## 4. Report
 
-These reports go to your coordinator. Keep the recurring updates and STATUS
-replies below; they do not require a matching user-facing update. For reports
-to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#reporting-to-the-user).
+Send reports through your coordinator route. Check who originated the turn:
+a host can deliver a coordinator request in a message labeled “user.”
 
-- `UPDATE — <name> — <phase> — <newest fact>` on each change, and at least
-  every 30 minutes while you work. While you are idle (section 7), send
-  none. The coordinator checks on silent members each round, but your report
-  is the record. A turn that a schedule started (a scheduled task, a cron)
-  and that finds a change sends an UPDATE by your route, even when its
-  prompt has no send step: text in your own thread is not a report. A scheduled turn with no change sends nothing and ends with one line in your thread that says what you checked, for example "Checked #123 checks and the HUTCH queue: no change." It goes on the dashboard: keep
-  the phase to 5 words and the fact to one plain sentence of 20 words. Write
-  PRs as `#123`. No SHAs, test counts, paths or commands.
+- Send `UPDATE — <name> — <phase> — <newest fact>` when the work changes
+  phase, a blocker changes, or a result affects the next step. While actively
+  working, send a heartbeat UPDATE at least every 30 minutes. Idle members
+  send none (section 7).
+- On a scheduled wake, send any due report even if the wake prompt omits the
+  send step. Otherwise finish quietly. Sending a report also completes the
+  reporting step; do not copy it into local chat.
+- The UPDATE appears on the dashboard. Keep its phase to five words and its
+  fact to one plain sentence of at most 20 words. Use `#123` for a PR. Omit
+  SHAs, test counts, paths and commands from this message.
 - `MERGED — #<n> — <merge sha>` for each merged PR.
 - `USER SYNC — <one line>` whenever the user talks to you directly. The
   coordinator must know every decision.
@@ -190,19 +187,9 @@ to the user, follow [Reporting to the user](../master-of-puppets/SKILL.md#report
   and why, and ask how to go on.
 - Answer `STATUS?` with phase, PR state, blockers and anything the user
   decided.
-- When your coordinator asks you for a status, investigation result,
-  recommendation, or other deliverable, send the requested answer directly
-  to the coordinator before ending your turn, even if the request arrives as
-  a user message in your thread and uses no protocol keyword. When the work
-  takes longer than the turn, send a partial answer with what is left and
-  when you expect it; never end the turn with no answer. Use the
-  verified originating thread when available, or the coordinator's verified
-  roster route (`protocol.md`, "Routes"). A final reply in your own thread
-  does not deliver the answer. Preserve the requested format and action
-  limits. Check the send result, and report any delivery failure.
-  Example: for a disk-cleanup request, send one line per worktree with what
-  it contains, whether it is still needed, and push or discard. A discard
-  recommendation does not authorize you to delete the worktree.
+- Deliver requested results to the coordinator before ending the turn, using
+  Protocol routes above. If work continues, send what is ready, what remains
+  and when you expect it.
 
 ## 5. Leases (only when WELCOME says leases are on)
 

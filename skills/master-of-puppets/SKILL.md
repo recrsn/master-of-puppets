@@ -1,6 +1,6 @@
 ---
 name: master-of-puppets
-description: Coordinate local Claude and Codex sessions and take their PR stacks to MERGED. One coordinator owns the streams, watches PRs and messages, checks members on scheduled heartbeats, moves stacks bottom-up, and runs a roster, ledger and live host/status dashboard. Optional machine-wide leases for builds, E2E or other shared actions use adaptive memory- and core-based capacity: members size their runs, and the coordinator grants from rules and its own observations. Use when asked to be the coordinator, drive or land PR stacks, track blockers across sessions, or manage shared-machine leases, queues or colliding builds. Coordinator role only; sessions joining an existing coordinator use the separate puppet or scout skill.
+description: Coordinate agent sessions, drive PR stacks to merge, track blockers across work streams, and manage shared-machine leases and build queues. Use when asked to own coordination. Sessions joining an existing coordinator use the puppet or scout skill.
 ---
 
 # Master of puppets
@@ -130,9 +130,7 @@ Do this only on the user's word, or to get your own name back after a
 
 ## Coordinator start
 
-1. Run `python3 -I <skill>/scripts/coordinator.py install` from the skill copy when
-   the live copies are missing. When a warning says they differ, tell the user and
-   install only on the user's word. Run `coordinator.py config show --project-root "$PWD"`; exit 3
+1. Run `coordinator.py config show --project-root "$PWD"`; exit 3
    means the machine or project is not configured yet: follow
    `references/setup.md` (detect, then ask setup questions) before step 2.
 2. Claim: `coordinator.py register <slug> --focus "<scope in a few words>" [--pr <n> ...]`.
@@ -534,24 +532,19 @@ hand. A script does the same thing each time and costs fewer tokens.
 
 ## Reporting to the user
 
-Lead with what changed or what needs them. Keep the table short: task, PR,
-state, next step.
+On a member message or heartbeat, first handle the protocol action. A
+successful WELCOME, recorded UPDATE or clean round ends there. When a user
+report is due, lead with the outcome or the decision they need to make.
 
 Report a merge, a new or materially changed blocker, an idle or stalled lease
 slot that needs intervention, a new or materially changed host alarm, or a
 decision for the user. Do not repeat an unchanged blocker, alarm or pending
 decision.
 
-Recurring member updates, STATUS requests and replies, heartbeat checks and
-required protocol replies continue normally. Handle routine events through
-the protocol and shared records without user-facing commentary or a final
-acknowledgement: lease waits, grants or releases, watcher re-arms, first PR
-readings and member status updates. Do not narrate
-routine checks with "I'll verify..." or conclude them with "Noted", "Recorded"
-or an unchanged status. Include relevant routine facts in the next material
-report. Answer a direct human question normally; a protocol message delivered
-as a user turn is still coordination traffic. For a scheduled heartbeat with
-no material change, use the host's quiet completion mechanism.
+Handle routine lease, watcher and PR events through the protocol and shared
+records. Skip the user-facing preamble and recap. For an uneventful scheduled
+round, use the host's quiet completion mechanism. Answer direct human
+questions even if the answer is unchanged.
 
 Auto-merge on, queued and MERGED are different states;
 report the exact one. Quote raw failures. Never ask a member to weaken a test
