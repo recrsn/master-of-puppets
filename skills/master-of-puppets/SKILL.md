@@ -38,6 +38,10 @@ write product code.
 | `scripts/moplib.py` | State code that the server runs, and the client code that both CLIs use. |
 | `scripts/server.py` | The one dashboard, on `http://localhost:4720/`, with the page shell `scripts/dashboard.html`: host values and page links on every page. Dashboard: "Needs you" first, the work list and lease lanes. Events: the coordinator and the ledger. Config and Rules: edit machine, class and project config and memory rules. Live by SSE. It is also the one reader and writer of the state: it runs every `coordinator.py` and `puppet.py` command. Exits with "already serving" when one runs. |
 
+For read-only checks, use `coordinator.py roster` for members,
+`coordinator.py status --brief` for leases and queues, and
+`coordinator.py resource list <CLASS>` for a resource pool.
+
 The dashboard server is the one reader and writer of the state dir.
 `coordinator.py` and `puppet.py` are clients: each sends its arguments to the
 server, which runs the command and streams the output back (SSE), and exits
@@ -201,7 +205,7 @@ message and prints your host's app route to send it by; send it there.
   `coordinator.py stream todo add --name <slug> --text "<one step>" [--owner <member>]`.
   Update it from each UPDATE, MERGED and DONE, and from each `member update`:
   `stream todo set --name <slug> --id <n> --status doing|blocked|done [--note "<why>"]`
-  (`blocked` needs the reason). Add new steps as they appear. `stream todo list --name <slug>`
+  (`blocked` needs the reason). Limit `--text` and `--note` to 140 characters each. Add new steps as they appear. `stream todo list --name <slug>`
   prints it. Any change to a todo counts as progress for that stream.
 - **JOIN** arrives: `coordinator.py join --text "<the JOIN line>" [--local <local_ id>]`
   (it runs `member add`, saves the WELCOME to a file and prints the short
@@ -411,8 +415,8 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    `NO-ANSWER` (still no progress after the check-in: tell the user which
    stream and todos are stuck). Each line gives the members' last update too:
    when members report but the list did not move, update the list first.
-6. Report meaningful changes or decisions to the user: decisions first, then
-   the table.
+6. Apply [Reporting to the user](#reporting-to-the-user). If the round found
+   nothing reportable, finish quietly.
 
 ## When your work is done
 

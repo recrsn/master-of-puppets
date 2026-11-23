@@ -1839,7 +1839,7 @@ def add_read_commands(sub, memory=None):
         r.add_argument("--json", action="store_true", help="the raw records")
         if name == "inbox":
             r.add_argument("--from", dest="sender")
-            r.add_argument("--to", help="messages C receives: sent to C or to every coordinator")
+            r.add_argument("--to", help="messages sent to this recipient, including broadcasts")
         elif name == "ledger":
             r.add_argument("--by")
             r.add_argument("--pr", type=int)

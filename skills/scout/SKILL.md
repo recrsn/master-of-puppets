@@ -12,6 +12,11 @@ including target classes, severity and routing, is in
 [scouts.md](../master-of-puppets/references/scouts.md). Read it before your
 first tick.
 
+On an automatic tick, go straight to the reads and record the result in
+watch state. If the tick is quiet, finish without a preamble or a local
+recap. Send required alerts and requested reports to their recipients.
+Answer direct human questions and escalate an unacknowledged P0 as in section 3.
+
 Below, `puppet.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/puppet.py"`.
 To reach your coordinator, run `puppet.py route` before each send and use the
 first route that works (protocol.md, "Routes" says what to do when a send

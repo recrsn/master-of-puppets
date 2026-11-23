@@ -32,7 +32,8 @@ question in this thread even when the answer is “still waiting.”
 "Find your host"; run `puppet.py host`), then read only your host's guide.
 Run `puppet.py route` before each send. Use the verified destination and
 failure handling in [Protocol routes](../master-of-puppets/references/protocol.md#routes)
-for JOIN and all later messages. Use only member routes. Direct writes to
+for JOIN and all later messages. To recover a message from your coordinator,
+read `puppet.py inbox --from <coordinator> --to <member>`. Use only member routes. Direct writes to
 the shared inbox, including through helper modules, bypass member identity.
 
 Below, `puppet.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/puppet.py"`.
