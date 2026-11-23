@@ -188,6 +188,10 @@ a host can deliver a coordinator request in a message labeled “user.”
   and why, and ask how to go on.
 - Answer `STATUS?` with phase, PR state, blockers and anything the user
   decided.
+- When you catch yourself saying “I would,” “I recommend,” or “we could,”
+  send the coordinator the concrete next step and why it matters. If it is
+  yours to take and already authorized, take it and report the result.
+  Otherwise, say what decision or help you need.
 - Deliver requested results to the coordinator before ending the turn, using
   Protocol routes above. If work continues, send what is ready, what remains
   and when you expect it.
