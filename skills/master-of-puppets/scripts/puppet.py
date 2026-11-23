@@ -88,6 +88,7 @@ import re
 import time
 import os
 import sys
+import shlex
 
 # python3 -I keeps the script's own directory off sys.path; moplib is its sibling.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -310,7 +311,9 @@ def await_grant(args):
             ready = [q["id"] for q in state["queue"][args.cls] if not q.get("hold")]
             where = (f"position {ready.index(args.id) + 1}" if args.id in ready else "on hold") + "; still queued" \
                 if entry else "not queued yet"
-            print(f"TIMEOUT {args.cls} {args.id}: after {args.timeout_min:g} min; {where}; do not run; run await-grant again")
+            retry = shlex.join(["puppet.py", "await-grant", args.cls, "--id", args.id])
+            print(f"TIMEOUT {args.cls} {args.id}: after {args.timeout_min:g} min; {where}; do not run; "
+                  f"to continue waiting with the default timeout: {retry}")
             return 5
         nap(args.interval)
 
