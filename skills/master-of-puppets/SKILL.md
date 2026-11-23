@@ -198,6 +198,13 @@ message and prints your host's app route to send it by; send it there.
   Give every member a stream with `--stream` on `enroll` and `member add|update`.
   Close a stream when its goal is done: `coordinator.py stream close`. Stream slugs are
   unique on the machine.
+- **Todo list per stream**: keep one list for each open stream, and keep it
+  current. Add the steps when you open the stream:
+  `coordinator.py stream todo add --name <slug> --text "<one step>" [--owner <member>]`.
+  Update it from each UPDATE, MERGED and DONE, and from each `member update`:
+  `stream todo set --name <slug> --id <n> --status doing|blocked|done [--note "<why>"]`
+  (`blocked` needs the reason). Add new steps as they appear. `stream todo list --name <slug>`
+  prints it. Any change to a todo counts as progress for that stream.
 - **JOIN** arrives: `coordinator.py join --text "<the JOIN line>" [--local <local_ id>]`
   (it runs `member add`, saves the WELCOME to a file and prints the short
   message and app route that deliver it; send that message at once). A JOIN that names a
@@ -357,7 +364,7 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
 
 1. `coordinator.py round` (add `--focus`/`--pr` when they change, and
    `--release-repo`/`--release-workflow` while a release is open). It runs the
-   heartbeat and prints your leases, silent members, new inbox lines, the `pr`
+   heartbeat and prints your leases, silent members, streams without todo progress, new inbox lines, the `pr`
    digest of your PRs and the release runs, each under a timeout. Read new
    ledger entries. When it ends with `ROUND INCOMPLETE`, those sections were not
    checked: say so in your report, and never report their PRs or leases as fine.
@@ -397,6 +404,14 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    with `puppet.py scout show`, then ask only when it is stale.
    A member silent for two rounds while its PR is blocked: tell the user, with
    its deep link. Check pending entries ("Members and tasks").
+   The round's `streams` section checks each open stream's todo list:
+   `NO-LIST` (add the todos), `DONE-LIST` (close the stream or add the next
+   todos), `CHECK-IN` (no todo moved for `--stream-minutes`, default 60: send
+   each named owner a `STATUS?` about its open todos, then update the list
+   from the replies; the round records it and does not repeat it) and
+   `NO-ANSWER` (still no progress after the check-in: tell the user which
+   stream and todos are stuck). Each line gives the members' last update too:
+   when members report but the list did not move, update the list first.
 6. Report meaningful changes or decisions to the user: decisions first, then
    the table.
 

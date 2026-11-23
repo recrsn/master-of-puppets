@@ -185,6 +185,16 @@ Roster and members (coordinators write; members send messages, and request and r
        a stream is a named goal (one or more PR stacks) that groups members on the
        dashboard. The slug is unique on the machine; only its coordinator changes it.
        add needs --label (at most 40 characters); --goal at most 140.
+  stream todo add --name SLUG --text TEXT [--owner MEMBER]   (text at most 140 characters)
+  stream todo set --name SLUG --id N --status open|doing|blocked|done [--note TEXT] [--owner MEMBER]
+  stream todo list --name SLUG
+       each stream's todo list: keep it current from each UPDATE, MERGED or DONE. blocked needs --note.
+  stream stale [--minutes 60]
+       C's open streams: NO-LIST (no todos), DONE-LIST (all done: close or add the next), CHECK-IN (no todo
+       progress for --minutes: send each owner a STATUS request about its open todos; recorded, so the next
+       round does not repeat it), NO-ANSWER (no progress for --minutes after the check-in: tell the user).
+       Each line also gives the stream members' last update, so a stale list shows apart from stale work.
+       round runs it as its streams section.
   enroll --task TEXT [--by MEMBER] [--name NAME] [--pr N ...] [--stream SLUG] [--priority N] [--role scout]
        registers a task before it starts and prints the kickoff line for its prompt. Only
        coordinators start sessions (puppets cannot have children); --by records the member
@@ -310,7 +320,7 @@ Shared records (read-only; puppet.py has them too)
        newest runs of the release workflow, and whether one is still going. Both only read;
        neither dispatches a release, a deploy or a gate approval. Whether a checkpoint is still
        pending in prod is not on GitHub: check it where your release process records it
-  round [--focus] [--pr N ...] [--status] [--stale-minutes 30] [--open [--open-hours 24]] [--release-repo R [--release-workflow FILE]] [--timeout 60]
+  round [--focus] [--pr N ...] [--status] [--stale-minutes 30] [--stream-minutes 60] [--open [--open-hours 24]] [--release-repo R [--release-workflow FILE]] [--timeout 60]
        one call per heartbeat round: heartbeat, C's leases (held, expired, queued with position,
        the head of each class), members silent for --stale-minutes, inbox lines to C since its
        last round, vote list, the pr digest of C's PRs and, with --release-repo, release state.
@@ -1518,6 +1528,8 @@ def stream_cmd(args, roster):
         rows = {n: s for n, s in streams.items() if not args.coordinator or s.get("coordinator") == args.coordinator}
         print(json.dumps(rows, indent=1))
         return 0
+    if args.scmd == "stale":
+        return stream_stale(args, roster)
     if not SLUG.match(args.name):
         print("--name must be a lowercase slug, for example repo-access")
         return 2
@@ -1545,6 +1557,8 @@ def stream_cmd(args, roster):
     elif cur.get("coordinator") != args.coordinator:
         print(json.dumps({"owned_by": cur.get("coordinator"), "stream": args.name}))
         return 3
+    elif args.scmd == "todo":
+        return stream_todo(args, roster, cur)
     elif args.scmd == "update":
         if args.owner and not live(roster["coordinators"].get(args.owner)):
             print(json.dumps({"no_live_coordinator": args.owner}))
@@ -1569,6 +1583,101 @@ def stream_cmd(args, roster):
         note(args.coordinator, f"stream {args.name} {verb}: {cur['label']}")
     print(json.dumps({args.name: cur}, indent=1))
     return 0
+
+
+TODO_STATUSES = ("open", "doing", "blocked", "done")
+
+
+def stream_todo(args, roster, cur):
+    """A stream's todo list: add, set and list. Any change of a todo is progress (todoAt)."""
+    todos = cur.setdefault("todos", [])
+    if args.tcmd == "list":
+        print("\n".join(f"{t['id']}. [{t['status']}] {t['text']}" + (f" ({t['owner']})" if t.get("owner") else "")
+                        + (f" — {t['note']}" if t.get("note") else "") for t in todos) or f"no todos in {args.name}")
+        return 0
+    if args.text is not None and len(args.text) > 140 or getattr(args, "note", None) and len(args.note) > 140:
+        print("--text and --note must be at most 140 characters")
+        return 2
+    members = {m["name"] for m in roster["members"].get(args.coordinator, [])}
+    if args.owner and args.owner not in members:
+        print(f"{args.owner} is not a member of {args.coordinator}")
+        return 3
+    t_now = now().isoformat()
+    if args.tcmd == "add":
+        item = {"id": max([t["id"] for t in todos], default=0) + 1, "text": args.text, "status": "open", "updatedAt": t_now}
+        if args.owner:
+            item["owner"] = args.owner
+        todos.append(item)
+    else:
+        item = next((t for t in todos if t["id"] == args.id), None)
+        if item is None:
+            print(f"no todo {args.id} in {args.name}")
+            return 3
+        if args.status == "blocked" and not (args.note or item.get("note")):
+            print("blocked needs --note with the reason")
+            return 2
+        for field in ("status", "note", "owner"):
+            if getattr(args, field, None) is not None:
+                item[field] = getattr(args, field)
+        item["updatedAt"] = t_now
+    cur["todoAt"] = t_now
+    cur.pop("checkinAt", None)  # progress answers the check-in
+    save_roster(roster)
+    log(f"stream todo {args.tcmd} {args.name} {item['id']} {item['status']} by={args.coordinator}")
+    print(f"{args.name} {item['id']}. [{item['status']}] {item['text']}")
+    return 0
+
+
+def stream_stale(args, roster):
+    """C's open streams whose todo list is missing, finished, or has not moved for --minutes. A CHECK-IN is
+    recorded (checkinAt) so the next round says NO-ANSWER instead of repeating it."""
+    me, cutoff = args.coordinator, dt.timedelta(minutes=args.minutes)
+    members = roster["members"].get(me, [])
+    rows, changed = [], False
+    for slug, cur in sorted(roster["streams"].items()):
+        if cur.get("coordinator") != me or cur.get("status") == "closed":
+            continue
+        crew = [m for m in members if m.get("stream") == slug and m.get("status") not in ("done", "idle")]
+        if crew and all(m.get("status") == "paused" for m in crew):
+            continue  # a PAUSE means no work: its silence is expected
+        seen = [dt.datetime.fromisoformat(x) for m in crew for x in [m.get("updatedAt") or m.get("joinedAt")] if x]
+        work = f"members last update {int((now() - max(seen)).total_seconds() // 60)} min ago" if seen else "no members"
+        todos = cur.get("todos") or []
+        live_todos = [t for t in todos if t["status"] in ("open", "doing")]
+        if not todos:
+            rows.append(f"NO-LIST {slug}: no todos; add them: stream todo add --name {slug} --text ... ({work})")
+            continue
+        if not live_todos:
+            blocked = [t for t in todos if t["status"] == "blocked"]
+            if not blocked:
+                rows.append(f"DONE-LIST {slug}: every todo done: stream close --name {slug}, or add the next todos")
+            continue  # only blocked todos: each has its reason; nothing to chase
+        since = dt.datetime.fromisoformat(cur.get("todoAt") or cur.get("createdAt"))
+        idle = int((now() - since).total_seconds() // 60)
+        if now() - since < cutoff:
+            continue
+        owners = sorted({t.get("owner") for t in live_todos if t.get("owner")}) or [m["name"] for m in crew]
+        items = "; ".join(f"{t['id']}. {t['text'][:60]}" for t in live_todos[:3]) + (" ..." if len(live_todos) > 3 else "")
+        checkin = cur.get("checkinAt")
+        if checkin:
+            if now() - dt.datetime.fromisoformat(checkin) >= cutoff:
+                rows.append(f"NO-ANSWER {slug}: checked in at {checkin[:16]}Z, no todo progress since ({idle} min, {work}): "
+                            f"tell the user; open: {items}")
+            continue
+        cur["checkinAt"], changed = now().isoformat(), True
+        rows.append(f"CHECK-IN {slug}: no todo progress for {idle} min ({work}): send a STATUS request to "
+                    f"{', '.join(owners) or 'the user (no members)'} about: {items}; update the list from the replies")
+    if changed:
+        save_roster(roster)
+    print("\n".join(rows) if rows else "ok")
+    return 0
+
+
+def round_streams(me, minutes):
+    with captured() as buf:
+        code = main(["stream", "stale", "--minutes", str(minutes)])
+    print(buf.getvalue().rstrip())
+    return code
 
 
 def state_path(coord):
@@ -2954,6 +3063,7 @@ def round_cmd(args):
                 (f"members silent {args.stale_minutes} min", lambda: round_stale(args.stale_minutes, args.open_hours if args.open else None,
                                                                                   me if args.active_only else None)),
                 ("sessions", lambda: round_sessions(me, args.active_only)),
+                (f"streams without todo progress {args.stream_minutes} min", lambda: round_streams(me, args.stream_minutes)),
                 (f"inbox since {since[:19] + 'Z' if since else 'ever'}", lambda: round_inbox(me, since)),
                 ("votes", lambda: main(["vote", "list"])), ("prs", lambda: round_prs(me, args.open, args.open_hours))]
     if args.release_repo:
@@ -4406,6 +4516,7 @@ def main(argv=None):
     rd.add_argument("--pr", type=int, nargs="+", action="extend")
     rd.add_argument("--status", choices=("active", "idle"))
     rd.add_argument("--stale-minutes", type=int, default=30)
+    rd.add_argument("--stream-minutes", type=int, default=60, help="a stream whose todos have not moved this long gets a CHECK-IN")
     rd.add_argument("--open", action="store_true", help="skip merged and closed PRs, and members silent over --open-hours")
     rd.add_argument("--open-hours", type=float, default=24)
     rd.add_argument("--active-only", action="store_true",
@@ -4644,6 +4755,21 @@ def main(argv=None):
             sx.add_argument("--auto-acquire", choices=("on", "off"), help="on: the server grants lease requests of this stream's members")
     sl = ssub.add_parser("list")
     sl.add_argument("--coordinator")
+    td = ssub.add_parser("todo")
+    tsub = td.add_subparsers(dest="tcmd", required=True)
+    for name in ("add", "set", "list"):
+        tx = tsub.add_parser(name)
+        tx.set_defaults(_self=("coordinator",))
+        tx.add_argument("--name", required=True, help="the stream slug")
+        tx.add_argument("--text", required=(name == "add"), help="one todo, at most 140 characters")
+        tx.add_argument("--owner", help="the member who does it")
+        if name == "set":
+            tx.add_argument("--id", type=int, required=True)
+            tx.add_argument("--status", choices=TODO_STATUSES)
+            tx.add_argument("--note", help="why it is blocked, or what changed (at most 140 characters)")
+    ss = ssub.add_parser("stale")
+    ss.set_defaults(_self=("coordinator",))
+    ss.add_argument("--minutes", type=int, default=60)
     sub.add_parser("host-check")
     cw = sub.add_parser("calm-wait")
     cw.add_argument("--settle", type=int, default=0, help="seconds to wait first, e.g. while a stack starts")
