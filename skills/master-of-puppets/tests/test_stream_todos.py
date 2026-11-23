@@ -81,6 +81,11 @@ class StreamTodos(unittest.TestCase):
         self.assertNotIn("docs", out)  # every member paused
         self.assertNotIn("old", out)  # closed
         self.assertNotIn("theirs", out)  # another coordinator's
+        roster = self.m.load_roster()
+        roster["streams"]["idle"] = {"coordinator": "a", "label": "Idle", "status": "open", "createdAt": self.m.now().isoformat()}
+        self.m.save_roster(roster)
+        self.assertIn("NO-MEMBERS 1 open streams with no active member and no open todo: close each", self.run_cli("stream", "stale")[1])
+        self.run_cli("stream", "close", "--name", "idle")
         self.run_cli("stream", "todo", "add", "--name", "api", "--text", "fix auth", "--owner", "w1")
         self.assertEqual(self.run_cli("stream", "stale")[1].strip(), "ok")  # fresh progress
         self.age(90, "todoAt")

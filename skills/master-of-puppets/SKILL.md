@@ -405,7 +405,8 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    A member silent for two rounds while its PR is blocked: tell the user, with
    its deep link. Check pending entries ("Members and tasks").
    The round's `streams` section checks each open stream's todo list:
-   `NO-LIST` (add the todos), `DONE-LIST` (close the stream or add the next
+   `NO-MEMBERS` (one line: open streams no member works on; close each or
+   enroll its work), `NO-LIST` (add the todos), `DONE-LIST` (close the stream or add the next
    todos), `CHECK-IN` (no todo moved for `--stream-minutes`, default 60: send
    each named owner a `STATUS?` about its open todos, then update the list
    from the replies; the round records it and does not repeat it) and

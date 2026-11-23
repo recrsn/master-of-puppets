@@ -190,7 +190,7 @@ Roster and members (coordinators write; members send messages, and request and r
   stream todo list --name SLUG
        each stream's todo list: keep it current from each UPDATE, MERGED or DONE. blocked needs --note.
   stream stale [--minutes 60]
-       C's open streams: NO-LIST (no todos), DONE-LIST (all done: close or add the next), CHECK-IN (no todo
+       C's open streams: NO-MEMBERS (one line: open streams with no active member and no open todo), NO-LIST (no todos), DONE-LIST (all done: close or add the next), CHECK-IN (no todo
        progress for --minutes: send each owner a STATUS request about its open todos; recorded, so the next
        round does not repeat it), NO-ANSWER (no progress for --minutes after the check-in: tell the user).
        Each line also gives the stream members' last update, so a stale list shows apart from stale work.
@@ -1633,7 +1633,7 @@ def stream_stale(args, roster):
     recorded (checkinAt) so the next round says NO-ANSWER instead of repeating it."""
     me, cutoff = args.coordinator, dt.timedelta(minutes=args.minutes)
     members = roster["members"].get(me, [])
-    rows, changed = [], False
+    rows, changed, empty = [], False, []
     for slug, cur in sorted(roster["streams"].items()):
         if cur.get("coordinator") != me or cur.get("status") == "closed":
             continue
@@ -1644,6 +1644,9 @@ def stream_stale(args, roster):
         work = f"members last update {int((now() - max(seen)).total_seconds() // 60)} min ago" if seen else "no members"
         todos = cur.get("todos") or []
         live_todos = [t for t in todos if t["status"] in ("open", "doing")]
+        if not crew and not live_todos:
+            empty.append(slug)  # no member works on it and nothing is left on its list
+            continue
         if not todos:
             rows.append(f"NO-LIST {slug}: no todos; add them: stream todo add --name {slug} --text ... ({work})")
             continue
@@ -1667,6 +1670,9 @@ def stream_stale(args, roster):
         cur["checkinAt"], changed = now().isoformat(), True
         rows.append(f"CHECK-IN {slug}: no todo progress for {idle} min ({work}): send a STATUS request to "
                     f"{', '.join(owners) or 'the user (no members)'} about: {items}; update the list from the replies")
+    if empty:
+        rows.append(f"NO-MEMBERS {len(empty)} open streams with no active member and no open todo: close each "
+                    f"(stream close --name S) or enroll its work: {', '.join(empty)}")
     if changed:
         save_roster(roster)
     print("\n".join(rows) if rows else "ok")
