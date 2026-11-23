@@ -483,7 +483,11 @@ def scout_cmd(args):
     if m is None or m.get("role") != "scout":
         print(f"{args.name} is not a scout of {args.coordinator}; send SCOUT JOIN first")
         return 3
-    st = scout_state(args.name)
+    try:
+        st = scout_state(args.name, strict=True)
+    except (OSError, ValueError) as err:
+        print(f"cannot read scout state for {args.name}: {err}")
+        return 3
     if args.scmd == "show":
         print(json.dumps(st, indent=1))
         return 0
@@ -697,7 +701,13 @@ def main(argv=None):
     adopt_thread_identity()  # a provider switch in a T3 Code thread keeps the member's name
     note_member_route()
     if args.cmd == "scout":
-        return scout_cmd(args)
+        if args.scmd == "show":
+            return scout_cmd(args)
+        lock()
+        try:
+            return scout_cmd(args)
+        finally:
+            unlock()
     if args.cmd == "tell":
         return tell_cmd(args)
     if args.cmd in ("await-grant", "extend", "release") and not args.cls:

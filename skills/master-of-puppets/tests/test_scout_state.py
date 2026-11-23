@@ -1,11 +1,13 @@
 """A scout's per-tick state is separate from its daily summary.
 Run: python3 -I skills/master-of-puppets/tests/test_scout_state.py
 Each test runs in its own empty MACHINE_LEASE_DIR; nothing touches the live state or sends a message."""
+from concurrent.futures import ThreadPoolExecutor
 import importlib
 import io
 import os
 import sys
 import tempfile
+import threading
 import unittest
 import warnings
 from contextlib import redirect_stdout
@@ -38,6 +40,30 @@ class ScoutState(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(self.p.main(["scout", "tick", "--coordinator", "a", "--name", "sc", *extra]), 0)
         return self.m.scout_state("sc")
+
+    def test_concurrent_alerts_preserve_every_fingerprint(self):
+        fingerprints = [f"check-{i}" for i in range(8)]
+        ready = threading.Barrier(len(fingerprints))
+
+        def record(fingerprint):
+            ready.wait(timeout=10)
+            return self.p.main(["scout", "alert", "--name", "sc", "--severity", "P2",
+                                "--fingerprint", fingerprint, "--text", "degraded"])
+
+        with redirect_stdout(io.StringIO()), ThreadPoolExecutor(len(fingerprints)) as workers:
+            self.assertEqual(list(workers.map(record, fingerprints)), [0] * len(fingerprints))
+        alerts = self.m.scout_state("sc")["openAlerts"]
+        self.assertCountEqual([a["fingerprint"] for a in alerts], fingerprints)
+
+    def test_tick_preserves_unreadable_state_for_recovery(self):
+        self.tick("--state", "checkpoint")
+        path = self.m.scout_path("sc")
+        with open(path, "w") as state_file:
+            state_file.write('{"openAlerts":')
+        with redirect_stdout(io.StringIO()):
+            self.assertNotEqual(self.p.main(["scout", "tick", "--name", "sc"]), 0)
+        with open(path) as state_file:
+            self.assertEqual(state_file.read(), '{"openAlerts":')
 
     def as_session(self, sid):
         self.m.RUN.env = {"CLAUDE_CODE_SESSION_ID": sid}

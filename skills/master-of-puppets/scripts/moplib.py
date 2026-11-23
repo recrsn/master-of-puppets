@@ -1773,11 +1773,20 @@ def scout_path(name):
     return os.path.join(SCOUTS, f"{name}.json")
 
 
-def scout_state(name):
-    """The scout's watch state: lastTick, tickMin, openAlerts [{fingerprint, severity, kind, text, firstSeen,
-    lastSeen}], state {at, text} (the latest tick state), summary {at, text} (daily) and pausedSince. Missing or unreadable: {}."""
-    s = read_json(scout_path(name))
-    return s if isinstance(s, dict) else {}
+def scout_state(name, *, strict=False):
+    """Missing state is a new watch. Readers can tolerate unreadable state; writers must preserve it."""
+    try:
+        with open(scout_path(name)) as f:
+            state = json.load(f)
+        if not isinstance(state, dict):
+            raise ValueError("expected a JSON object")
+        return state
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError):
+        if strict:
+            raise
+        return {}
 
 
 def scout_twins(state, at=None):

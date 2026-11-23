@@ -23,6 +23,11 @@ deferred: load one by name before you call it.
 | Bind a PR | `link_pull_request` with the full URL; `watch_pull_request` when asked to watch it |
 | Open the dashboard | Give the user `http://localhost:4720/` |
 
+PR watch notifications and “Background activity updated” messages can arrive
+as user turns. Inspect the result and take any required action. A command
+starting or finishing, or a check on an unchanged PR, needs no progress
+message or local recap. Report material changes under your role's reporting rules.
+
 ## Provider switch in a thread
 
 The user can switch a T3 Code thread to another provider in place (for
