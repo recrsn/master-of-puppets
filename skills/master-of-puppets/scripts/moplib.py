@@ -1287,10 +1287,43 @@ def health_released(cls, name, token, info, lease_id, coordinator, worktree=None
     return f"{name} failed its health check ({detail}{freed}); retired, and the pool deletes it"
 
 
+def proc_text(name):
+    """Read one Linux procfs file. A restricted or absent file has no sample."""
+    try:
+        with open("/proc/" + name) as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def swapouts():
+    if sys.platform.startswith("linux"):
+        match = re.search(r"^pswpout\s+(\d+)$", proc_text("vmstat"), re.M)
+    else:
+        match = re.search(r"Swapouts:\s+(\d+)", run(["vm_stat"]))
+    return int(match[1]) if match else None
+
+
+def linux_memory_kib():
+    return {key: int(value) for key, value in
+            re.findall(r"^(\w+):\s+(\d+) kB$", proc_text("meminfo"), re.M)}
+
+
+def memory_free_pct():
+    if sys.platform.startswith("linux"):
+        mem = linux_memory_kib()
+        if mem.get("MemTotal") and "MemAvailable" in mem:
+            return round(100 * mem["MemAvailable"] / mem["MemTotal"])
+        return None
+    match = re.search(r"(\d+)%", run(["memory_pressure", "-Q"]))
+    return int(match[1]) if match else None
+
+
 def total_gib():
-    out = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True).stdout.strip()
-    if out.isdigit():
-        return int(out) / 2**30
+    if sys.platform == "darwin":
+        out = run(["sysctl", "-n", "hw.memsize"]).strip()
+        if out.isdigit():
+            return int(out) / 2**30
     return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2**30
 
 

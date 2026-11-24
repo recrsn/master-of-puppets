@@ -115,33 +115,59 @@ def run(cmd):
         return ""
 
 
-def swapouts():
-    m = re.search(r"Swapouts:\s+(\d+)", run(["vm_stat"]))
-    return int(m.group(1)) if m else None
+def linux_cpu_ticks():
+    # guest and guest_nice are already included in user and nice.
+    fields = moplib.proc_text("stat").partition("\n")[0].split()
+    if fields[:1] != ["cpu"] or len(fields) < 5:
+        return None
+    ticks = fields[1:9]
+    if not all(value.isdigit() for value in ticks):
+        return None
+    counts = list(map(int, ticks))
+    return sum(counts), sum(counts[3:5])  # total, idle including I/O wait
 
 
 def sample_host(prev_swapouts, interval):
-    """One host sample from macOS tools; a missing value is None."""
+    """One host sample. An unavailable measurement is None."""
+    cur = moplib.swapouts()
     cfg = machine_config()
     out = {"at": time.strftime("%H:%M:%S")}
     cores = os.cpu_count() or 1
-    m = re.search(r"([\d.]+)% idle", run(["top", "-l", "2", "-n", "0", "-s", "1"]).split("CPU usage")[-1])
-    out["cpuPct"] = round(100 - float(m.group(1)), 1) if m else None
+    if sys.platform.startswith("linux"):
+        before = linux_cpu_ticks()
+        time.sleep(1)
+        after = linux_cpu_ticks()
+        cpu = None
+        if before and after:
+            total, idle = after[0] - before[0], after[1] - before[1]
+            if total > 0 and 0 <= idle <= total:
+                cpu = round(100 * (total - idle) / total, 1)
+        out["cpuPct"] = cpu
+        mem = moplib.linux_memory_kib()
+        total, available = mem.get("MemTotal"), mem.get("MemAvailable")
+        swap, free = mem.get("SwapTotal"), mem.get("SwapFree")
+        out["memTotalGiB"] = round(total / 2**20, 1) if total else None
+        out["memFreePct"] = round(100 * available / total) if total and available is not None else None
+        out["memUsedGiB"] = round((total - available) / 2**20, 1) if total and available is not None else None
+        out["swapTotalGiB"] = round(swap / 2**20, 1) if swap is not None else None
+        out["swapUsedGiB"] = round((swap - free) / 2**20, 1) if swap is not None and free is not None else None
+    else:
+        m = re.search(r"([\d.]+)% idle", run(["top", "-l", "2", "-n", "0", "-s", "1"]).split("CPU usage")[-1])
+        out["cpuPct"] = round(100 - float(m.group(1)), 1) if m else None
+        total = moplib.total_gib()
+        free_pct = moplib.memory_free_pct()
+        out["memTotalGiB"] = round(total, 1)
+        out["memFreePct"] = free_pct
+        out["memUsedGiB"] = round(total * (100 - free_pct) / 100, 1) if free_pct is not None else None
+        m = re.search(r"total = ([\d.]+)M\s+used = ([\d.]+)M", run(["sysctl", "-n", "vm.swapusage"]))
+        out["swapTotalGiB"] = round(float(m.group(1)) / 1024, 1) if m else None
+        out["swapUsedGiB"] = round(float(m.group(2)) / 1024, 1) if m else None
     out["load1"] = round(os.getloadavg()[0], 2)
     out["maxLoad"] = round(cores * float(cfg.get("loadPerCore", 2.5)), 1)
     out["cores"] = cores
-    total = int(run(["sysctl", "-n", "hw.memsize"]).strip() or 0) / 2**30
-    m = re.search(r"(\d+)%", run(["memory_pressure", "-Q"]))
-    free_pct = int(m.group(1)) if m else None
-    out["memTotalGiB"] = round(total, 1)
-    out["memFreePct"] = free_pct
-    out["memUsedGiB"] = round(total * (100 - free_pct) / 100, 1) if free_pct is not None else None
     out["reserveGiB"] = cfg.get("reserveGiB", 6)
-    m = re.search(r"total = ([\d.]+)M\s+used = ([\d.]+)M", run(["sysctl", "-n", "vm.swapusage"]))
-    out["swapTotalGiB"] = round(float(m.group(1)) / 1024, 1) if m else None
-    out["swapUsedGiB"] = round(float(m.group(2)) / 1024, 1) if m else None
-    cur = swapouts()
-    out["swapoutsPer12s"] = round((cur - prev_swapouts) * 12 / interval) if cur is not None and prev_swapouts is not None else None
+    out["swapoutsPer12s"] = (round((cur - prev_swapouts) * 12 / interval)
+                             if cur is not None and prev_swapouts is not None and cur >= prev_swapouts else None)
     out["maxSwapouts"] = cfg.get("maxSwapouts", 200)
     du = shutil.disk_usage("/")
     out["diskFreeGiB"] = round(du.free / 2**30, 1)
@@ -179,7 +205,7 @@ def host_tiles(h):
     f = fmt
     load_ratio = (h["load1"] / h["maxLoad"]) if h.get("maxLoad") else 0
     mem_pct = 100 - h["memFreePct"] if h.get("memFreePct") is not None else 0
-    swap_pct = 100 * h["swapUsedGiB"] / h["swapTotalGiB"] if h.get("swapTotalGiB") else 0
+    swap_pct = 100 * h["swapUsedGiB"] / h["swapTotalGiB"] if h.get("swapTotalGiB") and h.get("swapUsedGiB") is not None else 0
     disk_pct = 100 * (1 - h["diskFreeGiB"] / h["diskTotalGiB"]) if h.get("diskTotalGiB") else 0
     outs, max_outs = h.get("swapoutsPer12s"), h.get("maxSwapouts", 200)
     return [
@@ -1281,13 +1307,14 @@ def watcher():
 
 def host_sampler():
     global host, host_version
-    prev, last = swapouts(), time.time()
+    prev, last = moplib.swapouts(), time.monotonic()
     while True:
         try:
-            sample, prev_new = sample_host(prev, max(1.0, time.time() - last))
+            started = time.monotonic()
+            sample, prev_new = sample_host(prev, max(1.0, started - last))
         except Exception as exc:  # keep sampling; show the failure on the page
             sample, prev_new = {"at": time.strftime("%H:%M:%S"), "error": str(exc)[:200]}, prev
-        prev, last = prev_new, time.time()
+        prev, last = prev_new, started
         sample["tiles"] = host_tiles(sample)
         with changed:
             host = sample
