@@ -55,7 +55,8 @@ request, release, and scout state), `moplib.py`
 
 ## Requirements
 
-- macOS (host metrics use `vm_stat`, `sysctl`, `memory_pressure`, `top` and `lsof`)
+- Linux with procfs mounted at `/proc`, or macOS
+- `ps` and `lsof` for worktree process and listener checks
 - Python 3.10 or later
 - GitHub CLI (`gh`), authenticated, for PR state and stack moves
 - Claude Code or Codex (CLI or Desktop); use the routes available in your agent

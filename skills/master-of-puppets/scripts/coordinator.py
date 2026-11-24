@@ -432,7 +432,7 @@ from moplib import (
     mark_failed, health_run, host_hold, host_held, failed_restart, failed_restart_end, FAIL_DELETE, CLEAN_TIMEOUT, FIND_TIMEOUT, HEALTH_MIN_FREE_GIB, HEALTH_MIN_MEM_GIB,
     SCOUT_CLASSES, scout_path, scout_state, scout_stale, scout_twins, stalled, queue_head, blocked_by, STALL_MINUTES,
     RECLAIM_MINUTES, reclaim_minutes, clean_run, record_health, clear_short, tell_member, session_or_none, detect_host, routes_to,
-    adopt_thread_identity,
+    adopt_thread_identity, swapouts, memory_free_pct,
 )
 
 
@@ -2559,11 +2559,6 @@ def resource_cmd(args):
 # ---------------------------------------------------------------- host
 
 
-def swapouts():
-    m = re.search(r"Swapouts:\s+(\d+)", run(["vm_stat"]))
-    return int(m.group(1)) if m else 0
-
-
 def host_check():
     """Admission gate: two swap-out samples, load and the disk floor, with the machine
     config's numbers only. Returns (calm, line)."""
@@ -2575,19 +2570,20 @@ def host_check():
     for i in (1, 2):
         a = swapouts()
         nap(interval)
-        d = swapouts() - a
-        parts.append(f"sample{i} swapouts/{interval}s={d}")
-        calm = calm and d < max_swap
+        b = swapouts()
+        d = b - a if a is not None and b is not None and b >= a else None
+        parts.append(f"sample{i} swapouts/{interval}s={d if d is not None else '?'}")
+        calm = calm and d is not None and d < max_swap
     load1 = os.getloadavg()[0]
     calm = calm and load1 < max_load
     free = shutil.disk_usage("/").free / 2**30
     disk = "blocked" if free < cfg["diskFloorGiB"] else "alarm" if free < cfg["diskAlarmGiB"] else "ok"
     calm = calm and disk != "blocked"
-    m = re.search(r"(\d+)%", run(["memory_pressure", "-Q"]))
+    free_pct = memory_free_pct()
     parts += [
         f"load1={load1:.2f}", f"max_load={max_load:g}", f"disk_free_GiB={free:.1f}",
         f"disk_floor_GiB={cfg['diskFloorGiB']:g}", f"disk_alarm_GiB={cfg['diskAlarmGiB']:g}",
-        f"disk={disk}", f"memory_free={m.group(1) + '%' if m else '?'}",
+        f"disk={disk}", f"memory_free={str(free_pct) + '%' if free_pct is not None else '?'}",
         f"verdict={'CALM' if calm else 'BUSY'}",
     ]
     return calm, " ".join(parts)

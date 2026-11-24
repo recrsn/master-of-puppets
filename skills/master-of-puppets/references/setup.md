@@ -26,8 +26,13 @@ writing their configuration.
 Run these first, and put the real numbers into the options:
 
 ```bash
-sysctl -n hw.memsize hw.ncpu
-df -g /
+if [ "$(uname -s)" = Linux ]; then
+  awk '/^MemTotal:/ {print $2 / 1024 / 1024, "GiB RAM"}' /proc/meminfo
+  getconf _NPROCESSORS_ONLN
+else
+  sysctl -n hw.memsize hw.ncpu
+fi
+df -Pk /
 gh repo view --json defaultBranchRef,squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed
 ```
 
