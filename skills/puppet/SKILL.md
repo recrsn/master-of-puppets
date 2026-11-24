@@ -23,9 +23,9 @@ Check the event against current state, take the required action, and send any
 required protocol report to the coordinator. End the turn quietly if the user
 has nothing new to act on or learn under
 [Reporting to the user](../master-of-puppets/SKILL.md#reporting-to-the-user).
-This applies to progress commentary as well as the final reply. For example,
-a passing check on an older head or a notification about an already-resolved
-thread needs no local preamble, check tally, or recap. Answer a direct human
+This applies to progress commentary and the final reply. Skip local check
+tallies and recaps for an older head, an already-resolved thread, or another
+passing check while a PR still waits for review. Answer a direct human
 question in this thread even when the answer is “still waiting.”
 
 **Find your host first** ([hosts/README.md](../master-of-puppets/references/hosts/README.md),
@@ -368,8 +368,8 @@ task. Then stop your services and release any lease.
 from the user`. The coordinator checks that every PR of yours is MERGED or
 CLOSED, your tree is clean and pushed, and you hold no lease or queue entry.
 
-- `IDLE ACCEPTED`: you are idle. Send no UPDATE, and stop your watchers. The
-  coordinator does not flag you as silent.
+- `IDLE ACCEPTED`: stop your watchers and end the turn quietly. The
+  coordinator already recorded your idle status.
 - `IDLE NOT ACCEPTED — <reason>`: you stay active. Do what the reason names.
 - Any direction from the coordinator, or new work from the user, wakes you.
   Send `UPDATE` with the new task and phase; that makes you active again.

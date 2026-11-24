@@ -23,6 +23,10 @@ deferred: load one by name before you call it.
 | Bind a PR | `link_pull_request` with the full URL; `watch_pull_request` when asked to watch it |
 | Open the dashboard | Give the user `http://localhost:4720/` |
 
+When reading a PR diff with `pull_request_read`, the patch text is in
+`diff.patch`. For a full diff, pass each `diff.nextCursor` as `cursor` on
+the next request and read the patch from each page.
+
 PR watch notifications and “Background activity updated” messages can arrive
 as user turns. Inspect the result and take any required action. A command
 starting or finishing, or a check on an unchanged PR, needs no progress
@@ -57,9 +61,10 @@ command in one plain shape so a prefix approval covers the next run:
   name `ListAgents` shows, change when the thread is renamed or its session
   restarts. A send to an old name fails with "No agent named ...". Route by
   the thread id, never by a display name.
-- A Claude coordinator's `heartbeat` and `register` record its thread id
-  (`t3Thread`) and host in the roster, and every `puppet.py` command does the
-  same for a Claude or Antigravity ACP member. `puppet.py route` prints it.
+- A coordinator's `heartbeat` and `register` record its T3 thread id
+  (`t3Thread`) and host in the roster. An enrolled member can record its
+  route by running `puppet.py whoami` from its registered session on any
+  provider. `puppet.py route` prints the coordinator's route.
 - A member that has run no `puppet.py` command since that install has no
   `t3Thread` yet: find its thread with `t3_thread_search` by the member's
   name.
