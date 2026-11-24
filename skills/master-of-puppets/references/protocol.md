@@ -90,8 +90,10 @@ in both directions for every protocol message. Cross-thread messaging is
 host-dependent ([hosts/README.md](hosts/README.md) and your host's guide) and
 is required for coordinator <-> puppet/scout messaging. A coordinator sends
 every message with `coordinator.py send --to <name> --text "..."`: it records
-the message and for a member or scout prints the host-specific app route to
-send it by; send it there. Members use their host's app route from
+the message in the shared inbox. For a member or scout, send it by the printed
+app route and check the result. Report a rejected send as a delivery failure.
+If the app accepts the message into a queue, report it as queued. Claim
+acknowledgment only when the recipient replies. Members use their host's app route from
 `puppet.py route`.
 
 A member answers a coordinator's request for a status, investigation result,

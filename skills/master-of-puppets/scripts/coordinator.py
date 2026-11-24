@@ -795,7 +795,7 @@ def send_cmd(args):
         if member.get("status") == "done":
             print(f"{to} is done; nothing delivered")
             return 3
-        print(f"now send it to {to} by its app route: {native_route(member)}")
+        print(f"app delivery pending for {to}. Send by this route: {native_route(member)}")
         if args.direct and member.get("tool") in ("claude", "codex"):
             print("direct (best effort): " + deliver(to, member.get("tool"), member.get("sessionId"), framed))
         return 0
