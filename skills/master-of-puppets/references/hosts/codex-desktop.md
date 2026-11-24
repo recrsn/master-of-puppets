@@ -43,8 +43,8 @@ comes by two routes.
 
 ## Sandbox and permissions
 
-Run `puppet.py`, `coordinator.py` and other commands that need the network
-or the lease server with per-command escalation. Ask the user only when the
+Use per-command escalation for helper commands that need the lease server
+or network. Member CLI help runs locally. Ask the user only when the
 escalation is refused. When `puppet.py` stays refused, a scout puts its tick
 result in its UPDATE and the coordinator records it with `member update`.
 There is no Full access requirement for new threads, heartbeats or cloud

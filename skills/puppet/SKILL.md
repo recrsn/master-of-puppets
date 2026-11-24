@@ -37,9 +37,9 @@ read `puppet.py inbox --from <coordinator> --to <member>`. Use only member route
 the shared inbox, including through helper modules, bypass member identity.
 
 Below, `puppet.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/puppet.py"`.
-In a sandboxed session (Codex, Antigravity ACP), run every `puppet.py` call
-outside the sandbox from the first try, `host` included: inside it, each one
-fails. In a shell, define it as a function, not a variable (zsh does not split a
+In a sandboxed session (Codex, Antigravity ACP), use the host’s per-command approval for
+`puppet.py` calls that need the helper server, including `host`. Explicit
+`--help` and `-h` use the local parser. In a shell, define it as a function, not a variable (zsh does not split a
 variable into words): `puppet() { python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/puppet.py" "$@"; }`.
 If the file does not exist, no coordinator
 runs on this machine: tell the user, and suggest `/master-of-puppets` in the

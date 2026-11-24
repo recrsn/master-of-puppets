@@ -43,9 +43,8 @@ recorded it) needs a new JOIN after a switch.
 
 Some providers' terminal sandboxes (Antigravity ACP, the Codex sandbox) block
 `~/.local/state/machine-leases/`, `localhost:4720` and worktrees outside the
-project unless a command runs outside the sandbox. A helper command run
-inside the sandbox always fails (`[Errno 1] Operation not permitted` on
-`coordinator.py`). So run every `coordinator.py` and `puppet.py` command
+project unless a command runs outside the sandbox. Member CLI help runs
+locally. Run helper commands that need the lease server
 outside the sandbox on the first try (Antigravity ACP: `BypassSandbox: true`;
 Codex: per-command escalation); never try it in the sandbox first. Keep each
 command in one plain shape so a prefix approval covers the next run:

@@ -621,7 +621,7 @@ def scout_cmd(args):
     return 0
 
 
-def main(argv=None):
+def argument_parser():
     p = argparse.ArgumentParser(prog="puppet.py")
     sub = p.add_subparsers(dest="cmd", required=True)
     add_read_commands(sub)
@@ -695,11 +695,16 @@ def main(argv=None):
             x.add_argument("--text", required=True, help="one line added to the state; never a secret")
         if name == "paused":
             x.add_argument("--clear", action="store_true", help="sends work again")
+    return p
+
+
+def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["status"]:  # members guess it from coordinator.py; point to the commands that exist
         print("puppet.py has no status: your lease: await-grant CLASS --id ID --timeout-min 0; "
               "the leases on this machine: events; your entry: whoami", file=sys.stderr)
         return 2
+    p = argument_parser()
     args = p.parse_args(argv)
     adopt_thread_identity()  # a provider switch in a T3 Code thread keeps the member's name
     note_member_route()
@@ -734,4 +739,8 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(forward("puppet", sys.argv[1:]))
+    argv = sys.argv[1:]
+    if "-h" in argv or "--help" in argv:
+        # argparse exits on help. If parsing returns, the command still belongs on the server.
+        argument_parser().parse_args(argv)
+    sys.exit(forward("puppet", argv))

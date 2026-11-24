@@ -16,9 +16,9 @@ Below, `puppet.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/ma
 To reach your coordinator, run `puppet.py route` before each send and use the
 first route that works (protocol.md, "Routes" says what to do when a send
 fails).
-In a sandboxed session (Codex, Antigravity ACP), run every `puppet.py` call
-outside the sandbox from the first try, `host` included: inside it, each one
-fails. In a shell, define it as a function, not a variable (zsh does not split a
+In a sandboxed session (Codex, Antigravity ACP), use the host’s per-command approval for
+`puppet.py` calls that need the helper server, including `host`. Explicit
+`--help` and `-h` use the local parser. In a shell, define it as a function, not a variable (zsh does not split a
 variable into words): `puppet() { python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/puppet.py" "$@"; }`.
 If the file does not exist, no coordinator runs on this machine: tell the user.
 
@@ -114,7 +114,16 @@ sandbox: run each puppet.py line outside the sandbox on the first try, every tic
      access is blocked, even when the tick also prints `UNHANDLED`.
    - Resolve an accepted or out-of-scope alert with the reason in `--text`.
    When `puppet.py` cannot run (a sandbox refuses it and escalation is refused), say so in a GAP once, then put each tick's changes in your message; your coordinator records them.
-7. Schedule your next wakeup (the "Scheduled turn" row of your host guide). Never write a polling loop. Never put a route or a session name in the scheduled prompt: look up the route at each send. Use the same prompt every time, word for word: "<name>: run one tick of your scout skill (section 2), then schedule the next one." Never add the last tick's findings, a coordinator's note, a send chain or a fallback to it; those go stale and the prompt grows each hour. A note for your next tick goes in `scout tick --state`. Update an existing schedule in place; do not make a new one each tick.
+7. At the start of the turn, ensure the next wakeup is scheduled using
+   the “Scheduled turn” row of your host guide. Update your existing task
+   in place with this prompt, preserving its cadence and explicit reporting
+   requests:
+
+   ```
+   <name>: run one tick of the scout skill (section 2). Start quietly. Send required reports to their recipients. If nothing needs the user's attention, finish without a local message.
+   ```
+
+   Keep changing details in watch state. Look up the route when sending.
 
 Keep a QUIET tick small: put your reads in one script of your own, outside
 the repository, and run it with one call, then `scout tick`. A tick that

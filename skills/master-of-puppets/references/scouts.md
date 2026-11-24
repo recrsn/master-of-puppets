@@ -175,17 +175,8 @@ An ACK records that you saw an alert. It does not handle it.
   UPDATE with no change gets `member update` only. Do not echo it to the
   user. Report to the user only a P0, a decision that needs them, or the
   result of an action you took.
-- **Tick prompt:** when you schedule a scout's ticks, or send it a tick, use
-  this text and add nothing to it. Never put a route, a thread id, a file to
-  read or a fallback command in it: those change, and the skill says how to
-  find them.
-
-  ```
-  <name>: run one tick of your scout skill (section 2), then schedule the next one.
-  ```
-
-  A schedule made before this rule may still carry a long prompt with
-  routes, thread ids and old findings. When you check a scout, read its
-  schedule; when the prompt is not this text, change it to this text in
-  place. A note for the scout's next tick goes in a message that says "do
-  this in this tick", never into its schedule prompt.
+- **Tick prompt:** use the scheduled prompt in
+  [scout section 2](../../scout/SKILL.md#2-each-tick) for automatic ticks.
+  When checking an older schedule, update its prompt in place and preserve
+  its cadence and any reporting the user requested. Deliver one-off requests
+  by message. Routes, thread IDs and prior findings go stale in a schedule.

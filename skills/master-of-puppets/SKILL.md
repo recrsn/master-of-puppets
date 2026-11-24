@@ -169,7 +169,8 @@ Do this only on the user's word, or to get your own name back after a
 5. Schedule the heartbeat round (required) with your host's scheduler (the
    "Scheduled turn" row of your host guide): every 15 minutes, prompt
    "master-of-puppets heartbeat round for <slug>: follow the Heartbeat round
-   steps. Run checks quietly. Report material changes or decisions. Otherwise
+   steps using your host’s helper access instructions. Run checks quietly.
+   Report material changes or decisions. Otherwise
    end the turn without a user-facing message."
    Add the quiet reporting rule to an existing heartbeat in place, preserving
    its cadence and any user-requested reports. When your host
@@ -366,8 +367,11 @@ with Auto-fix in your session: that makes you write the fixes.
 
 Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
 
-1. `coordinator.py round` (add `--focus`/`--pr` when they change, and
-   `--release-repo`/`--release-workflow` while a release is open). It runs the
+1. Run `coordinator.py round` with the host permissions needed to reach the
+   helper server. If your sandbox blocks that connection, request the host’s
+   per-command approval on the first call. If denied, report the missed round.
+   Add `--focus`/`--pr` when they change, and
+   `--release-repo`/`--release-workflow` while a release is open. It runs the
    heartbeat and prints your leases, silent members, streams without todo progress, new inbox lines, the `pr`
    digest of your PRs and the release runs, each under a timeout. Read new
    ledger entries. When it ends with `ROUND INCOMPLETE`, those sections were not
