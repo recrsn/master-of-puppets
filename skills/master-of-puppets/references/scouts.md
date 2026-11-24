@@ -80,7 +80,9 @@ it only after 2 clean ticks. A write more than 2 ticks after the last one
 records the missed window and the cursor of that time; each `scout tick`
 prints them as `LATE <n>m` until the scout reads the window again and runs
 `scout tick --reread`. Alerts not seen for 24 h print as `OLD <fingerprint>`,
-one per line. The first line ends with `ACT: <tags>` (OLD×n, LATE, SESSION,
+one per line. A failed probe leaves the incident open with its last successful
+observation time. Track the access failure as a separate GAP and check its
+retry time before nudging a scout about an outstanding OLD tag. The first line ends with `ACT: <tags>` (OLD×n, LATE, SESSION,
 TWIN) when any of them is present. `scout resolve` prints `NOT YET` and keeps
 the alert open when it was seen less than 2 ticks ago.
 

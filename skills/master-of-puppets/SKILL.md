@@ -169,7 +169,8 @@ Do this only on the user's word, or to get your own name back after a
 5. Schedule the heartbeat round (required) with your host's scheduler (the
    "Scheduled turn" row of your host guide): every 15 minutes, prompt
    "master-of-puppets heartbeat round for <slug>: follow the Heartbeat round
-   steps. Run checks quietly and report only material changes or decisions."
+   steps. Run checks quietly. Report material changes or decisions. Otherwise
+   end the turn without a user-facing message."
    Add the quiet reporting rule to an existing heartbeat in place, preserving
    its cadence and any user-requested reports. When your host
    has no scheduler, tell the user.

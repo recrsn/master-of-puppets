@@ -550,9 +550,9 @@ def scout_cmd(args):
             missed = None
         if old_alerts:
             acts.append(f"OLD×{len(old_alerts)}")
-            out += f"; {len(old_alerts)} not seen for 24 h, check each one again, then alert it again or resolve it:"
-            out += "".join(f"\n  OLD {f}: read it again now; still bad: puppet.py scout alert --name {args.name} ... --fingerprint {f}; "
-                           f"clean: puppet.py scout resolve --name {args.name} --fingerprint {f}"
+            out += f"; {len(old_alerts)} not seen for 24 h; if the read is blocked, track the GAP separately and keep the original lastSeen:"
+            out += "".join(f"\n  OLD {f}: confirmed on reread: puppet.py scout alert --name {args.name} ... --fingerprint {f}; "
+                           f"two clean ticks: puppet.py scout resolve --name {args.name} --fingerprint {f}"
                            for f in old_alerts)  # one per line: a cut summary line must not hide them
         if missed:
             acts.append("LATE")
@@ -612,7 +612,7 @@ def scout_cmd(args):
         if stuck:
             acts.append("UNHANDLED")
             warn += (f"\nUNHANDLED {' '.join(stuck)} since {min(since[k] for k in stuck)[:16]}Z: act on each line above "
-                     "in this tick (scout skill, section 2); your coordinator sees this in member stale")
+                     "per scout skill section 2; keep OLD during a known GAP until the next probe")
     write_json(scout_path(args.name), st)
     lines = (out + warn).split("\n")
     if acts:
