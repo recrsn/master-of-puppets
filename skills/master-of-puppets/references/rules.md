@@ -32,11 +32,18 @@ member to cross those limits.
    Preserve required CI, security, data-integrity and release checks. Reuse
    passing evidence for unchanged code: a new SHA from a mechanical merge or
    formatter churn does not need a new E2E. Expand checks for concrete risk or
-   failures. Once applicable checks pass, open the PR and mark it ready
-   (`isDraft` false). Publish exact evidence and any material gaps.
+   failures. Open or update the draft and publish the evidence for that head.
+   Request [draft verification](protocol.md#draft-verification) before marking it Ready.
 2. The PR description follows the repository's template. Keep mock, type and
    unit results separate from real E2E.
-3. Normal auto-merge only. No bypass and no admin merge.
+3. After `VERIFIED`, the owner marks the draft Ready, handles hosted review,
+   CI and conflicts, and enables normal auto-merge within the verified scope.
+   Keep explicit user holds, branch protections and repository approval rules.
+   Database migrations, infrastructure changes (including Terraform), new
+   customer-facing configuration or flags, cross-stream conflicts, and admin
+   merges require a separate coordinator decision and the applicable human
+   approval. Keep auto-merge off for these PRs. If you use Datadog, read
+   [its infrastructure exception](datadog.md).
 4. Verify each review finding against the source. Fix valid ones, explain
    skipped ones, resolve threads only after the fix is pushed.
 5. Keep repairing real blockers until MERGED. Before calling a failure

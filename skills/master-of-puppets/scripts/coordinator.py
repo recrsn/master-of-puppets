@@ -186,8 +186,12 @@ Roster and members (coordinators write; members send messages, and request and r
        dashboard. The slug is unique on the machine; only its coordinator changes it.
        add needs --label (at most 40 characters); --goal at most 140.
   stream todo add --name SLUG --text TEXT [--owner MEMBER]   (text at most 140 characters)
-  stream todo set --name SLUG --id N --status open|doing|blocked|done [--note TEXT] [--owner MEMBER]
-  stream todo list --name SLUG
+  stream todo set --name SLUG --id N [--text TEXT] [--status open|doing|blocked|done] [--note TEXT] [--owner MEMBER]
+  stream todo list --name SLUG | stream todo show --name SLUG --id N
+  stream todo req add|remove --name SLUG --id N --text REQUIREMENT
+  stream todo sub add --name SLUG --id N --text TASK [--status STATUS] [--note TEXT]
+  stream todo sub set --name SLUG --id N --sub-id M [--text TASK] [--status STATUS] [--note TEXT]
+  stream todo verify --name SLUG --id N --status passed|failed --pr N --sha FULL_SHA --note SUMMARY
        each stream's todo list: keep it current from each UPDATE, MERGED or DONE. blocked needs --note.
   stream stale [--minutes 60]
        C's open streams: NO-MEMBERS (one line: open streams with no active member and no open todo), NO-LIST (no todos), DONE-LIST (all done: close or add the next), CHECK-IN (no todo
@@ -334,8 +338,8 @@ Shared records (read-only; puppet.py has them too)
        that long, and counts what it leaves out
   pr read N [--head SHA] [--text WHAT] | pr delta N
        read records the full head SHA whose diff C read (a ledger line, kind read). delta shows
-       the commits and files from C's last read head to the current head: read it when an owner
-       asks for OK for auto-merge again after a push that changed scope or behavior
+       the commits and files from C's last read head to the current head. Both commands
+       are optional diff history. Record scope verification with stream todo verify.
   relay --quote "USER WORDS" [--via SESSION] [--pr N] [--about TEXT] | relay list [--pr N] [-n N]
   waiver --pr N --quote "USER WORDS" [--via SESSION] [--waives E2E] | waiver list [--pr N] [-n N]
        one ledger record type (kind relay or waiver) for the user's words that C relays, with
@@ -1592,45 +1596,115 @@ def stream_cmd(args, roster):
 
 
 TODO_STATUSES = ("open", "doing", "blocked", "done")
+SUBTASK_STATUSES = ("todo", "doing", "blocked", "done")
+
+
+def unverified_todo():
+    return {"status": "unverified", "pr": None, "sha": None, "summary": None, "verifiedAt": None}
+
+
+def todo_line(item):
+    subtasks = item.get("subtasks", [])
+    done = sum(sub["status"] == "done" for sub in subtasks)
+    verdict = item.get("verification", {}).get("status", "unverified")
+    owner = f" ({item['owner']})" if item.get("owner") else ""
+    note_text = f" — {item['note']}" if item.get("note") else ""
+    return (f"{item['id']}. [{item['status']}] {item['text']}{owner}{note_text}"
+            f" — requirements: {len(item.get('requirements', []))}, subtasks: {done}/{len(subtasks)}, verification: {verdict}")
+
+
+def update_todo_fields(target, args):
+    for field in ("text", "status", "note", "owner"):
+        value = getattr(args, field, None)
+        if value is not None:
+            target[field] = value
 
 
 def stream_todo(args, roster, cur):
-    """A stream's todo list: add, set and list. Any change of a todo is progress (todoAt)."""
+    """Record a task's scope, progress and the PR revision used to verify it under the roster lock."""
     todos = cur.setdefault("todos", [])
-    if args.tcmd == "list":
-        print("\n".join(f"{t['id']}. [{t['status']}] {t['text']}" + (f" ({t['owner']})" if t.get("owner") else "")
-                        + (f" — {t['note']}" if t.get("note") else "") for t in todos) or f"no todos in {args.name}")
+    action = args.tcmd
+    if action == "list":
+        print("\n".join(todo_line(item) for item in todos) or f"no todos in {args.name}")
         return 0
-    if args.text is not None and len(args.text) > 140 or getattr(args, "note", None) and len(args.note) > 140:
-        print("--text and --note must be at most 140 characters")
-        return 2
-    members = {m["name"] for m in roster["members"].get(args.coordinator, [])}
-    if args.owner and args.owner not in members:
-        print(f"{args.owner} is not a member of {args.coordinator}")
-        return 3
-    t_now = now().isoformat()
-    if args.tcmd == "add":
-        item = {"id": max([t["id"] for t in todos], default=0) + 1, "text": args.text, "status": "open", "updatedAt": t_now}
-        if args.owner:
-            item["owner"] = args.owner
-        todos.append(item)
-    else:
+    item = None
+    if action != "add":
         item = next((t for t in todos if t["id"] == args.id), None)
         if item is None:
             print(f"no todo {args.id} in {args.name}")
             return 3
-        if args.status == "blocked" and not (args.note or item.get("note")):
+
+    text = getattr(args, "text", None)
+    if text is not None and not text.strip():
+        print("--text cannot be blank")
+        return 2
+    if action in ("add", "set") and (len(text or "") > 140 or len(getattr(args, "note", "") or "") > 140):
+        print("todo --text and --note must be at most 140 characters")
+        return 2
+    owner = getattr(args, "owner", None)
+    if owner and not any(m["name"] == owner for m in roster["members"].get(args.coordinator, [])):
+        print(f"{owner} is not a member of {args.coordinator}")
+        return 3
+    t_now = now().isoformat()
+    if action == "add":
+        item = {"id": max((t["id"] for t in todos), default=0) + 1, "text": text, "status": "open"}
+        if owner:
+            item["owner"] = owner
+        todos.append(item)
+    requirements = item.setdefault("requirements", [])
+    subtasks = item.setdefault("subtasks", [])
+    item.setdefault("verification", unverified_todo())
+    scope_changed = False
+    if action == "show":
+        print(json.dumps(item, indent=2, ensure_ascii=False))
+        return 0
+    if action == "set":
+        if args.status == "blocked" and not (args.note if args.note is not None else item.get("note", "")).strip():
             print("blocked needs --note with the reason")
             return 2
-        for field in ("status", "note", "owner"):
-            if getattr(args, field, None) is not None:
-                item[field] = getattr(args, field)
-        item["updatedAt"] = t_now
-    cur["todoAt"] = t_now
+        scope_changed = text is not None and text != item["text"]
+        update_todo_fields(item, args)
+    elif action == "req":
+        if args.operation == "add":
+            if text in requirements:
+                print(f"requirement already recorded on todo {args.id}")
+                return 0
+            requirements.append(text)
+        else:
+            if text not in requirements:
+                print(f"no matching requirement on todo {args.id}")
+                return 3
+            requirements.remove(text)
+        scope_changed = True
+    elif action == "sub":
+        if args.operation == "add":
+            sub_id = max((sub["id"] for sub in subtasks), default=0) + 1
+            sub = {"id": sub_id, "status": "todo"}
+            subtasks.append(sub)
+            scope_changed = True
+        else:
+            sub = next((sub for sub in subtasks if sub["id"] == args.sub_id), None)
+            if sub is None:
+                print(f"no subtask {args.sub_id} on todo {args.id}")
+                return 3
+            scope_changed = text is not None and text != sub["text"]
+            if all(getattr(args, field) is None for field in ("text", "status", "note")):
+                print("sub set needs --text, --status or --note")
+                return 2
+        update_todo_fields(sub, args)
+    elif action == "verify":
+        if args.pr < 1 or not re.fullmatch(r"[0-9a-fA-F]{40}", args.sha) or not args.note.strip():
+            print("verification needs a positive PR number, full 40-character commit SHA and nonblank summary")
+            return 2
+        item["verification"] = {"status": args.status, "pr": args.pr, "sha": args.sha.lower(),
+                                "summary": args.note, "verifiedAt": t_now}
+    if scope_changed:
+        item["verification"] = unverified_todo()
+    item["updatedAt"] = cur["todoAt"] = t_now
     cur.pop("checkinAt", None)  # progress answers the check-in
     save_roster(roster)
-    log(f"stream todo {args.tcmd} {args.name} {item['id']} {item['status']} by={args.coordinator}")
-    print(f"{args.name} {item['id']}. [{item['status']}] {item['text']}")
+    log(f"stream todo {action} {args.name} {item['id']} {item['status']} by={args.coordinator}")
+    print(f"{args.name} {todo_line(item)}")
     return 0
 
 
@@ -3635,8 +3709,7 @@ def relay_cmd(args):
 
 
 def pr_read_cmd(args, action, refs):
-    """read: record the head SHA C read. delta: the commits and files from the last read head to the current
-    head. Neither enables auto-merge: the owner does, after C's OK for auto-merge (SKILL.md, "Driving a stack")."""
+    """Record or compare an optional historical diff read. Todo verification owns the scope verdict."""
     if len(refs) != 1:
         print(f"pr {action} takes one PR")
         return 2
@@ -3659,7 +3732,7 @@ def pr_read_cmd(args, action, refs):
         return 0
     if last != d["head"]:
         if not last:
-            print(f"{repo}#{n} head {d['head']}: no read recorded; read the diff, then pr read {n}")
+            print(f"{repo}#{n} head {d['head']}: no historical diff read recorded")
         else:
             cmp, err = gh_get(f"repos/{repo}/compare/{last}...{d['head']}")
             if err:
@@ -4921,16 +4994,38 @@ def main(argv=None):
     sl.add_argument("--coordinator")
     td = ssub.add_parser("todo")
     tsub = td.add_subparsers(dest="tcmd", required=True)
-    for name in ("add", "set", "list"):
-        tx = tsub.add_parser(name)
-        tx.set_defaults(_self=("coordinator",))
-        tx.add_argument("--name", required=True, help="the stream slug")
-        tx.add_argument("--text", required=(name == "add"), help="one todo, at most 140 characters")
-        tx.add_argument("--owner", help="the member who does it")
+    def todo_parser(parent, name, *, identified=True):
+        parser = parent.add_parser(name)
+        parser.set_defaults(_self=("coordinator",))
+        parser.add_argument("--name", required=True, help="the stream slug")
+        if identified:
+            parser.add_argument("--id", type=int, required=True, help="the todo ID")
+        return parser
+
+    for name in ("add", "set", "list", "show"):
+        tx = todo_parser(tsub, name, identified=name in ("set", "show"))
+        if name in ("add", "set"):
+            tx.add_argument("--text", required=name == "add", help="one todo, at most 140 characters")
+            tx.add_argument("--owner", help="the member who does it")
         if name == "set":
-            tx.add_argument("--id", type=int, required=True)
             tx.add_argument("--status", choices=TODO_STATUSES)
             tx.add_argument("--note", help="why it is blocked, or what changed (at most 140 characters)")
+    requirements = tsub.add_parser("req").add_subparsers(dest="operation", required=True)
+    for name in ("add", "remove"):
+        todo_parser(requirements, name).add_argument("--text", required=True, help="the exact requirement")
+    subtasks = tsub.add_parser("sub").add_subparsers(dest="operation", required=True)
+    for name in ("add", "set"):
+        subtask = todo_parser(subtasks, name)
+        if name == "set":
+            subtask.add_argument("--sub-id", required=True, type=int)
+        subtask.add_argument("--text", required=name == "add")
+        subtask.add_argument("--status", choices=SUBTASK_STATUSES)
+        subtask.add_argument("--note")
+    verification = todo_parser(tsub, "verify")
+    verification.add_argument("--status", choices=("passed", "failed"), required=True)
+    verification.add_argument("--pr", type=int, required=True)
+    verification.add_argument("--sha", required=True, help="full SHA of the verified revision")
+    verification.add_argument("--note", required=True, help="verification summary")
     ss = ssub.add_parser("stale")
     ss.set_defaults(_self=("coordinator",))
     ss.add_argument("--minutes", type=int, default=60)

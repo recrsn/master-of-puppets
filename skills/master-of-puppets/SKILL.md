@@ -211,7 +211,10 @@ message and prints your host's app route to send it by; send it there.
   Update it from each UPDATE, MERGED and DONE, and from each `member update`:
   `stream todo set --name <slug> --id <n> --status doing|blocked|done [--note "<why>"]`
   (`blocked` needs the reason). Limit `--text` and `--note` to 140 characters each. Add new steps as they appear. `stream todo list --name <slug>`
-  prints it. Any change to a todo counts as progress for that stream.
+  prints it. Record agreed criteria with `stream todo req add` and split work
+  with `stream todo sub add|set`. Use `stream todo show --name <slug> --id <n>`
+  for the full task, requirements, subtasks and verification record, including
+  when handing a task to another coordinator.
 - **JOIN** arrives: `coordinator.py join --text "<the JOIN line>" [--local <local_ id>]`
   (it runs `member add`, saves the WELCOME to a file and prints the short
   message and app route that deliver it; send that message at once). A JOIN that names a
@@ -325,46 +328,51 @@ message and prints your host's app route to send it by; send it there.
    send").
    PRs in different stacks that touch the same files go one at a time; `note`
    the order.
-2. **Make the active PR mergeable.** Owner: publishes passing evidence for the
-   applicable checks (`references/rules.md`) and binds the PR (puppet skill,
-   section 3). Coordinator: confirm that evidence and the
-   configured base branch, then `gh pr ready <n>` if draft, and send the
-   owner `OK for auto-merge — #<n> — <mergeMethod>`. The OK means the work is
-   done and meets the agreed requirements. Send it once per PR. The owner then
-   enables plain auto-merge (`gh pr merge <n> --auto --<mergeMethod>`; for
-   `auto`, no method flag), never with `--match-head-commit`.
-   Do not send the OK while the base is another PR branch.
-   Auto-merge stays on across pushes that only fix review findings or CI:
-   do not ask for it to be turned off, and do not send the OK again. Before a
-   push that changes scope or behavior beyond the agreed requirements, the
-   owner turns auto-merge off and asks again; read the change (`coordinator.py
-   pr delta <n>`) and send the OK again when it still meets them.
-3. **React to the `PR` lines of `watch`.** `merge=DIRTY`: the owner syncs the
-   branch with `origin/<base>` and resolves. Failing checks or
-   review comments: automatic PR repair or the owner's repair work
-   handles them; stuck over two rounds,
-   ask for the exact job, revision, test and first causal error.
-   `automerge=off` on an active PR that has your OK: ask the owner why. A
-   scope or behavior change comes with a new request for the OK; any other
-   cause, the owner enables it again.
-4. **On MERGED**: confirm with `coordinator.py pr <n>` (it prints the full
-   merge SHA) and `note` the SHA. Read the next PR's `baseRefName`; if it is not the base
-   branch, run `gh pr edit <next> --base <base>`. Send its owner `ACTIVE` with
-   "sync your branch with origin/<base>, resolve, push". When its base is the
-   base branch, return to step 2: confirm the owner's applicable evidence
-   before you send the OK for auto-merge. A base
-   change alone is not readiness. Never merge a stacked PR into its parent.
-5. Repeat to the top. Then ask owners to stop services, release leases and
-   leave; drop the PRs with `heartbeat --pr ...`.
+2. **Verify the active draft.** Its owner completes local validation, opens or
+   updates the draft, and sends the evidence with
+   `VERIFY REQUEST — <member> — <PR URL> — head <sha> — stream <slug> todo <id>`.
+   Confirm the owner, PR, intended base and current head. Read
+   `coordinator.py stream todo show --name <slug> --id <id>`. Assign **one
+   fresh read-only verification subagent** the full structured task, the draft
+   diff at the requested SHA and the owner's validation evidence. Ask it to
+   check every agreed requirement and subtask against the diff and evidence
+   and identify scope drift, missed edge cases and high-risk changes.
+3. **Record and send the outcome.** Use `coordinator.py stream todo verify
+   --name <slug> --id <id> --status passed|failed --pr <n> --sha <sha>
+   --note "<summary>"` for the head the verifier examined. Check that head
+   before sending a pass. If the draft changed during verification, ask the
+   owner to validate and request verification on the new head.
+   - For gaps, including missing required approval, record `failed` and send
+     `VERIFY FAILED — #<n> — <gaps>`. The owner corrects the draft, validates
+     the changes and requests a fresh verification.
+   - For a passing ordinary PR targeting the configured base branch, record
+     `passed` and send
+     `VERIFIED — #<n> — ready for <hosted reviewer> and normal auto-merge`.
+     If your setup uses CodeRabbit, see [the reviewer guidance](references/coderabbit.md).
+   - For database migrations, Terraform or infrastructure changes outside
+     the exception in the PR rules, new customer-facing config or
+     flags, cross-stream conflicts, and admin merge requests, keep auto-merge
+     off. Record the separate explicit approval and follow the manual path
+     under [PR rules](references/rules.md). Report the verification result
+     without issuing the ordinary auto-merge message.
+4. **Leave delivery with the verified owner until MERGED.** The owner marks
+   the draft Ready, addresses hosted review, CI and merge conflicts, and
+   enables normal auto-merge. Routine pushes within the verified requirements
+   carry that verification forward. Only a substantive scope or behavior
+   change beyond those requirements returns to step 2. Keep PAUSE and the
+   separate approval path in force when applicable.
+5. **On MERGED**, confirm with `coordinator.py pr <n>`, then `note` the merge
+   SHA. Retarget the next PR to the configured base if needed
+   (`gh pr edit <next> --base <base>`). Send its owner `ACTIVE` to sync,
+   resolve any conflicts and request verification of that PR. Never merge a
+   stacked PR into its parent. At the top of the stack, drop finished PRs
+   with `heartbeat --pr ...` and have owners release leases and go idle or
+   leave according to their enrollment.
 
-Your own hands: `gh pr ready`, `gh pr edit --base`, `gh pr merge
---disable-auto` (to stop a merge, for example on PAUSE), and reading PR state.
-The owner enables auto-merge after your OK. Record each diff you read with
-`coordinator.py pr read <n>`; `pr delta <n>` shows what changed since. Record the user's
-words that you relay with `relay --quote ... --via ...`, and a waiver with
-`waiver --pr <n> --quote ...`; `relay list` and `waiver list` find them. Owners do every commit, push, merge
-of main into a branch, conflict fix and review reply. Do not bind members' PRs
-with Auto-fix in your session: that makes you write the fixes.
+Record the user's words that you relay with `relay --quote ... --via ...`,
+and a waiver with `waiver --pr <n> --quote ...`. Owners handle commits,
+pushes, conflict resolution and review replies. Run automatic PR repair
+only in the owner's session.
 
 ## Heartbeat round (scheduled)
 
@@ -384,8 +392,8 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    command" row of your host guide). Disregard
    already-handled messages using `references/protocol.md`, "Duplicate receipt
    and catch-up"; keep the shared inbox for recovery.
-3. Compare each stack with the latest `PR` lines; act on steps 3 and 4
-   above. Confirm with one `coordinator.py pr <n> [...]` before each stack
+3. Compare each stack with the latest `PR` lines to identify merges and
+   activate the next PR. Confirm with one `coordinator.py pr <n> [...]` before each stack
    move, not on a timer. It gives state, head, merge state, review, the merge
    queue, auto-merge, unresolved threads, the latest review by a bot account
    (`bot=<login>:<state>@<sha>`) and the required checks that fail, in one call. `automerge=queued(...)` or
@@ -395,7 +403,9 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    acted on is a member request that `watch` did not show you. Then update
    class defaults from your observations when `sizes` supports a value
    (`references/leases.md`, "Class defaults"); this never involves the user.
-5. Check on members, higher priority first; do not wait for them to report.
+5. Check on members, higher priority first. Skip routine status requests for
+   verified PRs while their owners handle review, CI and merge. Act on an
+   actual blocker, scope change or approval request.
    `coordinator.py member stale --minutes 30` lists members with
    no recorded update. For each one: read its PRs in the latest `PR`
    lines and record observations with `note`, then send `STATUS?`. Do not

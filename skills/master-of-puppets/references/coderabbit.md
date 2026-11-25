@@ -4,6 +4,14 @@ Read this only when a project uses CodeRabbit to review its pull requests.
 For CodeRabbit cloud tasks and Autofix, read
 [coderabbit-cloud.md](coderabbit-cloud.md).
 
+## Draft verification
+
+After the draft passes [coordinator verification](protocol.md#draft-verification)
+and is eligible for normal auto-merge, send
+`VERIFIED — #<n> — ready for CodeRabbit and normal auto-merge`.
+The owner marks the PR Ready for hosted review. It handles findings and CI and
+enables normal auto-merge under the repository's merge rules.
+
 ## Read its review
 
 - `coordinator.py pr <n>` shows the latest review by a bot account as

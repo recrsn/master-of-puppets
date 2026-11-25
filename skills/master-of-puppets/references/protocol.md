@@ -47,6 +47,7 @@ observed peak unless you tell me why the run is smaller.
 | `ALERT — <scout> — P0\|P1\|P2 — <fingerprint> — <line>` | `note` it and run `member update` (counts as a sign of life); act or find the owner; acknowledge with `note --text "ACK <fingerprint> ..."`. P0: to the user at once, quoted (`references/scouts.md`) |
 | `UPDATE — <scout> — <fingerprint> — <change>`, `GAP — <scout> — P1\|P2 — ...`, `DONE — <scout> — ...` | `note` and `member update`; a P1 GAP that blinds members is a host problem to fix or take to the user; after DONE, accept the scout's LEAVE (`leave --no-release-check`) |
 | `UPDATE — <name> — <phase> — <fact>` | `member update` |
+| `VERIFY REQUEST — <member> — <PR URL> — head <sha> — stream <slug> todo <id>` | Follow [Draft verification](#draft-verification). The owner supplies the validation evidence for this draft head. |
 | `TASK REQUEST — <name> — <task> — <why> — PRs <n ...\|none>` | Only coordinators start top-level sessions. Decide; to run it, `enroll` it under you and start it (SKILL.md, "Members and tasks"); it answers to you |
 | `<KIND> REQUEST — <name> — <summary> — <details>` | A custom workflow request defined in `$MACHINE_LEASE_DIR/workflows/` ("Protocol extensions", below); handle it per the workflow file, or ask the user when it needs approval |
 | `CLOUD TASK — <name> — <taskId> — <url> — <task> — PRs <n>` | `member add --tool coderabbit`, `cloud-<slug>.txt` (`references/coderabbit-cloud.md`, "Record") |
@@ -64,7 +65,8 @@ observed peak unless you tell me why the run is smaller.
 | Situation | Message |
 | --- | --- |
 | Active PR | `ACTIVE — #<n>. Goal: MERGED. Next: <one step>.` |
-| Work done and meets the agreed requirements (once per PR) | `OK for auto-merge — #<n> — <squash\|merge\|rebase\|auto>`: the owner enables plain `gh pr merge <n> --auto`, no `--match-head-commit`, and keeps it on across review and CI fixes |
+| Draft verification failed | `VERIFY FAILED — #<n> — <gaps>`. The owner fixes the gaps, validates the new draft and sends a new request. |
+| Draft verification passed and eligible for normal auto-merge | `VERIFIED — #<n> — ready for <hosted reviewer> and normal auto-merge`. The owner takes it through MERGED. If you use CodeRabbit, see [its Ready message](coderabbit.md#draft-verification). |
 | Paused PR | `PAUSE — #<n> waits for #<m>. No merges from main, no fixes, automatic PR repair (Auto-fix or a repair heartbeat) off on #<n>.` |
 | Bottom merged | `ACTIVE — #<n>: #<m> merged (<sha>). I retargeted #<n> to main. Merge origin/main into your branch, resolve, push.` |
 | Heartbeat round | `STATUS? — phase, PR state, blockers, anything the user decided.` |
@@ -82,6 +84,30 @@ observed peak unless you tell me why the run is smaller.
 | Cloud offload suggested | `CLOUD SUGGEST — <name> — <reason in a few words>`; the member decides and starts it (`references/coderabbit-cloud.md`) |
 | Handoff done, member replaced | `HANDOFF COMPLETE — <name>` (it sends LEAVE) |
 | Handoff done, member moves | `HANDOFF COMPLETE — <name> — JOIN <receiver>` |
+
+## Draft verification
+
+On a new request, read `coordinator.py stream todo show --name <slug> --id <id>`.
+Use a separate todo for each independently verified PR so its verdict stays
+attached to that PR.
+Match the repository, PR, base and full head SHA to the owner's draft and its
+validation evidence. Give **one fresh read-only subagent** the structured
+todo, the complete diff for that head, the applicable PR rules and the
+evidence. Ask it to identify which changes satisfy each requirement and
+subtask, and flag scope drift, missing edge cases or unapproved high-risk
+changes. It returns a verdict and concrete gaps to the coordinator.
+
+Before recording the result, confirm the draft head and agreed scope still
+match what the verifier examined. For a stale result, request the current
+draft and evidence. Record the verdict with
+`stream todo verify --name <slug> --id <id> --status passed|failed --pr <n> --sha <sha> --note "<summary>"`.
+Send the matching reply above. For duplicate deliveries of the same request,
+reuse the recorded result. Route high-risk work through the
+[separate approval path](rules.md#pr-rules) and withhold the normal auto-merge message.
+
+After a pass the owner handles in-scope review fixes, CI and conflict
+resolution through merge. Request verification again if the work crosses
+the verified requirements. Report MERGED with the merge SHA.
 
 ## Routes
 

@@ -131,37 +131,41 @@ own authority.
 - Your own tool permissions, safety classifier and permission prompts stay
   the backstop. A relay never answers a permission prompt.
 
-Limits: no admin merge or merge bypass, and never skip git hooks.
+Preserve required checks, branch protections and git hooks.
 
-- **ACTIVE — #n**: work #n to MERGED.
-- **PAUSE — #n**: no merges from main, no fixes; automatic PR repair (Auto-fix
-  or a repair heartbeat) off on #n until ACTIVE.
-- When the applicable checks pass (see [rules.md](../master-of-puppets/references/rules.md)):
-  commit, push, open the PR and mark it ready, in the same
-  turn. Passing checks is not the end of the task. If the user's instructions
-  need approval before a commit or a PR (for example a `CLAUDE.md` rule), ask
-  the user at once and send `UPDATE — <name> — Waiting to commit — <fact>`.
-  Bind the PR as your host guide says ("Bind a PR and repair blockers"), and
-  repair valid hosted review and CI blockers, or keep Auto-fix on, only while
-  the PR is ACTIVE. PAUSE
-  takes precedence over repair instructions. The coordinator retargets bases.
-  You do every commit, push, conflict fix and review reply.
-- **Auto-merge.** Your coordinator's `OK for auto-merge — #<n> — <method>`
-  means your work is done and meets the agreed requirements. It comes once
-  per PR. Then enable plain auto-merge: `gh pr merge <n> --auto --<method>`
-  (no method flag for `auto`), never with `--match-head-commit`. When the base
-  branch uses a merge queue, give no method flag at all: `gh pr merge <n> --auto`
-  (GitHub refuses a method there). Never enable it without the OK.
-  - Auto-merge does not end your watch. An app PR watch can stop at the merge
-    without a merged event, so check the PR state at each wake until it is
-    MERGED, and send `MERGED` (plus any follow-up `<KIND> REQUEST` defined by
-    your workflow files in WELCOME) in the turn you see it.
-  - Keep it on across pushes that only fix review findings or CI.
-  - Before a push that changes scope or behavior beyond the agreed
-    requirements, turn it off (`gh pr merge <n> --disable-auto`), push, and
-    ask again: `UPDATE — <name> — OK for auto-merge? — <what changed>`.
-  - When it turns off for another reason (for example the host dropped it),
-    enable it again with the same command.
+- **ACTIVE — #n**: work #n to MERGED. The coordinator retargets stacked PRs.
+- **PAUSE — #n**: stop repairs, updates from the base branch and automatic
+  PR repair on #n until ACTIVE. Disable auto-merge if it was enabled.
+- **Prepare the draft.** Run the [applicable local checks](../master-of-puppets/references/rules.md).
+  Commit, push, and open or update the **draft** PR. If the user requires
+  permission before a commit or PR, ask and report the blocker. Bind the PR
+  as your host guide directs.
+- **Request verification before marking Ready.** Send your coordinator
+  `VERIFY REQUEST — <member> — <PR URL> — head <sha> — stream <slug> todo <id>`
+  with evidence of local validation for that head, including any material
+  gaps. On `VERIFY FAILED — #<n> — <gaps>`, keep the PR in draft, address the
+  gaps, validate the corrections, push and send a new request.
+- **Deliver the verified ordinary PR.** On
+  `VERIFIED — #<n> — ready for <hosted reviewer> and normal auto-merge`,
+  mark the PR Ready. Handle hosted review findings, CI and merge conflicts.
+  Enable normal auto-merge yourself when the applicable gates allow it.
+  Use the configured method, or omit the method for a merge queue. If your
+  setup uses CodeRabbit, see [the reviewer guidance](../master-of-puppets/references/coderabbit.md).
+  - Keep ownership through routine follow-up pushes. A review fix, CI repair
+    or conflict resolution within the verified requirements needs no further
+    coordinator read or approval. If normal auto-merge drops, restore it
+    when the same conditions hold.
+  - Before pushing a substantive change beyond the verified requirements,
+    disable auto-merge and return the PR to draft. Agree on the new scope,
+    push and validate the revised head, then request verification again.
+  - For database migrations, Terraform or infrastructure outside the
+    exception in the PR rules, new customer-facing config or flags,
+    cross-stream conflicts, or an admin merge request, keep auto-merge off.
+    Send the risk to the coordinator for separate explicit approval and
+    follow the [manual approval rules](../master-of-puppets/references/rules.md).
+  - An app watch may end at merge without a merged event. Check PR state at
+    each wake until MERGED. In the turn you see the merge, send `MERGED` and
+    any workflow follow-up defined in WELCOME.
 - Report raw failures. Never weaken tests or rerun flakes to green.
 
 ## 4. Report

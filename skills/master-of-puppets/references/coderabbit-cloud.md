@@ -159,10 +159,10 @@ In each heartbeat round, for each `coderabbit` member:
 - The PR of a cloud task follows ACTIVE and PAUSE like any PR. You cannot send
   PAUSE to a cloud task: when its PR waits for a lower PR, ask the user to
   turn Autofix off (`decision add`). Autofix stays on only for the ACTIVE PR.
-- The coordinator still marks the PR ready and retargets its base. A cloud
-  task cannot get the OK for auto-merge, so when the work is done and meets
-  the agreed requirements, the coordinator enables plain auto-merge itself
-  (`gh pr merge <n> --auto`, no `--match-head-commit`), once per PR. Autofix resolves the conflicts after a retarget.
+- The coordinator handles stack retargeting. Bind the delivered draft to
+  a workstream owner and stream todo. The owner requests draft verification
+  and takes the PR through hosted review and merge after `VERIFIED`.
+  Autofix can resolve conflicts after a retarget.
 - Leases do not apply. Cloud runs use no resources of this machine.
 - Commands that bill or change shared state run only when the user asks for
   that action: `new` (from a coordinator), `ask` (each question is billed),

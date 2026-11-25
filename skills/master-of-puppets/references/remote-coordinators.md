@@ -38,7 +38,10 @@ stay off the peer channel.
 1. When the user directs a handoff, or an authorized work request leads to
    one, send `HANDOFF — <from> to <to> — <scope> — <handoff note>`.
    Include repository, pushed branches and heads, open PRs, remaining work,
-   restrictions and completion criteria. For a scout, include its targets,
+   restrictions and completion criteria. For a stream todo, include the
+   output of `coordinator.py stream todo show --name <stream> --id <n>` so
+   the receiver has the requirements, subtasks and recorded PR verdict.
+   For a scout, include its targets,
    last verified cursor, open alerts and gaps. Send the contents or an
    accessible artifact. A socket, local file path or worktree on the sending
    machine cannot serve as the transfer.
