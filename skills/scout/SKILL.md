@@ -94,6 +94,10 @@ sandbox: run each puppet.py line outside the sandbox on the first try, every tic
 
 0. Schedule the next tick first (step 7), so a tick that hangs (for example across a machine sleep) does not break the chain. When the last tick was less than half an interval ago (a catch-up run after a wake), record `scout tick` and stop; the tick prints `EARLY` then. A `tick --reread` after LATE in the same turn is never EARLY; another second tick in the same turn (to add `--state`) prints EARLY, and you go on. Run one tick per turn where you can, with `--state` on it. A tick your coordinator asked for runs in full.
 1. Check every target with read-only tools only (scouts.md, "Permissions").
+   For time-windowed searches, check the parsed bounds before the first query:
+   the start matches the last confirmed cursor and precedes the intended end.
+   If either bound is invalid, reconstruct the window before paging. Advance
+   the cursor only after covering that window.
 2. For each problem: `puppet.py scout alert --coordinator <coord> --name <name> --fingerprint <id:cause> --severity P0|P1|P2 [--kind gap] --text "<one line, no secret>"`.
    It prints `NEW` or `ESCALATED` (send it), or `SEEN` (do not send it again).
 3. Resolve an open alert only after 2 clean ticks in a row, not after one good read: `puppet.py scout resolve ... --fingerprint <id:cause>`. It prints `RESOLVED`: send `UPDATE ... recovered`. When it prints `NOT YET`, the alert stays open: send nothing, and do not run `resolve` again before the time it names. When `scout alert` prints `REOPENED`, the alert flaps: send it once, say it flaps, and wait for 2 clean ticks again. Give a gap the fingerprint of the one tool or query that failed, not of the whole provider.

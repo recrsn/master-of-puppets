@@ -87,16 +87,28 @@ observed peak unless you tell me why the run is smaller.
 
 ## Draft verification
 
-On a new request, read `coordinator.py stream todo show --name <slug> --id <id>`.
+On receipt, read `coordinator.py stream todo show --name <slug> --id <id>`.
 Use a separate todo for each independently verified PR so its verdict stays
-attached to that PR.
+attached to that PR. If it already passed and the follow-up stays within the
+verified requirements, retain the original verdict and SHA. The owner carries
+on without another verification request or clearance message.
 Match the repository, PR, base and full head SHA to the owner's draft and its
 validation evidence. Give **one fresh read-only subagent** the structured
-todo, the complete diff for that head, the applicable PR rules and the
-evidence. Ask it to identify which changes satisfy each requirement and
-subtask, and flag scope drift, missing edge cases or unapproved high-risk
-changes. It returns a verdict and concrete gaps to the coordinator.
+todo, applicable PR rules, validation evidence, base and head SHAs, and the
+owner's worktree path when accessible. Have it inspect the committed code
+there: use `git diff <base>...<head>` to locate changes, then follow relevant
+callers, interfaces and tests to establish behavior. Read files at the
+requested commit (`git show <head>:<path>`) if the checkout is dirty or has
+moved. Leave the owner's checkout untouched.
 
+If the verifier cannot access the worktree, use another checkout containing
+those commits or read the PR changes and source files at the exact head
+through the repository host. If required context is inaccessible, identify
+the missing evidence and withhold a pass. Return a verdict against each
+requirement and subtask, identifying scope drift, missed edge cases or
+unapproved high-risk changes.
+
+Wait for the subagent's verdict before issuing the first VERIFIED reply.
 Before recording the result, confirm the draft head and agreed scope still
 match what the verifier examined. For a stale result, request the current
 draft and evidence. Record the verdict with

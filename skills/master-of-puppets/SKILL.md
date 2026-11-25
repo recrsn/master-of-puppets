@@ -238,7 +238,9 @@ message and prints your host's app route to send it by; send it there.
   This also updates the member's row on the dashboard. Keep `--phase` and
   `--latest` short; shorten a long UPDATE first (`references/dashboard.md`,
   "Writing for the dashboard"). End the turn quietly after recording routine
-  progress or an unchanged wait. Report a merge, changed blocker or decision
+  progress or an unchanged wait. After VERIFIED, an in-scope follow-up push
+  (including formatting or CI repairs) is routine progress. Keep the original
+  verification SHA and let the owner continue. Report a merge, changed blocker or decision
   under [Reporting to the user](#reporting-to-the-user).
 - **A task you start yourself**, including one a member asks for:
   `coordinator.py enroll --task "<one line>" --stream <stream-slug> [--pr <n>]`.
@@ -335,10 +337,10 @@ message and prints your host's app route to send it by; send it there.
    `VERIFY REQUEST — <member> — <PR URL> — head <sha> — stream <slug> todo <id>`.
    Confirm the owner, PR, intended base and current head. Read
    `coordinator.py stream todo show --name <slug> --id <id>`. Assign **one
-   fresh read-only verification subagent** the full structured task, the draft
-   diff at the requested SHA and the owner's validation evidence. Ask it to
-   check every agreed requirement and subtask against the diff and evidence
-   and identify scope drift, missed edge cases and high-risk changes.
+   fresh read-only verification subagent** to inspect the PR in the owner's
+   worktree when accessible. Pass its path, the base and head commits, the
+   structured task and validation evidence. Follow the [draft verification
+   protocol](references/protocol.md#draft-verification).
 3. **Record and send the outcome.** Use `coordinator.py stream todo verify
    --name <slug> --id <id> --status passed|failed --pr <n> --sha <sha>
    --note "<summary>"` for the head the verifier examined. Check that head
