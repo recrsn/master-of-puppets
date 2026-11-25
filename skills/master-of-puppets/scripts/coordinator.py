@@ -3915,7 +3915,7 @@ def reclaim_expired(c, checked):
         ns = argparse.Namespace(cls=c, id=h["id"], result="fail", note=note, peak_gib=None, peak_cpus=None,
                                 port=[], process=[], ignore_pid=ignore, retire_vm=None)
         with captured() as buf:
-            code = puppet.release(ns)
+            code = puppet.release(ns, reclaim=h)
         if code != 0:  # the member released it meanwhile
             continue
         done.append(h["id"])

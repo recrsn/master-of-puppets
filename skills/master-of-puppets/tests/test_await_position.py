@@ -25,6 +25,10 @@ class AwaitPosition(unittest.TestCase):
             sys.modules.pop(name, None)
         self.m = importlib.import_module("moplib")
         self.p = importlib.import_module("puppet")
+        self.m.RUN.env = {"CODEX_THREAD_ID": "member-session"}
+        roster = self.m.load_roster()
+        roster["members"]["a"] = [{"name": "me-1", "sessionId": "member-session"}]
+        self.m.save_roster(roster)
         self.m.write_json(self.m.CONFIG, {"configured": True, "classes": {CLASS: dict(self.m.DEFAULT_REGISTRY[CLASS])}})
         self.edit(lambda st: st["queue"][CLASS].extend(self.entry(i) for i in ("x-1", "x-2", "me-1")))
 
@@ -70,11 +74,19 @@ class AwaitPosition(unittest.TestCase):
         self.assertEqual([q["id"] for q in self.m.load()["queue"][CLASS]], ["x-1", "x-2"])
         with redirect_stdout(io.StringIO()):
             self.assertEqual(self.p.release(args), 3)  # neither held nor queued
-        self.edit(lambda st: st[CLASS].append(st["queue"][CLASS].pop(0)))
-        args.id = "x-1"
+        self.edit(lambda st: st[CLASS].append(self.entry("me-1")))
         from contextlib import redirect_stderr
         with redirect_stderr(io.StringIO()):
             self.assertEqual(self.p.release(args), 2)  # a held lease still needs --result
+
+    def test_member_cannot_release_or_withdraw_another_holders_entry(self):
+        self.edit(lambda st: st[CLASS].append(dict(st["queue"][CLASS].pop(0),
+                                                   grantedAt=self.m.now().isoformat(), project=None, worktree=None)))
+        before = self.m.load()
+        for lease_id in ("x-2", "x-1"):
+            with self.subTest(lease_id=lease_id), redirect_stdout(io.StringIO()):
+                self.assertEqual(self.p.main(["release", CLASS, "--id", lease_id, "--result", "pass"]), 3)
+                self.assertEqual(self.m.load(), before)
 
 if __name__ == "__main__":
     unittest.main()

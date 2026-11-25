@@ -493,8 +493,10 @@ The budgets predict; the host check observes. Both must pass, and
    from the queue entry (or `--commands`) and show in `status --brief` and on
    the dashboard.
 3. Read the exit code:
-   - 0: send LEASE GRANTED with the lease id, the recorded commands, expiry
-     and release command.
+   - 0: send LEASE GRANTED with the lease id, worktree, recorded commands,
+     expiry and release command. The member starts only after its own
+     `await-grant` succeeds for that lease and the worktree matches the run.
+     If its sandbox blocks the helper, restore helper access before it starts.
    - 2: the run is over the class limit. Split it (above).
    - 3: another entry is ahead, the class is at its slot cap, `settling`
      (another class's grant settles this one, for example BUILD for 60 s after

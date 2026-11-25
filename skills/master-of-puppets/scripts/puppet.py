@@ -353,7 +353,7 @@ def read_peak(path):
         return None
 
 
-def release(args):
+def release(args, *, reclaim=None):
     """Release the caller's own lease: record its run minutes and measured peak, then
     check what the run left in its worktree (after the lock: the check scans every
     process) and write one event line with the result and the drain count. That line is
@@ -362,16 +362,27 @@ def release(args):
     try:
         state, machine = load(), load_machine()
         holders = state[args.cls]
-        if not any(h["id"] == args.id for h in holders):
-            queue = state["queue"][args.cls]
-            if any(q["id"] == args.id for q in queue):  # never granted: withdraw the request; nothing ran
-                state["queue"][args.cls] = [q for q in queue if q["id"] != args.id]
-                save(state, machine)
-                log(f"unwait {args.cls} {args.id} by=member")
-                print(f"WITHDRAWN {args.cls} {args.id}: removed from the queue; no lease was granted")
-                return 0
+        held = next((h for h in holders if h["id"] == args.id), None)
+        queue = state["queue"][args.cls]
+        entry = held or next((q for q in queue if q["id"] == args.id), None)
+        if entry is None:
             print(f"{args.cls} not held by {args.id}: {json.dumps(holders)}")
             return 3
+        if reclaim is not None:
+            if held != reclaim:  # the server checked a different or since-extended grant
+                return 3
+        else:
+            coord, member = member_of_session(load_roster(), session_identity()[0])
+            owner = entry["holder"].partition(" ")[0]
+            if not member or coord != entry["coordinator"] or member["name"] != owner:
+                print(f"{args.id} belongs to {owner} under {entry['coordinator']}. Only its holder can release or withdraw it.")
+                return 3
+        if held is None:
+            queue.remove(entry)
+            save(state, machine)
+            log(f"unwait {args.cls} {args.id} by=member")
+            print(f"WITHDRAWN {args.cls} {args.id}: removed from the queue; no lease was granted")
+            return 0
         if not args.result:
             print("release of a held lease needs --result pass|fail|partial", file=sys.stderr)
             return 2
@@ -381,7 +392,6 @@ def release(args):
             peak = read_peak(files[0])
         if cores is None:
             cores = read_peak(files[1])
-        held = next(h for h in holders if h["id"] == args.id)
         key = held["project"]
         ran = round((now() - dt.datetime.fromisoformat(held["grantedAt"])).total_seconds() / 60, 1)
         if key:
