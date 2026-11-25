@@ -85,7 +85,7 @@ CLIENT_ENV = ("CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "XD
               "T3CODE_THREAD_ID",  # the caller's T3 Code thread, a route that outlives renames: routes_to
               "CLAUDE_CODE_ENTRYPOINT", "__CFBundleIdentifier", "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",  # where it runs: detect_host
               "ANTIGRAVITY_SOURCE_METADATA")  # an Antigravity ACP session (T3 Code): session_or_none. Never a T3_ACP_MCP_* value
-PATH_FLAGS = ("--worktree", "--root", "--path", "--project-root")
+PATH_FLAGS = ("--file", "--worktree", "--root", "--path", "--project-root")
 RESUMABLE = ("watch", "await-grant", "calm-wait", "measure-peak")  # rerun after a server restart
 SERVER_LOG = os.path.join(DIR, "server.log")
 

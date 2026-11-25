@@ -267,6 +267,10 @@ Memory (the skill's own memory; coordinators write it, everyone reads it)
   memory update --id ID --text TEXT [--kind rule|note] [--project-root P] [--reason TEXT]
        replaces the text and keeps the ID
   memory list [--project-root P] [--json]      machine entries, then the project's
+  memory export [--scope machine|project|all] [--project-root P]   write rules as JSON
+  memory import [--file JSON] [--project-root P]   merge from file or stdin
+       Project and all exports require the local project root. Give the receiving checkout
+       on import of project rules. Machine scope includes the shared PR rules if present.
   memory remove --id ID [--project-root P] [--reason TEXT]
        each change logs an event (by=, reason=) and a ledger line with the old and new text
        Stored on this machine, in the state dir, never in a repository.
@@ -410,6 +414,8 @@ import re
 import shutil
 import subprocess
 import threading
+import tempfile
+from pathlib import Path
 import time
 import urllib.parse
 import uuid
@@ -1879,6 +1885,153 @@ def reason_field(reason):
     return f" reason={json.dumps(reason)}" if reason else ""
 
 
+def rule_time(value):
+    """Compare instants, including offsets from peers in different time zones."""
+    if not isinstance(value, str):
+        raise ValueError("missing rule timestamp")
+    stamp = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if stamp.utcoffset() is None:
+        raise ValueError("rule timestamp needs a time zone")
+    return stamp
+
+
+def memory_store(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return {"entries": []}
+    if not isinstance(data, dict) or not isinstance(data.get("entries"), list):
+        raise ValueError("invalid local memory file")
+    return data
+
+
+def shared_pr_rules(path):
+    try:
+        with path.open(encoding="utf-8", newline="") as f:
+            text = f.read()
+            micros = os.fstat(f.fileno()).st_mtime_ns // 1000
+    except FileNotFoundError:
+        return None
+    stamp = dt.datetime(1970, 1, 1, tzinfo=dt.timezone.utc) + dt.timedelta(microseconds=micros)
+    return {"id": "pr-rules.md", "updatedAt": stamp.isoformat(), "text": text}
+
+
+def export_rules(args, pr_path):
+    scope = args.scope or ("project" if args.project_root else "machine")
+    if scope in ("project", "all") and not args.project_root:
+        raise ValueError("project rules need --project-root")
+    payload = {"version": 1}
+    for name in (("machine", "project") if scope == "all" else (scope,)):
+        path, _ = memory_path(args.project_root if name == "project" else None)
+        payload[name] = [dict(e, updatedAt=e.get("updatedAt") or e["at"])
+                         for e in memory_store(path)["entries"] if e["kind"] == "rule"]
+    if "machine" in payload:
+        pr = shared_pr_rules(pr_path)
+        if pr is not None:
+            payload["prRules"] = pr
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def merge_rules(data, incoming):
+    if not isinstance(incoming, list):
+        raise ValueError("rules must be an array")
+    entries = data["entries"]
+    indices = {e["id"]: i for i, e in enumerate(entries)}
+    seen = set()
+    changed = 0
+    for rule in incoming:
+        if not isinstance(rule, dict) or rule.get("kind") != "rule":
+            raise ValueError("expected a memory rule")
+        if not all(isinstance(rule.get(k), str) for k in ("id", "text", "at", "by")):
+            raise ValueError("missing or invalid memory rule fields")
+        rule_id = rule["id"]
+        if not re.fullmatch(r"m-[0-9a-f]{1,32}", rule_id) or rule_id in seen:
+            raise ValueError("invalid or duplicate rule id")
+        seen.add(rule_id)
+        rule_time(rule["at"])
+        incoming_time = rule_time(rule.get("updatedAt"))
+        if rule_id in indices:
+            index = indices[rule_id]
+            local = entries[index]
+            if incoming_time <= rule_time(local.get("updatedAt") or local["at"]):
+                continue
+            entries[index] = rule
+        else:
+            entries.append(rule)
+        changed += 1
+    return changed
+
+
+def import_rules(args, payload, pr_path):
+    if (not isinstance(payload, dict) or type(payload.get("version")) is not int or payload["version"] != 1
+            or not {"machine", "project"}.intersection(payload)
+            or set(payload) - {"version", "machine", "project", "prRules"}):
+        raise ValueError("expected a version 1 rules export")
+    if "project" in payload and not args.project_root:
+        raise ValueError("supply --project-root for the receiving checkout")
+    writes = {}
+    changed = 0
+    for scope in ("machine", "project"):
+        if scope in payload:
+            path, _ = memory_path(args.project_root if scope == "project" else None)
+            data = memory_store(path)
+            count = merge_rules(data, payload[scope])
+            if count:
+                writes[path] = data
+                changed += count
+
+    # Validate all scopes before publishing any of them. A retry skips completed writes.
+    pr = payload.get("prRules")
+    replace_pr = False
+    if "prRules" in payload:
+        if ("machine" not in payload or not isinstance(pr, dict) or pr.get("id") != "pr-rules.md"
+                or not isinstance(pr.get("text"), str)):
+            raise ValueError("invalid machine PR rules document")
+        stamp = rule_time(pr.get("updatedAt"))
+        local = shared_pr_rules(pr_path)
+        replace_pr = local is None or stamp > rule_time(local["updatedAt"])
+    if replace_pr:
+        epoch = dt.datetime(1970, 1, 1, tzinfo=dt.timezone.utc)
+        nanos = ((stamp - epoch) // dt.timedelta(microseconds=1)) * 1000
+        with tempfile.NamedTemporaryFile(dir=pr_path.parent, delete=False) as f:
+            tmp = Path(f.name)
+        try:
+            tmp.write_bytes(pr["text"].encode("utf-8"))
+            os.utime(tmp, ns=(nanos, nanos))
+            os.replace(tmp, pr_path)
+        finally:
+            tmp.unlink(missing_ok=True)
+    for path, data in writes.items():
+        write_json(path, data)
+    if changed or replace_pr:
+        note(args.by, f"Imported {changed} memory rules; shared PR rules updated: {replace_pr}")
+    print(f"Imported {changed} memory rules. Shared PR rules updated: {replace_pr}.")
+    return 0
+
+
+def sync_rules(args):
+    try:
+        if args.mcmd == "import":
+            if args.file:
+                with open(args.file, encoding="utf-8") as f:
+                    payload = json.load(f)
+            else:
+                payload = json.load(sys.stdin)
+        pr_path = Path(DIR) / "pr-rules.md"
+        lock()
+        try:
+            if args.mcmd == "export":
+                return export_rules(args, pr_path)
+            return import_rules(args, payload, pr_path)
+        finally:
+            unlock()
+    except (OSError, ValueError, OverflowError) as exc:
+        print(f"memory {args.mcmd}: {exc}", file=sys.stderr)
+        return 2
+
+
 def memory_cmd(args):
     """add, update (same ID) and remove. Each change logs one event and one ledger line
     with who and why, and messages every live peer coordinator."""
@@ -1887,7 +2040,8 @@ def memory_cmd(args):
     try:
         data = read_json(path) or {"entries": []}
         if args.mcmd == "add":
-            entry = {"id": f"m-{os.urandom(3).hex()}", "kind": args.kind, "text": args.text, "by": args.by, "at": now().isoformat()}
+            entry = {"id": f"m-{uuid.uuid4().hex}", "kind": args.kind, "text": args.text,
+                     "by": args.by, "at": dt.datetime.now(dt.timezone.utc).isoformat()}
             data["entries"].append(entry)
             write_json(path, data)
             log(f"memory add {name} {entry['id']} by={args.by}{reason_field(args.reason)}")
@@ -1904,7 +2058,7 @@ def memory_cmd(args):
             entry["text"] = args.text
             if args.kind:
                 entry["kind"] = args.kind
-            entry.update({"updatedBy": args.by, "updatedAt": now().isoformat()})
+            entry.update({"updatedBy": args.by, "updatedAt": dt.datetime.now(dt.timezone.utc).isoformat()})
             change = f"changed from {json.dumps(old)} to {json.dumps(args.text)}"
         else:
             data["entries"].remove(entry)
@@ -4646,6 +4800,14 @@ def main(argv=None):
     me = sub.add_parser("memory")
     mesub = me.add_subparsers(dest="mcmd", required=True)
     add_read_commands(sub, memory=mesub)
+    export = mesub.add_parser("export")
+    export.set_defaults(_self=("by",))
+    export.add_argument("--scope", choices=("machine", "project", "all"))
+    export.add_argument("--project-root")
+    imp = mesub.add_parser("import")
+    imp.set_defaults(_self=("by",))
+    imp.add_argument("--file", help="received JSON file (default: stdin)")
+    imp.add_argument("--project-root")
     ma = mesub.add_parser("add")
     ma.set_defaults(_self=("by",))
     ma.add_argument("--text", required=True)
@@ -4814,6 +4976,8 @@ def main(argv=None):
         note(args.by, args.text, args.pr)
         return 0
     if args.cmd == "memory":
+        if args.mcmd in ("export", "import"):
+            return sync_rules(args)
         return memory_cmd(args)
     unlocked = {"host-check": host_check_cmd, "calm-wait": calm_wait_cmd, "measure-peak": measure_peak_cmd,
                 "drain-check": drain_check_cmd, "watch": watch_cmd, "install": install_cmd, "prs": prs_cmd,
@@ -4952,4 +5116,12 @@ if __name__ == "__main__":
             sys.exit("MOP_TRY=1 runs only read-only commands (pr, pr delta, release, welcome, decision|relay|waiver list, "
                      "and the shared-record reads); others need the installed helpers")
         sys.exit(main())  # try this copy's read-only commands before an install
-    sys.exit(forward("coordinator", sys.argv[1:]))
+    argv = sys.argv[1:]
+    if argv[:2] == ["memory", "import"] and not any(
+            a in ("--file", "-h", "--help") or a.startswith("--file=") for a in argv[2:]):
+        # The server has no client stdin. Keep the payload off argv and out of the checkout.
+        with tempfile.NamedTemporaryFile(prefix="mop-rules-") as f:
+            shutil.copyfileobj(sys.stdin.buffer, f)
+            f.flush()
+            sys.exit(forward("coordinator", [*argv, "--file", f.name]))
+    sys.exit(forward("coordinator", argv))

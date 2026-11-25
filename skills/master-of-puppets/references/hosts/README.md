@@ -56,6 +56,7 @@ receiver's host. Reference table:
 | From (host, provider) | To | Route |
 | --- | --- | --- |
 | T3 Code, either | a T3 Code thread | `t3_thread_send` by thread id |
+| Reach a remote coordinator | coordinator on another machine | Follow the [remote coordinator protocol](../remote-coordinators.md). For linked T3 Code environments, see [the T3 transport](t3-code.md#remote-coordinators). |
 | any Claude host | a Claude session on this machine, in any host | `SendMessage` to the session id or the `ListAgents` name |
 | Codex Desktop | a Codex Desktop thread | `send_message_to_thread` |
 | Codex CLI | a Codex CLI thread | `codex queue --thread <id>`, when `codex queue --help` exists |

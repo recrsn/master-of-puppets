@@ -10,6 +10,9 @@ tool, or a dedicated Security Coordinator). Each coordinator has a unique slug
 name and a focus (its stack), and owns its PRs. They share one roster, one
 ledger, the lease queues and one dashboard.
 
+For peers on separate machines, follow [Remote coordinators](remote-coordinators.md).
+The shared-roster commands below apply within one machine.
+
 ## Starting alongside other coordinators
 
 - **Before you start:** if another live coordinator already owns the requested

@@ -80,7 +80,8 @@ conduct and PR rules, `references/dashboard.md` before you write your state
 file, `references/handoff.md` before you send or take a handoff, and
 `references/scouts.md` before you enroll a scout or act on its ALERT.
 Read these only when your setup uses them: `references/multi-coordinator.md`
-when more than one coordinator runs on the machine, `references/coderabbit.md`
+when more than one coordinator runs on the machine,
+[Remote coordinators](references/remote-coordinators.md) when another machine owns related work, `references/coderabbit.md`
 for CodeRabbit code review, and `references/coderabbit-cloud.md` before you
 suggest, start or track a CodeRabbit cloud task.
 
@@ -169,10 +170,12 @@ Do this only on the user's word, or to get your own name back after a
 5. Schedule the heartbeat round (required) with your host's scheduler (the
    "Scheduled turn" row of your host guide): every 15 minutes, prompt
    "master-of-puppets heartbeat round for <slug>: follow the Heartbeat round
-   steps using your host’s helper access instructions. Run checks quietly.
+   steps using your host’s helper access instructions. Reconcile shared work
+   with remote peers and ask about gaps in ownership, coverage or shared state.
+   Run checks quietly.
    Report material changes or decisions. Otherwise
    end the turn without a user-facing message."
-   Add the quiet reporting rule to an existing heartbeat in place, preserving
+   Update an existing heartbeat prompt in place, preserving
    its cadence and any user-requested reports. When your host
    has no scheduler, tell the user.
    The round sends your heartbeat and checks on
@@ -421,7 +424,14 @@ Runs from the schedule in "Coordinator start", step 5, and whenever you resume.
    `NO-ANSWER` (still no progress after the check-in: tell the user which
    stream and todos are stuck). Each line gives the members' last update too:
    when members report but the list did not move, update the list first.
-6. Apply [Reporting to the user](#reporting-to-the-user). If the round found
+6. For each remote peer with shared work, reconcile changes since the last
+   ledger note. Read new peer messages, apply verified changes locally, and
+   send outstanding local changes to shared PRs, streams, handoffs, watches
+   and rules. When the records disagree or ownership or coverage needs
+   confirmation, ask the peer for the missing facts. Record what each side
+   last sent or confirmed so the next round can skip unchanged state and
+   pending requests. See [Remote coordinators](references/remote-coordinators.md#ownership).
+7. Apply [Reporting to the user](#reporting-to-the-user). If the round found
    nothing reportable, finish quietly.
 
 ## When your work is done

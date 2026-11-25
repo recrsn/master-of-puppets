@@ -12,7 +12,7 @@ deferred: load one by name before you call it.
 | Your session id | Claude: `$CLAUDE_CODE_SESSION_ID`. Codex: `$CODEX_THREAD_ID`, which T3 Code sets. Check it once with `echo $CODEX_THREAD_ID`; add a `CODEX_THREAD_ID=<thread id>` prefix only when it is empty. Another provider (Antigravity ACP): your T3 thread id, `$T3CODE_THREAD_ID`; the helpers use it when neither of the others is set. |
 | Your T3 thread id | `$T3CODE_THREAD_ID`, for every provider (Codex too). A thread that T3 Code launched has an id like `mcp:launch:<hash>` or `thread:mcp:<id>:<label>:<n>`; use it as it is. |
 | Find other sessions | `t3_thread_list`, `t3_thread_search`; `t3_thread_read` for a thread's latest items |
-| Send a message | `t3_thread_send` by thread id ("Routes", below). It reaches every T3 Code thread, whatever its provider. |
+| Send a message | `t3_thread_send` by thread id ("Routes", below). For a coordinator on another machine, use the [remote route](#remote-coordinators). |
 | Reach a Claude session in another host | Claude only: `SendMessage` and `ListAgents`, as in [claude-desktop.md](claude-desktop.md) |
 | Reach a Codex Desktop or Codex CLI thread | No app route: [README.md](README.md), "No shared route" |
 | Scheduled turn (heartbeat, scout tick) | `schedule_task`, bound to your thread; Claude may also use `CronCreate` or `ScheduleWakeup`. In Antigravity ACP, use `schedule_task` when present or its own `schedule` tool (`CronExpression` or `DurationSeconds`). A scheduled turn may not send by `t3_thread_send` ("Failures", below). Keep one schedule: note its `scheduledTaskId` and update that task in place. An overdue one-shot task (`nextRunAt` null) is still pending; never make a second one beside it. |
@@ -72,6 +72,29 @@ command in one plain shape so a prefix approval covers the next run:
   the message, and `mode: "queue"`, which runs it as a new turn after the
   receiver's current one. Add `environmentId` when your thread list gives
   one for that thread.
+
+## Remote coordinators
+
+Use this route between coordinators. Each coordinator manages its own
+members. Follow the [remote coordinator protocol](../remote-coordinators.md)
+for the message and acknowledgment.
+
+1. Run `t3_environment_links` on the sending machine. Select the intended
+   peer by its `environmentId` and check its status and access. To send to
+   a pre-existing coordinator thread, the user must pair the outbound link
+   with **full access**. A lower-access link can change only threads started
+   through that link. The target thread's runtime mode must also be within
+   the sender's permissions.
+2. Use `t3_thread_read` with the peer's `environmentId` and the remote
+   coordinator's `threadId` to verify the thread. Pass the same two values
+   to `t3_thread_send`, with the protocol text in `message` and
+   `mode: "queue"`. Queue acceptance confirms submission. For a handoff,
+   wait for the receiver's `CUSTODY ACCEPTED` before transferring ownership.
+3. A link from A to B lets A send to B and read B's thread. With only that
+   link, B can reply in its own thread and A can read the reply there.
+   For B to send directly to A's pre-existing thread, B also needs an
+   outbound full-access link to A. Verify that direction from B using
+   A's environment and coordinator thread IDs.
 
 ## Failures
 
