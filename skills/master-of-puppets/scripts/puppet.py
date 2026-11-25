@@ -51,7 +51,7 @@ Usage: python3 -I puppet.py <command> ...
        4 DENIED by your coordinator (do not retry; ask why); 3 LEFT-QUEUE (left the queue, or every reset
        failed); 5 TIMEOUT after --timeout-min, still queued or not queued yet (run await-grant again);
        6 NEVER-QUEUED within --appear-timeout (default 600 s). Check the exit code of the bare command:
-       a pipe (| tail, | tee) returns the exit code of its last command, not of await-grant
+       run it alone or gate the leased command with &&. A pipe or later shell command can mask TIMEOUT
   extend [CLASS] --coordinator C --name NAME --id ID --minutes N --reason TEXT
        ask your coordinator to extend your own granted lease to expire N minutes from now.
        It does not change the expiry: the coordinator decides. Writes one event line,

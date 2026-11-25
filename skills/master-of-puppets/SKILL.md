@@ -237,7 +237,9 @@ message and prints your host's app route to send it by; send it there.
 - **UPDATE, STATUS reply or MERGED**: `coordinator.py member update --name <name> --phase "<phase>" --kind ok|work|warn|done --latest "<newest fact>" [--pr ...]`.
   This also updates the member's row on the dashboard. Keep `--phase` and
   `--latest` short; shorten a long UPDATE first (`references/dashboard.md`,
-  "Writing for the dashboard").
+  "Writing for the dashboard"). End the turn quietly after recording routine
+  progress or an unchanged wait. Report a merge, changed blocker or decision
+  under [Reporting to the user](#reporting-to-the-user).
 - **A task you start yourself**, including one a member asks for:
   `coordinator.py enroll --task "<one line>" --stream <stream-slug> [--pr <n>]`.
   The printed kickoff line tells the new session to run `/puppet` and join you

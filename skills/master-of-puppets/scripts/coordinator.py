@@ -415,6 +415,7 @@ import argparse
 import datetime as dt
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import threading
@@ -2260,12 +2261,15 @@ def admission_cmd(args, state, machine):
 def acquire_checks(args, state, machine):
     """Every acquire gate except the host and the memory budget. Returns (exit, text) to refuse, else None."""
     queue, holders = state["queue"][args.cls], state[args.cls]
+    entry = next((q for q in queue if q["id"] == args.id), {})
+    expected = getattr(args, "grant_request", None)
+    if expected is not None and (entry_tuple(entry), entry.get("since")) != expected:
+        return 3, f"request changed or left the queue; check events --id {shlex.quote(args.id)}"
     if any(h["id"] == args.id for h in holders):
         return 0, "already held"
     hold = state.get("admission", {}).get(args.cls)
     if hold:
         return 3, json.dumps({"admission_hold": {args.cls: hold}})
-    entry = next((q for q in queue if q["id"] == args.id), {})
     why = over_limit(args.cls, entry.get("project") or project_key(args.worktree)[0], args.minutes)
     if why:
         return 2, why
@@ -4005,7 +4009,12 @@ def grant_cmd(args):
     state = load()
     hit = [(c, q) for c in class_names() for q in state["queue"][c] if q["id"] == args.id]
     if not hit:
-        print(f"{args.id} is not queued; see status --brief")
+        for cls in class_names():
+            for held in state[cls]:
+                if held["id"] == args.id:
+                    print(f"{args.id} is already held in {cls} by {held['holder']}")
+                    return 3
+        print(f"{args.id} is neither queued nor held; check events --id {shlex.quote(args.id)}")
         return 3
     c, q = hit[0]
     if q["coordinator"] != args.coordinator:
@@ -4016,7 +4025,7 @@ def grant_cmd(args):
         return 2
     ns = argparse.Namespace(cls=c, coordinator=q["coordinator"], holder=q["holder"], id=q["id"], worktree=q["worktree"],
                             minutes=q["minutes"], gib=q.get("gib"), cpus=q.get("cpus"), accept_size=args.accept_size,
-                            commands=q.get("commands"), measure=True, auto_expect=None)
+                            commands=q.get("commands"), measure=True, grant_request=(entry_tuple(q), q.get("since")))
     print(f"granting {c} {q['id']} to {q['holder'][:60]} ({q['minutes']} min)")
     return acquire_cmd(ns)
 

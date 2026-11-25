@@ -71,6 +71,21 @@ class Reclaim(unittest.TestCase):
     def held(self):
         return [h["id"] for h in self.m.load()[CLASS]]
 
+    def test_manual_grant_does_not_recreate_request_withdrawn_during_host_check(self):
+        self.m.RUN.env = {"MOP_ACTOR": "a"}
+        state = self.m.load()
+        state["queue"][CLASS].append({"coordinator": "a", "id": "request", "holder": "builder",
+                                      "since": self.m.now().isoformat(), "minutes": 5, "worktree": self.tree})
+        self.m.save(state, self.m.load_machine())
+
+        def withdraw():
+            self.assertEqual(self.c.main(["unwait", CLASS, "--id", "request"]), 0)
+            return True, "CALM"
+
+        self.c.host_check = withdraw
+        self.assertEqual(self.c.main(["grant", "--id", "request"]), 3)
+        self.assertEqual(self.held(), [])
+
     def inbox(self):
         if not os.path.exists(self.m.INBOX):
             return []

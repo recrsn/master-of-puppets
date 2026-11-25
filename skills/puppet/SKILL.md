@@ -263,10 +263,9 @@ puppet.py events --id ID                       # what happened to your request o
 
    **Run only on exit 0.** Gate the command on the exit code of the bare
    `await-grant`, for example `puppet.py await-grant BUILD --id <id> && <command>`.
-   Never put `await-grant` in a pipe (`| tail`, `| tee`, `| grep`): the pipe
-   returns the exit code of its last command, so a TIMEOUT can look like exit
-   0. Never decide from a text match on the output. If you must read the
-   text, only a final line that starts with `GRANTED ` is a grant.
+   Run unrelated lookups in separate tool calls. A pipeline or a later
+   command in the same shell invocation can replace the waiter's exit 5 with
+   its own exit 0. A queued-position line alone never authorizes work.
    - Pool class with a recycle command (for example a VM pool): before `GRANTED`
      it resets the resource (`RECYCLING`, then `RECYCLED`). `RECYCLE-FAILED`
      (destroyed) or `RECYCLE-UNREACHABLE` (kept, marked failed) means you do
