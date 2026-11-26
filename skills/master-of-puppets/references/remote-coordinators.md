@@ -33,6 +33,15 @@ verify. Follow up when circumstances change or a missed handoff needs action.
 Heartbeats, routine status, lease events and acknowledgments of acknowledgments
 stay off the peer channel.
 
+## Updating a peer installation
+
+When coordinating an authorized update, send the tested commit SHA. Before
+retrying an interrupted delivery, check whether a newer tested revision has
+superseded it. Record the delivery status the transport actually returned. The peer
+checks its installed SHA, live helpers and server health, then replies once
+with the observed revision and result. Until that reply, report the peer
+installation as unconfirmed.
+
 ## Handoff
 
 1. When the user directs a handoff, or an authorized work request leads to
