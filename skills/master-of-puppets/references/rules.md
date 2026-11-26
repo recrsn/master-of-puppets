@@ -42,8 +42,9 @@ member to cross those limits.
    Database migrations, infrastructure changes (including Terraform), new
    customer-facing configuration or flags, cross-stream conflicts, and admin
    merges require a separate coordinator decision and the applicable human
-   approval. Keep auto-merge off for these PRs. If you use Datadog, read
-   [its infrastructure exception](datadog.md).
+   approval. Keep auto-merge off for these PRs. Apply an infrastructure
+   exception only when the project's private PR rules explicitly authorize
+   it and every affected resource falls within its scope.
 4. Verify each review finding against the source. Fix valid ones, explain
    skipped ones, resolve threads only after the fix is pushed.
 5. Keep repairing real blockers until MERGED. Before calling a failure

@@ -46,6 +46,11 @@ installation as unconfirmed.
 
 1. When the user directs a handoff, or an authorized work request leads to
    one, send `HANDOFF — <from> to <to> — <scope> — <handoff note>`.
+   For a handoff of all work, reconcile the outgoing owners’ tasks with their
+   relevant worktrees, including work without a PR or stream todo. Check for
+   uncommitted or untracked files and commits absent from the remote. Keep
+   unpublished work on the sending machine and identify what still needs an
+   authorized transfer until the receiver can access it.
    Include repository, pushed branches and heads, open PRs, remaining work,
    restrictions and completion criteria. For a stream todo, include the
    output of `coordinator.py stream todo show --name <stream> --id <n>` so

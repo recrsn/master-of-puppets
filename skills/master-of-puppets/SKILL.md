@@ -357,7 +357,7 @@ message and prints your host's app route to send it by; send it there.
      `VERIFIED — #<n> — ready for <hosted reviewer> and normal auto-merge`.
      If your setup uses CodeRabbit, see [the reviewer guidance](references/coderabbit.md).
    - For database migrations, Terraform or infrastructure changes outside
-     the exception in the PR rules, new customer-facing config or
+     any exception in the project’s PR rules, new customer-facing config or
      flags, cross-stream conflicts, and admin merge requests, keep auto-merge
      off. Record the separate explicit approval and follow the manual path
      under [PR rules](references/rules.md). Report the verification result

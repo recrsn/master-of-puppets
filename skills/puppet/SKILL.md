@@ -160,8 +160,8 @@ Preserve required checks, branch protections and git hooks.
   - Before pushing a substantive change beyond the verified requirements,
     disable auto-merge and return the PR to draft. Agree on the new scope,
     push and validate the revised head, then request verification again.
-  - For database migrations, Terraform or infrastructure outside the
-    exception in the PR rules, new customer-facing config or flags,
+  - For database migrations, Terraform or infrastructure outside any
+    exception in the project’s PR rules, new customer-facing config or flags,
     cross-stream conflicts, or an admin merge request, keep auto-merge off.
     Send the risk to the coordinator for separate explicit approval and
     follow the [manual approval rules](../master-of-puppets/references/rules.md).
