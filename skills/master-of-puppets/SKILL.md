@@ -60,7 +60,10 @@ first: read `git log` in the skill copy before you install. `register` and
 each `round` print a warning when the live copies differ from the server's
 skill copy. Then tell the user and do not install:
 the skill copy may be work in progress, and an install replaces the live
-helpers. Install only when the user says so.
+helpers. Install only when the user says so. When an update changes role
+instructions, read the changed sections before your next affected decision.
+Point affected active members to their changed sections in the next task
+message; parked sessions can read them when they resume.
 
 Your identity comes from your session. The server finds the calling
 coordinator from `$CLAUDE_CODE_SESSION_ID` (Claude) or `$CODEX_THREAD_ID`

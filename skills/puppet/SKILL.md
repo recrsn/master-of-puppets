@@ -142,8 +142,9 @@ Preserve required checks, branch protections and git hooks.
   as your host guide directs.
 - **Request verification before marking Ready.** Send your coordinator
   `VERIFY REQUEST — <member> — <PR URL> — head <sha> — stream <slug> todo <id>`
-  with the PR worktree path when available and evidence of local validation
-  for that head, including any material gaps. On `VERIFY FAILED — #<n> — <gaps>`,
+  once the checks required before Ready have passed. Include the PR worktree
+  path when available and the evidence for that head. If a required check is
+  blocked, report the blocker and keep the PR in draft. On `VERIFY FAILED — #<n> — <gaps>`,
   keep the PR in draft, address the gaps, validate the corrections, push and
   send a new request.
 - **Deliver the verified ordinary PR.** On

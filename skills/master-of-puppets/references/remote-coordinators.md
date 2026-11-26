@@ -54,7 +54,11 @@ stay off the peer channel.
 3. The receiver enrolls its own local owner or scout. The sender retires its
    local assignment and records the accepted boundary. For a watch, record
    when the old watch stopped and the new watch actually began. Existing
-   gaps stay open until verified. Members release their leases locally.
+   gaps stay open until verified. Before interrupting a local owner, check
+   its held and queued leases. Have it withdraw obsolete requests and
+   release grants once its commands drain. If the owner is already offline,
+   record the lease as outstanding local cleanup and follow the local
+   [expiry procedure](leases.md).
    The successor obtains any needed lease on its own machine.
 4. Once custody has moved and both sides can account for outstanding work,
    the receiver sends

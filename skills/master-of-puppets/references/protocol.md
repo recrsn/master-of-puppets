@@ -93,7 +93,10 @@ attached to that PR. If it already passed and the follow-up stays within the
 verified requirements, retain the original verdict and SHA. The owner carries
 on without another verification request or clearance message.
 Match the repository, PR, base and full head SHA to the owner's draft and its
-validation evidence. Give **one fresh read-only subagent** the structured
+validation evidence. If evidence for a required pre-Ready check is pending,
+keep the draft unverified and tell the owner which result to supply. Resume
+on that evidence even if the head SHA is unchanged.
+Give **one fresh read-only subagent** the structured
 todo, applicable PR rules, validation evidence, base and head SHAs, and the
 owner's worktree path when accessible. Have it inspect the committed code
 there: use `git diff <base>...<head>` to locate changes, then follow relevant
