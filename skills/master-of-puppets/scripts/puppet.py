@@ -48,7 +48,7 @@ Usage: python3 -I puppet.py <command> ...
        RECYCLE-FAILED (the resource is destroyed); an unreachable one RECYCLE-UNREACHABLE (it is kept,
        marked failed). Either way you do not get it: the entry is queued again at the front
        (REQUEUED; keep waiting), up to 3 times, then LEFT-QUEUE. Exit 0 GRANTED (the only grant);
-       4 DENIED by your coordinator (do not retry; ask why); 3 LEFT-QUEUE (left the queue, or every reset
+       4 DENIED by your coordinator (do not retry; ask why); 3 EXPIRED (still held past expiry) or LEFT-QUEUE (left the queue, or every reset
        failed); 5 TIMEOUT after --timeout-min, still queued or not queued yet (run await-grant again);
        6 NEVER-QUEUED within --appear-timeout (default 600 s). Check the exit code of the bare command:
        run it alone or gate the leased command with &&. A pipe or later shell command can mask TIMEOUT
@@ -246,7 +246,7 @@ def await_grant(args):
     """Poll without the lock. The coordinator may queue the ID for the member, so the
     ID gets --appear-timeout to show up before it is judged. Prints HELD <reason> when
     the coordinator holds or reviews the entry, QUEUED <position> each time the position changes, then one final line: GRANTED, DENIED,
-    LEFT-QUEUE, TIMEOUT or NEVER-QUEUED <reason>; only GRANTED (exit 0) means granted, and no
+    EXPIRED, LEFT-QUEUE, TIMEOUT or NEVER-QUEUED <reason>; only GRANTED (exit 0) means granted, and no
     other final line contains the word GRANTED, so a text match cannot read a refusal as a grant. A pool class with a
     recycle command resets the granted resource first (recycle_granted)."""
     start = time.time()
@@ -254,6 +254,9 @@ def await_grant(args):
     while True:
         state = load()
         held_lease = next((h for h in state[args.cls] if h["id"] == args.id), None)
+        if held_lease and dt.datetime.fromisoformat(held_lease["expiresAt"]) <= now():
+            print(f"EXPIRED {args.cls} {args.id}: do not run; ask for an extension or release the lease")
+            return 3
         if held_lease and held_lease.get("resource") and not held_lease.get("recycled") \
                 and (pool_spec(args.cls) or {}).get("recycle"):
             print(f"RECYCLING {args.cls} {args.id}: {held_lease['resource']}; keep waiting", flush=True)
@@ -271,7 +274,8 @@ def await_grant(args):
                 seen = True
                 continue
             print(f"{'RECYCLED' if outcome == 'recycled' else 'NOT-RECYCLED'} {args.cls} {args.id}: {line}", flush=True)  # none: no command
-            held_lease = next((h for h in load()[args.cls] if h["id"] == args.id), None)
+            seen = True
+            continue  # recheck ownership and expiry after the reset
         if held_lease:
             print(f"GRANTED {args.cls} {args.id}")
             if held_lease.get("resource"):

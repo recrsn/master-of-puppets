@@ -354,7 +354,9 @@ At a lease's expiry, the server tells its holder directly, once per expiry
 (log `expiry-told`): `LEASE EXPIRED <CLASS> <id> ...` with the exact `extend`
 and `release` commands. An extension sets a new expiry, and the holder is
 told again at that one. `round` shows each expired lease with its age and
-when the holder was told.
+when the holder was told. Before relaying a delayed grant, check that the
+same ID is still held and its current expiry is in the future. The member
+runs `await-grant` before starting work.
 
 ### Reclaim
 

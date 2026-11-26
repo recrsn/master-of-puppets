@@ -1,6 +1,7 @@
 """await-grant prints QUEUED with the position each time it changes, so a member never reads the lease file by hand.
 Run: python3 -I skills/master-of-puppets/tests/test_await_position.py
 Runs in its own empty MACHINE_LEASE_DIR; no server and no lease command run."""
+import datetime as dt
 import importlib
 import io
 import os
@@ -52,7 +53,8 @@ class AwaitPosition(unittest.TestCase):
     def test_position_changes_are_printed_once_each(self):
         steps = [lambda st: None,  # no change: no second QUEUED line
                  lambda st: st["queue"][CLASS].pop(0),
-                 lambda st: st[CLASS].append(st["queue"][CLASS].pop(1))]
+                 lambda st: st[CLASS].append(dict(st["queue"][CLASS].pop(1),
+                                                  expiresAt=(self.m.now() + dt.timedelta(minutes=5)).isoformat()))]
         self.p.nap = lambda s: self.edit(steps.pop(0))
         args = types.SimpleNamespace(cls=CLASS, id="me-1", timeout_min=30, appear_timeout=600, interval=0)
         out = io.StringIO()
@@ -63,6 +65,14 @@ class AwaitPosition(unittest.TestCase):
                                      "QUEUED BUILD me-1: position 2 of 2 (next ahead: x-2); keep waiting"])
         self.assertEqual(lines[2], "GRANTED BUILD me-1")
 
+
+    def test_expired_held_lease_does_not_authorize_work(self):
+        self.edit(lambda st: st[CLASS].append(dict(st["queue"][CLASS].pop(),
+                                                   expiresAt=self.m.now().isoformat())))
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(self.p.main(["await-grant", CLASS, "--id", "me-1", "--timeout-min", "0"]), 3)
+        self.assertIn("EXPIRED BUILD me-1", out.getvalue())
 
     def test_release_withdraws_a_request_not_granted_yet(self):
         args = types.SimpleNamespace(cls=CLASS, id="me-1", peak_gib=None, peak_cpus=None, retire_vm=None,

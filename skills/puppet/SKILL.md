@@ -259,6 +259,7 @@ puppet.py events --id ID                       # what happened to your request o
    | --- | --- | --- |
    | `GRANTED` | 0 | Run. This is the only grant. Your coordinator also sends LEASE GRANTED with the expiry. |
    | `DENIED` | 4 | Do not run and do not retry. Ask your coordinator why. |
+   | `EXPIRED` | 3 | Start no work. Ask for an extension or release the expired lease. |
    | `LEFT-QUEUE` | 3 | Do not run. Ask your coordinator. |
    | `TIMEOUT` | 5 | Do not run. You are still queued (or not queued yet): run `await-grant` again. With nothing else to do, wait with the default timeout (30 min), not `--timeout-min 1` in a loop: each short poll costs a turn and changes nothing. |
    | `NEVER-QUEUED` | 6 | Do not run. Check the id with your coordinator. |
@@ -298,7 +299,9 @@ puppet.py events --id ID                       # what happened to your request o
      `--result partial` and request the rest with a new id.
    - Exit 3: not a member, not your lease, or not held. Fix what it names.
    On `LEASE EXPIRED` (the server sends it to you at the expiry, once),
-   ask the same way, or release at once. When a lease
+   ask the same way, or release at once. For a delayed notice, check
+   `puppet.py events --id <id>` first. A later release or reclaim closes
+   the notice; a later extension supplies the current expiry. When a lease
    is expired for the class's reclaim time (default 10 min) and no process
    runs in your worktree, the server releases it as `fail`
    (`AUTO-RECLAIMED`). You then hold nothing: do not run under it, and
