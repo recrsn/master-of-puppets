@@ -67,6 +67,18 @@ class Idle(unittest.TestCase):
         self.assertIn("You are long-running", out)
         self.assertEqual(self.member()["life"], "long-running")
 
+    def test_standing_member_keeps_its_role(self):
+        self.join()
+        for argv in (["enroll", "--name", "gw", "--task", "new task"], ["leave", "--name", "gw"]):
+            code, out = self.run_cmd(argv)
+            self.assertNotEqual(code, 0, out)
+            self.assertEqual(self.member()["life"], "long-running")
+        self.assertNotEqual(self.join(life="ephemeral")[0], 0)
+        self.assertEqual(self.member()["life"], "long-running")
+        code, out = self.run_cmd(["leave", "--name", "gw", "--end-role", "End the standing role"])
+        self.assertEqual(code, 0, out)
+        self.assertIn("LEAVE ACCEPTED", out)
+
     def test_ephemeral_member_may_not_idle(self):
         self.join(life="ephemeral")
         code, out = self.run_cmd(["idle", "--name", "gw", "--wake", "a new question"])

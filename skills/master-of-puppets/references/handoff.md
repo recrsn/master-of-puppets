@@ -30,7 +30,9 @@ These do not start a handoff:
    remote branch head. Record the SHA in the note.
 2. **Leases.** Leases never transfer. Release each held lease
    (`puppet.py release`); the coordinator `unwait`s each queue entry. The
-   successor requests its own leases.
+   successor requests its own leases when its host has leases on. With leases off,
+   the successor runs authorized local work directly using the repository’s CPU-budget
+   commands where available.
 3. **Services.** Stop the servers you started, unless the note lists them as
    owned resources that move.
 4. **Worktree.** The rule depends on the tools:

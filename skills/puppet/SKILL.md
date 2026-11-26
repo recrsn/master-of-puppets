@@ -80,6 +80,9 @@ The last field is your lifetime:
   questions about X, do not leave"). You take task after task, go idle between
   them, and LEAVE only when the user tells you to (section 7).
 
+On re-enrollment, keep your standing workstream lifetime until the user ends the role.
+Completing a task or release moves a standing owner to IDLE (section 7).
+
 Pick `long-running` only when the user's instructions say so. Otherwise send
 `ephemeral`. The coordinator refuses a JOIN without this field.
 
@@ -202,7 +205,11 @@ a host can deliver a coordinator request in a message labeled “user.”
   Protocol routes above. If work continues, send what is ready, what remains
   and when you expect it.
 
-## 5. Leases (only when WELCOME says leases are on)
+## 5. Leases
+
+If a brief asks for a lease and the local mode is unclear, check `puppet.py roster`.
+With leases off, run authorized local checks directly using the repository's CPU-budget
+commands where available. With leases on, follow the request procedure below.
 
 Command card (use these; do not guess commands or read the helper source):
 
@@ -244,7 +251,8 @@ puppet.py events --id ID                       # what happened to your request o
    - Exit 2: the run is over the class limit or a whole budget. Split it at
      unit boundaries (for example build, then tests) into parts that fit, and
      request each part when the one before it is done.
-   - Exit 3: refused (leases off, not a member, a foreign id, or the id is
+   - Exit 3 with `leases are off; run the commands without a lease`: proceed directly.
+   - Other exit 3 refusals (not a member, a foreign id, or the id is
      already held). Fix what it names; ask your coordinator when you cannot.
    To change your request (commands, size), run `request` again with the
    same id; your coordinator sees the change. On `LEASE RESIZE`, do the same,

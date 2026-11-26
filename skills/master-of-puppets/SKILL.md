@@ -252,6 +252,10 @@ message and prints your host's app route to send it by; send it there.
   Start it as your host guide says ("Start an independent session"): ask the
   user first, or suggest a card the user starts. Subagents need no
   enrollment.
+- **Assignment and handoff briefs:** Check the lease mode in the destination host's roster.
+  With leases off, tell the member to run authorized local checks directly using the
+  repository's CPU-budget commands where available. Include BUILD or E2E lease
+  instructions only when that host has leases on.
 - **Where new work goes**, in this order:
   1. The member that owns the stream (`who --text`, `roster`): send it the
      work. Ask the owner to start subagents for independent investigations or
@@ -281,7 +285,11 @@ message and prints your host's app route to send it by; send it there.
   under Needs you. Never mark a member done, or tell it LEAVE is fine, while it
   has uncommitted changes or an open PR.
 - **Lifetime**: the JOIN's last field. An `ephemeral` member LEAVEs when its
-  task is done. A `long-running` member stays and goes idle between tasks.
+  task is done. A standing workstream owner keeps its `long-running` lifetime on re-enrollment.
+  When a task or release finishes, keep the owner enrolled and use IDLE.
+  For a user decision ending the standing role, pass the user’s words to
+  `leave --end-role "<quote>"` before directing the member to archive.
+  A temporary member helping the same stream may have its own ephemeral assignment.
 - **IDLE** (long-running members only): reply in the same turn. Run
   `coordinator.py idle --name <name> --wake "<what wakes it>"`: it checks that
   each PR is MERGED or CLOSED, the worktree is clean and pushed, and the member

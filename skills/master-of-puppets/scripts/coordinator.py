@@ -1151,6 +1151,9 @@ def roster_cmd(args):
         note(args.coordinator, f"{args.coordinator} is active")
     if args.cmd == "enroll":
         name = args.name or f"{re.sub(r'[^a-z0-9]+', '-', args.task.lower()).strip('-')[:24].strip('-')}-{os.urandom(2).hex()}"
+        if any(m["name"] == name and m.get("life") == "long-running" for m in members):
+            print(f"{name} is a standing member; assign new work with member update or refresh its session with JOIN")
+            return 3
         members[:] = [m for m in members if m["name"] != name]
         if args.role == "scout" and (err := scout_name_taken(roster, name, args.coordinator)):
             print(err)
@@ -1257,6 +1260,9 @@ def roster_cmd(args):
         if m is None:
             m = {"name": args.name, "joinedAt": now().isoformat()}
             members.append(m)
+        if m.get("life") == "long-running" and args.life == "ephemeral":
+            print(f"{args.name} has a standing role; rejoin with long-running lifetime")
+            return 3
         m["status"] = "active"
         m.setdefault("joinedAt", now().isoformat())
     elif m is None:
@@ -3954,6 +3960,12 @@ def leave_cmd(args):
         record(me, "leave", f"LEAVE of {args.name} not accepted: {args.reason}", name=args.name, accepted=False)
     else:
         problems, facts = [], []
+        if m.get("life") == "long-running":
+            decision = (args.end_role or "").strip()
+            if not decision:
+                print("use idle between tasks; to end a standing role, give --end-role with the user's words")
+                return 1
+            facts.append(f"standing role ended by user: {decision}")
         if prs and not m.get("repo"):
             problems.append("the member has PRs but no repo; member update --repo owner/repo")
         refs = [(m["repo"], n) for n in prs] if m.get("repo") else []
@@ -4730,6 +4742,7 @@ def main(argv=None):
     lv.add_argument("--reject", action="store_true", help="keep the member; --reason says what is left")
     lv.add_argument("--reason")
     lv.add_argument("--validated", help="accept: the production check that passed, e.g. 'error rate flat 30 min'")
+    lv.add_argument("--end-role", metavar="QUOTE", help="accept a standing member's LEAVE with the user's words ending its role")
     lv.add_argument("--no-release-check", action="store_true", help="accept: skip the release ancestry check (docs, CI-only)")
     lv.add_argument("--closed-by-user", nargs="+", action="extend", metavar="PR",
                     help="accept: these PRs may be CLOSED unmerged, by the user's decision (needs --quote)")
