@@ -30,8 +30,9 @@ question in this thread even when the answer is “still waiting.”
 
 **Find your host first** ([hosts/README.md](../master-of-puppets/references/hosts/README.md),
 "Find your host"; run `puppet.py host`), then read only your host's guide.
-Run `puppet.py route` before each send. In T3 Code, use
-`t3_thread_send` with `mode: "steer"` when sending to your coordinator. Use the verified destination and
+Run `puppet.py route` before each send. In T3 Code, steer reports into your
+coordinator's running turn. Use `auto` when it is idle or its state is unknown.
+Use the verified destination and
 failure handling in [Protocol routes](../master-of-puppets/references/protocol.md#routes)
 for JOIN and all later messages. To recover a message from your coordinator,
 read `puppet.py inbox --from <coordinator> --to <member>`. Use only member routes. Direct writes to

@@ -78,8 +78,12 @@ records. Keep the original messages available for recovery.
   name.
 - Send with `t3_thread_send`: `threadId` from the route, the protocol text as
   the message and the delivery mode for that direction. A puppet sending to
-  its coordinator uses `mode: "steer"` so an active coordinator can act on
-  the message during its current turn. For coordinator assignments to members,
+  its coordinator uses `mode: "steer"` when the coordinator has a running
+  turn. When the coordinator is idle or its run state is unknown, use
+  `mode: "auto"`. T3 can then steer, start a turn, or queue the message.
+  If T3 rejects a steer because the turn ended, retry once with `auto`.
+  An accepted message, including a queued one, needs no resend.
+  For coordinator assignments to members,
   use `mode: "queue"` except for the stale-thread case below. Scouts use
   `mode: "queue"` for their reports. Add `environmentId` when your thread
   list gives one for that thread.

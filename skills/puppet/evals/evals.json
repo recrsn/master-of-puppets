@@ -102,7 +102,7 @@
     },
     {
       "id": 8,
-      "prompt": "DRY RUN. A fresh Codex session runs $puppet. `env` shows CODEX_THREAD_ID=x-77, __CFBundleIdentifier=com.t3tools.t3code and CODEX_INTERNAL_ORIGINATOR_OVERRIDE=T3 Code; your tool list has t3_thread_send and t3_thread_search, and no send_message_to_thread. Its task: fix example/app#210 (base main) in worktree /work/app-210. MACHINE_LEASE_DIR=<fixture>/state (a copy; never touch ~/.local/state/machine-leases). roster.json lists the live coordinator codex-billing (tool codex, host t3-code, focus 'billing stack', PRs 205-210). Do not call any send tool; write what you would do. Write <out>/plan.md and <out>/commands.sh.",
+      "prompt": "DRY RUN. A fresh Codex session runs $puppet. `env` shows CODEX_THREAD_ID=x-77, __CFBundleIdentifier=com.t3tools.t3code and CODEX_INTERNAL_ORIGINATOR_OVERRIDE=T3 Code; your tool list has t3_thread_send and t3_thread_search, and no send_message_to_thread. Its task: fix example/app#210 (base main) in worktree /work/app-210. MACHINE_LEASE_DIR=<fixture>/state (a copy; never touch ~/.local/state/machine-leases). roster.json lists the live coordinator codex-billing (tool codex, host t3-code, focus 'billing stack', PRs 205-210). T3 shows the coordinator has a running turn. Do not call any send tool; write what you would do. Write <out>/plan.md and <out>/commands.sh.",
       "expected_output": "Finds its host first (puppet.py host, or the env markers): T3 Code. Reads only references/hosts/t3-code.md. Sends JOIN to codex-billing with t3_thread_send by its T3 thread id (from puppet.py route, else t3_thread_search), not with send_message_to_thread, SendMessage or codex queue.",
       "files": [
         "state/roster.json"
@@ -110,7 +110,7 @@
       "assertions": [
         "The plan finds the host before it sends anything: puppet.py host, or the env markers from references/hosts/README.md, and names the host T3 Code",
         "The plan reads references/hosts/t3-code.md and no other host guide",
-        "The JOIN goes by t3_thread_send with a thread id from puppet.py route or t3_thread_search, with mode queue",
+        "The JOIN goes by t3_thread_send with a thread id from puppet.py route or t3_thread_search, with mode steer to reach the coordinator during its running turn",
         "The plan uses no send_message_to_thread, SendMessage, ListAgents or codex queue",
         "The session runs no roster-writing command: no coordinate, member, enroll, note or decision"
       ]
