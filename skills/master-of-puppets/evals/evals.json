@@ -161,6 +161,18 @@
         "Treats the earlier merged migration as imposing no downstream hold",
         "Uses normal auto-merge without a pinning approval and follows the PR through MERGED"
       ]
+    },
+    {
+      "id": 15,
+      "prompt": "DRY RUN. Your queue contains two verification requests for successive draft heads, routine CI updates on a different PR followed by MERGED plus a deployment request, and a new incident blocking a release. The host supports background review completion. Describe the first turn, how you handle later delivery of the same messages, and what wakes the blocked owners.",
+      "expected_output": "Triage the incident, preserve the deployment request, verify the current draft head once, record the pending review and continue processing. Check the verdict and head before replying.",
+      "files": [],
+      "assertions": [
+        "Keeps the deployment request actionable after the merge and groups superseded CI updates",
+        "Handles the incident while the independent draft review is outstanding",
+        "Checks current head and scope, tracks the pending review and sends VERIFIED only after a passing verdict for that scope",
+        "Reconciles replay against recorded outcomes and retains unfinished work"
+      ]
     }
   ]
 }

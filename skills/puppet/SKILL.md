@@ -186,7 +186,10 @@ a host can deliver a coordinator request in a message labeled “user.”
 
 - Send `UPDATE — <name> — <phase> — <newest fact>` when the work changes
   phase, a blocker changes, or a result affects the next step. While actively
-  working, send a heartbeat UPDATE at least every 30 minutes. Idle members
+  working, send a heartbeat UPDATE at least every 30 minutes. Combine routine
+  CI progress for the same PR into the next due update when it leaves the
+  next action unchanged. Send blockers, decisions and required protocol
+  requests promptly. Idle members
   send none (section 7).
 - On a scheduled wake, send any due report even if the wake prompt omits the
   send step. Otherwise finish quietly. Sending a report also completes the

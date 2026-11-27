@@ -196,6 +196,21 @@ in the ledger; member messages need no shared inbox copy.
 
 ## Duplicate receipt and catch-up
 
+Read the available queue pages and group related messages before responding.
+Read each group newest first to establish the current state; preserve earlier
+instructions, distinct requests and unresolved effects. A merge supersedes a CI
+progress update but may still require a deployment request. A recovered incident
+can still have affected users. Check both before marking the group handled.
+
+For repeated verification requests, confirm the live PR head, scope, evidence
+and existing verdict. Match any pending review by PR, head and scope before
+starting another. When dispatching a background review, record its identifier
+on the todo and let its completion trigger the verdict check. Dispatching a
+review leaves the verdict pending. Record routine progress together and
+reserve direct replies for required acknowledgments, decisions and unblocks.
+When the host later delivers an item seen in the batch, check its recorded
+outcome before acting.
+
 Treat direct delivery, watcher output and durable inbox recovery as views of
 the same message. Before acting, check whether you already handled that
 occurrence. Match its sender, recipient, content and available timestamp or

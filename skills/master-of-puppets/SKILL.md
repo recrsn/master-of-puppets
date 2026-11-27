@@ -238,6 +238,12 @@ message and prints your host's app route to send it by; send it there.
   `member stale` shows `TWIN` or a session that is not the roster's, ask the
   scout to send SCOUT JOIN from its live session and stop the other one.
   Follow `references/scouts.md`.
+- **When messages accumulate**, inspect the pending batch at the start of the
+  turn. Group by PR, incident or decision and reconcile the newest state first.
+  Handle urgent incidents, user decisions and blocked owners before routine
+  progress. Use the [catch-up procedure](references/protocol.md#duplicate-receipt-and-catch-up)
+  to preserve outstanding actions and avoid duplicate replies. When asked for
+  backlog status, give the age and next action of the oldest unresolved request.
 - **UPDATE, STATUS reply or MERGED**: `coordinator.py member update --name <name> --phase "<phase>" --kind ok|work|warn|done --latest "<newest fact>" [--pr ...]`.
   This also updates the member's row on the dashboard. Keep `--phase` and
   `--latest` short; shorten a long UPDATE first (`references/dashboard.md`,
@@ -354,7 +360,10 @@ message and prints your host's app route to send it by; send it there.
    `coordinator.py stream todo show --name <slug> --id <id>`. Assign **one
    fresh read-only verification subagent** to inspect the PR in the owner's
    worktree when accessible. Pass its path, the base and head commits, the
-   structured task and validation evidence. Follow the [draft verification
+   structured task and validation evidence. If the host delivers background
+   results, dispatch independent reviews asynchronously and record the review
+   handle and SHA on the existing todo. Continue triage while the review runs.
+   Follow the [draft verification
    protocol](references/protocol.md#draft-verification).
 3. **Record and send the outcome.** Use `coordinator.py stream todo verify
    --name <slug> --id <id> --status passed|failed --pr <n> --sha <sha>

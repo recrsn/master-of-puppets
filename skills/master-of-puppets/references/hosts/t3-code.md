@@ -55,6 +55,14 @@ command in one plain shape so a prefix approval covers the next run:
 `python3 -I ~/.local/state/machine-leases/coordinator.py <command> ...` (or
 `puppet.py`). Use no `cd ... &&`, `timeout`, pipes or `$VARIABLES` around it.
 
+## Reading a coordinator backlog
+
+Use `t3_queue` with `action: "list"` on your own thread. Page through the
+queue and read truncated items before acting on them. Apply the [catch-up
+procedure](../protocol.md#duplicate-receipt-and-catch-up). Listing a message
+leaves it queued for delivery; track the action in the normal coordinator
+records. Keep the original messages available for recovery.
+
 ## Routes
 
 - Each T3 Code thread has a stable id. The thread's display name, and the
