@@ -1743,7 +1743,7 @@ def note_member_route():
 def route_cmd(args):
     """route: how to reach a coordinator now. Default: the caller's own coordinator."""
     roster = load_roster()
-    name = args.coordinator
+    name = args.coordinator or args.destination
     if not name:
         name = member_of_session(roster, session_identity()[0])[0]
         live_coords = [n for n, c in roster["coordinators"].items() if live(c)]
@@ -1896,7 +1896,9 @@ def add_read_commands(sub, memory=None):
     g.add_argument("--repo", help="owner/repo")
     g.add_argument("--text", help="case-insensitive match on names, tasks, focus, labels and goals")
     rt = sub.add_parser("route", help="how to reach a coordinator now, best route first")
-    rt.add_argument("--coordinator", help="default: your own coordinator")
+    target = rt.add_mutually_exclusive_group()
+    target.add_argument("destination", nargs="?", metavar="NAME", help="default: your own coordinator")
+    target.add_argument("--coordinator", metavar="NAME", help="select the coordinator by name")
     hs = sub.add_parser("host", help="where this session runs (T3 Code, Claude Desktop, Codex Desktop, a CLI) and its guide")
     hs.add_argument("--set", choices=[h for h in HOSTS if h != "unknown"],
                     help="record your host when the environment does not show it (references/hosts/README.md)")

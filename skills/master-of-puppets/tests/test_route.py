@@ -10,7 +10,7 @@ import sys
 import tempfile
 import unittest
 import warnings
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 
 SCRIPTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts")
 
@@ -80,6 +80,19 @@ class Route(unittest.TestCase):
         roster["coordinators"]["b"] = dict(roster["coordinators"]["a"], sessionId="sb")
         self.m.save_roster(roster)
         self.assertEqual(self.run_cli(self.p, {"CLAUDE_CODE_SESSION_ID": "s2"}, "route")[0], 3)  # two: it must choose
+
+    def test_route_accepts_a_named_destination(self):
+        roster = self.m.load_roster()
+        roster["coordinators"]["b"] = dict(roster["coordinators"]["a"], sessionId="sb")
+        self.m.save_roster(roster)
+        env = {"CLAUDE_CODE_SESSION_ID": "s1"}  # enrolled with a
+        for target in [("b",), ("--coordinator", "b")]:
+            code, out = self.run_cli(self.p, env, "route", *target)
+            self.assertEqual(code, 0, out)
+            self.assertIn("coordinator b (", out)
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            self.run_cli(self.p, env, "route", "b", "--coordinator", "a")
+        self.assertEqual(error.exception.code, 2)
 
     def test_a_members_command_records_its_thread_for_the_coordinators_route(self):
         self.run_cli(self.p, {"CLAUDE_CODE_SESSION_ID": "s1", "T3CODE_THREAD_ID": "mt-1"}, "route")

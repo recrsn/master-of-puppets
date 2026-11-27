@@ -179,9 +179,12 @@ Do this only on the user's word, or to get your own name back after a
    Run checks quietly.
    Report material changes or decisions. Otherwise
    end the turn without a user-facing message."
-   Update an existing heartbeat prompt in place, preserving
-   its cadence and any user-requested reports. When your host
-   has no scheduler, tell the user.
+   Update an existing heartbeat prompt in place, preserving its cadence and
+   any user-requested reports. If the host can run the existing schedule
+   but cannot edit its prompt, keep it running. On each delivery, run
+   `coordinator.py round` and follow the current Heartbeat round steps even
+   when the prompt uses older wording. When your host has no scheduler,
+   tell the user.
    The round sends your heartbeat and checks on
    every member, because members forget to send updates. Keep it running
    while you coordinate, and verify it after a context reset. Without

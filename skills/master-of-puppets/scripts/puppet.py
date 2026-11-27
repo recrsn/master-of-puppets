@@ -14,7 +14,7 @@ Usage: python3 -I puppet.py <command> ...
        coordinators (with live: heartbeat newer than 40 minutes), members and streams
   host [--set HOST]
        where this session runs and which host guide to read; --set records a host not shown in env
-  route [--coordinator C]
+  route [C | --coordinator C]
        the routes that reach your coordinator now, best first
   tell --text TEXT
        message your coordinator through the shared inbox when no app route works
