@@ -77,9 +77,12 @@ records. Keep the original messages available for recovery.
   `t3Thread` yet: find its thread with `t3_thread_search` by the member's
   name.
 - Send with `t3_thread_send`: `threadId` from the route, the protocol text as
-  the message, and `mode: "queue"`, which runs it as a new turn after the
-  receiver's current one. Add `environmentId` when your thread list gives
-  one for that thread.
+  the message and the delivery mode for that direction. A puppet sending to
+  its coordinator uses `mode: "steer"` so an active coordinator can act on
+  the message during its current turn. For coordinator assignments to members,
+  use `mode: "queue"` except for the stale-thread case below. Scouts use
+  `mode: "queue"` for their reports. Add `environmentId` when your thread
+  list gives one for that thread.
 
 ## Remote coordinators
 
