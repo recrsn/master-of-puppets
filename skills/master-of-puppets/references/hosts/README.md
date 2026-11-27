@@ -8,7 +8,8 @@ T3 Code sends with `t3_thread_send`, not with Codex Desktop's
 `send_message_to_thread`. Never assume a tool from the provider.
 
 Every coordinator, puppet and scout finds its own host first, then reads
-only that host's guide.
+only that host's guide. For a classifier denial, missing verdict or unexpected
+model change, follow the [host denial protocol](../protocol.md#host-denials-and-model-fallback).
 
 ## Find your host
 

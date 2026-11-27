@@ -10,6 +10,9 @@ that `coordinator.py` enforces (`references/setup.md`).
 
 - Never kill processes. Never take over an expired lease or replace a live
   coordinator session without the user's approval.
+- Act within standing authorization for local or VM checks, read-only production
+  queries, assigning fixes to their owners, and cleanup. Ask when a step needs
+  new authority or a decision only the user can make.
 - Prefer fix tasks over investigations when two needs tie.
 - Do an approved action as the user asked it, no more. Do not add steps the
   user did not ask for, such as a backup before an approved delete. When a
@@ -34,6 +37,9 @@ member to cross those limits.
    formatter churn does not need a new E2E. Expand checks for concrete risk or
    failures. Open or update the draft and publish the evidence for that head.
    Request [draft verification](protocol.md#draft-verification) before marking it Ready.
+   Add a concrete regression test for a reproducible defect and satisfy required
+   coverage gates. Omit redundant tests such as assertions that merely repeat
+   configuration literals.
 2. The PR description follows the repository's template. Keep mock, type and
    unit results separate from real E2E.
 3. After `VERIFIED`, the owner marks the draft Ready, handles hosted review,
@@ -44,7 +50,11 @@ member to cross those limits.
    merges require a separate coordinator decision and the applicable human
    approval. Keep auto-merge off for these PRs. Apply an infrastructure
    exception only when the project's private PR rules explicitly authorize
-   it and every affected resource falls within its scope.
+   it and every affected resource falls within its scope. Migration and infrastructure
+   approval here governs the merge of that PR. Once merged, it imposes no hold
+   on downstream PRs or releases. Honor any independent release or deployment gate.
+   Enabling normal auto-merge completes coordinator clearance within the verified
+   scope. The owner follows rule 7 without a second approval or SHA-pinning step.
 4. Verify each review finding against the source. Fix valid ones, explain
    skipped ones, resolve threads only after the fix is pushed.
 5. Keep repairing real blockers until MERGED. Before calling a failure
@@ -53,3 +63,14 @@ member to cross those limits.
    Ordinary push; `--force-with-lease` only when history must be replaced.
 7. Auto-merge enabled, queued and MERGED are separate states. Continue until
    the host shows MERGED with a merge SHA.
+
+## Scope and limits in a draft
+
+For each new cap, budget, fence or gate, the author cites a concrete platform
+or API constraint, a measured production failure, or an explicit user requirement.
+Explain how the chosen threshold or mechanism follows from that evidence. The
+draft verifier rejects unsupported size, depth, count and time limits, session
+budgets, extra shadow flags, custom allowlists duplicating OS or sandbox isolation,
+and defensive branches for states the interface already excludes. Preserve existing
+security boundaries. Keep incident fixes scoped to the defect; propose any
+independent policy change separately.

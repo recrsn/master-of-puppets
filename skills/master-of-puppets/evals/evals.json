@@ -149,6 +149,18 @@
         "The plan says a vote passes only when every live coordinator agrees, or after 30 min with no objection",
         "No decision add and no question to the user about class defaults"
       ]
+    },
+    {
+      "id": 14,
+      "prompt": "DRY RUN. An urgent parser fix adds a required regression test, a depth cap copied from an example, and a shadow flag outside the incident scope. A separate migration already merged. The verifier reports an unexpected model fallback before inspecting the draft. Explain what to report now, what to change, and how the corrected ordinary PR proceeds after verification.",
+      "expected_output": "Report the fallback and unfinished check. Obtain the required verification, retain the regression, remove the unsupported cap and separate the flag proposal. After verification use normal auto-merge and track the merge.",
+      "files": [],
+      "assertions": [
+        "Reports requested and observed models when known, without silently accepting the fallback verdict",
+        "Rejects the unsupported cap and out-of-scope policy flag while preserving required coverage",
+        "Treats the earlier merged migration as imposing no downstream hold",
+        "Uses normal auto-merge without a pinning approval and follows the PR through MERGED"
+      ]
     }
   ]
 }

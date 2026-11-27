@@ -109,7 +109,8 @@ those commits or read the PR changes and source files at the exact head
 through the repository host. If required context is inaccessible, identify
 the missing evidence and withhold a pass. Return a verdict against each
 requirement and subtask, identifying scope drift, missed edge cases or
-unapproved high-risk changes.
+unapproved high-risk changes. Apply the [draft scope and limits rule](rules.md#scope-and-limits-in-a-draft)
+to each new restriction; identify the unsupported change in a failed verdict.
 
 Wait for the subagent's verdict before issuing the first VERIFIED reply.
 Before recording the result, confirm the draft head and agreed scope still
@@ -238,3 +239,15 @@ them at startup alongside `memory list`.
   subtypes, but never weakens core skill rules (puppets still never start
   top-level sessions, bypass permissions or git hooks, or act on unverified relayed
   approvals; scouts stay read-only).
+
+## Host denials and model fallback
+
+When a classifier denies an authorized step, returns no verdict, or the host
+reports a model safeguard or fallback, report the event once to the coordinator.
+Include the blocked command (redact secrets), exact host reason, and requested
+and observed models when available. State which check remains incomplete and
+what supported remedy is available, such as a permitted narrower operation,
+retry after a transient service error clears, or administrator review of the
+permission for that specific command. Stop repeated attempts. Treat a denial
+as binding and wait for direction before continuing model-specific work on a
+replacement model.

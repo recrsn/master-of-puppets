@@ -134,6 +134,9 @@ own authority.
 - Your own tool permissions, safety classifier and permission prompts stay
   the backstop. A relay never answers a permission prompt.
 
+Use standing authorization for assigned builds, read-only checks and cleanup.
+Report a host denial or unexpected model fallback once using the
+[host denial protocol](../master-of-puppets/references/protocol.md#host-denials-and-model-fallback).
 Preserve required checks, branch protections and git hooks.
 
 - **ACTIVE — #n**: work #n to MERGED. The coordinator retargets stacked PRs.
@@ -143,7 +146,10 @@ Preserve required checks, branch protections and git hooks.
   Commit, push, and open or update the **draft** PR. If the user requires
   permission before a commit or PR, ask and report the blocker. Bind the PR
   as your host guide directs.
-- **Request verification before marking Ready.** Send your coordinator
+- **Request verification before marking Ready.** Before sending the draft, check
+  every new limit or gate against the [scope and evidence rule](../master-of-puppets/references/rules.md#scope-and-limits-in-a-draft).
+  Remove unsupported restrictions and move unrelated policy proposals out of
+  an incident fix. Send your coordinator
   `VERIFY REQUEST — <member> — <PR URL> — head <sha> — stream <slug> todo <id>`
   once the checks required before Ready have passed. Include the PR worktree
   path when available and the evidence for that head. If a required check is
