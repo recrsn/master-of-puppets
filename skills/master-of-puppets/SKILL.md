@@ -274,9 +274,12 @@ message and prints your host's app route to send it by; send it there.
   (`$MACHINE_LEASE_DIR/workflows/`) may define additional `<KIND> REQUEST`
   subtypes (for example deploy or review requests): handle them per those
   instructions (`references/protocol.md`, "Protocol extensions").
-- **Pending entries**: check them each round. One still pending after 30
-  minutes is a task that never started (a chip not clicked): ask the user, then
-  `coordinator.py member remove`.
+- **Pending entries**: check them each round. After 30 minutes, look for the
+  launch result and recent activity from the assigned session. A started session
+  can still be pending until its JOIN is recorded. When you find it, use its
+  verified route to request JOIN (SCOUT JOIN for a scout) under the enrolled
+  name, then process the reply normally. If the session never started or its
+  identity is unclear, ask the user before removing the entry or starting another session.
 - **Done** means every PR of the task is MERGED, or the user dropped the task,
   or the task changes no code (an investigation) and its answer is reported.
   Passing checks is not done. When a member reports code that is complete but
