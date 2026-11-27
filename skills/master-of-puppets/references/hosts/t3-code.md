@@ -76,17 +76,23 @@ records. Keep the original messages available for recovery.
 - A member that has run no `puppet.py` command since that install has no
   `t3Thread` yet: find its thread with `t3_thread_search` by the member's
   name.
-- Send with `t3_thread_send`: `threadId` from the route, the protocol text as
-  the message and the delivery mode for that direction. A puppet sending to
-  its coordinator uses `mode: "steer"` when the coordinator has a running
-  turn. When the coordinator is idle or its run state is unknown, use
-  `mode: "auto"`. T3 can then steer, start a turn, or queue the message.
-  If T3 rejects a steer because the turn ended, retry once with `auto`.
-  An accepted message, including a queued one, needs no resend.
-  For coordinator assignments to members,
-  use `mode: "queue"` except for the stale-thread case below. Scouts use
-  `mode: "queue"` for their reports. Add `environmentId` when your thread
-  list gives one for that thread.
+### Member to local coordinator
+
+1. Send the protocol message with `t3_thread_send`, the known coordinator
+   `threadId` and `mode: "steer"`, regardless of the coordinator's last known
+   run state. Include the environment ID if the route supplies one.
+2. If the ID is missing, or T3 rejects the send because the route is stale
+   or the turn cannot be steered, run `puppet.py route` to find or confirm
+   the coordinator's thread. Follow its thread-search hint if needed.
+3. Send once to the refreshed thread with `mode: "auto"`. If T3 still
+   cannot deliver or the lookup yields no T3 route, use `puppet.py tell`
+   once as the inbox fallback.
+
+Stop as soon as T3 accepts the message, including when it queues it.
+A permission denial stops the sequence at any step (see Failures).
+
+Coordinator assignments to members use `mode: "queue"` except for the
+stale-thread case below.
 
 ## Remote coordinators
 
@@ -115,13 +121,13 @@ for the message and acknowledgment.
 
 | Error | Meaning | Do this |
 | --- | --- | --- |
-| `parent_not_active` | Your own turn is not an active run, for example a scheduled turn | Send by the next route (`puppet.py route`), or with `puppet.py tell` |
+| `parent_not_active` | Your own turn is not an active run, for example a scheduled turn | For a member report, follow the route refresh and fallback sequence above |
 | `runtime_mode_escalation_denied` | The receiver runs in a higher runtime mode than the sender, as T3 Code sees it now | Do not work around it, and do not tell the user the mode as a fact. Check the receiver's `runtimeMode` in `t3_thread_list`, tell the user what you see, and retry once by thread id when the user says to |
 | "No agent named ..." | The display name changed | Look up the route again; send by thread id |
 | A socket `ENOENT` or "stale" | The session restarted | Look up the route again |
-| "automatic permission approval review did not finish before its deadline" | The approval reviewer timed out; nothing was sent | Retry once with the same `clientRequestId`. When it times out again, send with `puppet.py tell` |
+| "automatic permission approval review did not finish before its deadline" | The approval reviewer timed out; nothing was sent | Keep the same `clientRequestId` on the retry for that route |
 
-After one failed send, look up the route again and send once by the next
+For routes other than member to local coordinator, after one failed send, look up the route again and send once by the next
 route. After a second failure, tell the user and keep the message for the
 next try. Never send the same message by two routes that both work: the
 receiver gets it twice.

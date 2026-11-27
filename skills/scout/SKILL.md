@@ -13,9 +13,9 @@ including target classes, severity and routing, is in
 first tick.
 
 Below, `puppet.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/puppet.py"`.
-To reach your coordinator, run `puppet.py route` before each send and use the
-first route that works (protocol.md, "Routes" says what to do when a send
-fails).
+Use your host guide to reach your coordinator. In T3 Code, steer to the known
+coordinator thread first. For a missing ID or failed steer, follow the guide’s
+route refresh and fallback sequence.
 In a sandboxed session (Codex, Antigravity ACP), use the host’s per-command approval for
 `puppet.py` calls that need the helper server, including `host`. Explicit
 `--help` and `-h` use the local parser. In a shell, define it as a function, not a variable (zsh does not split a
@@ -87,7 +87,7 @@ puppet.py scout alert   --name N --fingerprint <id:cause> --severity P0|P1|P2 [-
 puppet.py scout resolve --name N --fingerprint <id:cause> [--text "<why>"]
 puppet.py scout show    --name N        # your state: never read scouts/<name>.json yourself
 puppet.py scout note    --name N --text "<line>"   # add to your state between ticks (a REGISTER, say): no tick, no jq
-puppet.py route                         # just before a send
+puppet.py route                         # look up or refresh the coordinator route
 schedule: update your one schedule by its scheduledTaskId; never make a new one each tick
 sandbox: run each puppet.py line outside the sandbox on the first try, every tick (in it, each exits 77)
 ```
@@ -127,7 +127,7 @@ sandbox: run each puppet.py line outside the sandbox on the first try, every tic
    <name>: run one tick of the scout skill (section 2). Start quietly. Send required reports to their recipients. If nothing needs the user's attention, finish without a local message.
    ```
 
-   Keep changing details in watch state. Look up the route when sending.
+   Keep changing details in watch state. Follow the host guide when sending.
 
 Keep a QUIET tick small: put your reads in one script of your own, outside
 the repository, and run it with one call, then `scout tick`. A tick that

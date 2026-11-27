@@ -30,9 +30,10 @@ question in this thread even when the answer is “still waiting.”
 
 **Find your host first** ([hosts/README.md](../master-of-puppets/references/hosts/README.md),
 "Find your host"; run `puppet.py host`), then read only your host's guide.
-Run `puppet.py route` before each send. In T3 Code, steer reports into your
-coordinator's running turn. Use `auto` when it is idle or its state is unknown.
-Use the verified destination and
+In T3 Code, send to your known coordinator thread with `steer` first. If the
+ID is missing or steering fails, refresh with `puppet.py route`, then send
+once with `auto`. Follow the host guide for inbox fallback and the
+permission-denial stop. Use the verified destination and
 failure handling in [Protocol routes](../master-of-puppets/references/protocol.md#routes)
 for JOIN and all later messages. To recover a message from your coordinator,
 read `puppet.py inbox --from <coordinator> --to <member>`. Use only member routes. Direct writes to
@@ -391,7 +392,7 @@ Your work is done when every PR of your task is MERGED, or the user drops the
 task. Then stop your services and release any lease.
 
 **Long-running member** (your JOIN said `long-running`): when your assignment
-finishes, run `puppet.py route` and send your coordinator
+finishes, send your coordinator
 `IDLE — <name> — <what wakes you>`, for example `IDLE — gw — a new question
 from the user`. A standby note in your own thread leaves your roster status active.
 Wait for the coordinator’s IDLE reply. The coordinator checks that every PR of yours is MERGED or

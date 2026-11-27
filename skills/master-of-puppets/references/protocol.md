@@ -135,8 +135,7 @@ every message with `coordinator.py send --to <name> --text "..."`: it records
 the message in the shared inbox. For a member or scout, send it by the printed
 app route and check the result. Report a rejected send as a delivery failure.
 If the app accepts the message into a queue, report it as queued. Claim
-acknowledgment only when the recipient replies. Members use their host's app route from
-`puppet.py route`.
+acknowledgment only when the recipient replies. Members use their host's coordinator route below.
 
 A member answers a coordinator's request for a status, investigation result,
 recommendation or other deliverable by sending it to the coordinator before
@@ -154,13 +153,16 @@ a file and name it with `send --file <path>`.
 The coordinator records member updates in the roster/dashboard and decisions
 in the ledger; member messages need no shared inbox copy.
 
-- **Find the route at each send, never from memory.** Run `puppet.py route`
+- **T3 members** steer to their known coordinator thread first. For a missing
+  ID or failed steer, follow the [T3 routing sequence](hosts/t3-code.md#member-to-local-coordinator).
+  **On other hosts**, look up the route before sending with `puppet.py route`
   (a member: its own coordinator; anyone: `--coordinator C`). It prints the
   routes that reach the coordinator now from your host, best first. Never copy
   a route or a session name into a scheduled prompt: names change when a thread
   is renamed or restarts.
 - **If delivery fails**, distinguish a transport failure from a permission
-  decision. For a transport failure, refresh the route and try the next
+  decision. For a transport failure, follow the T3 sequence above when applicable.
+  Otherwise, refresh the route and try the next
   supported route once. A member can use `puppet.py tell --text "..."`
   as its inbox fallback. Stop on confirmed delivery. If delivery remains
   unconfirmed, tell the user. If permission to send was denied, stop and tell the
