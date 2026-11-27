@@ -379,9 +379,11 @@ task is not a session and has no enrollment line. Before you start one, read
 Your work is done when every PR of your task is MERGED, or the user drops the
 task. Then stop your services and release any lease.
 
-**Long-running member** (your JOIN said `long-running`): do not LEAVE. Send
+**Long-running member** (your JOIN said `long-running`): when your assignment
+finishes, run `puppet.py route` and send your coordinator
 `IDLE — <name> — <what wakes you>`, for example `IDLE — gw — a new question
-from the user`. The coordinator checks that every PR of yours is MERGED or
+from the user`. A standby note in your own thread leaves your roster status active.
+Wait for the coordinator’s IDLE reply. The coordinator checks that every PR of yours is MERGED or
 CLOSED, your tree is clean and pushed, and you hold no lease or queue entry.
 
 - `IDLE ACCEPTED`: stop your watchers and end the turn quietly. The

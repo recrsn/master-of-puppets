@@ -172,8 +172,9 @@ Do this only on the user's word, or to get your own name back after a
    nothing else to arm.
 5. Schedule the heartbeat round (required) with your host's scheduler (the
    "Scheduled turn" row of your host guide): every 15 minutes, prompt
-   "master-of-puppets heartbeat round for <slug>: follow the Heartbeat round
-   steps using your host’s helper access instructions. Reconcile shared work
+   "master-of-puppets heartbeat round for <slug>: run `coordinator.py round` using
+   your host’s helper access instructions. Read the result, including any
+   `ROUND INCOMPLETE` sections, and follow the remaining Heartbeat round steps. Reconcile shared work
    with remote peers and ask about gaps in ownership, coverage or shared state.
    Run checks quietly.
    Report material changes or decisions. Otherwise
