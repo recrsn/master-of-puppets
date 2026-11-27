@@ -197,6 +197,8 @@ a host can deliver a coordinator request in a message labeled “user.”
 - On a scheduled wake, send any due report even if the wake prompt omits the
   send step. Otherwise finish quietly. Sending a report also completes the
   reporting step; do not copy it into local chat.
+- Apply instruction-only broadcasts quietly. Reply to the sender if it asks
+  for confirmation or the change blocks your work.
 - The UPDATE appears on the dashboard. Keep its phase to five words and its
   fact to one plain sentence of at most 20 words. Use `#123` for a PR. Omit
   SHAs, test counts, paths and commands from this message.

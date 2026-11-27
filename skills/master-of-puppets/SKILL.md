@@ -263,6 +263,13 @@ message and prints your host's app route to send it by; send it there.
   With leases off, tell the member to run authorized local checks directly using the
   repository's CPU-budget commands where available. Include BUILD or E2E lease
   instructions only when that host has leases on.
+- **Verification requests**, including browser checks, go to a fresh verification
+  subagent. Give it the exact criteria, target, and permitted actions. Use the
+  machine or project's verifier preference for new requests. When the user asks
+  to let a check finish, apply a changed preference to the next request.
+  Relay the verdict and evidence for each criterion, including failures and
+  checks the verifier could not complete. For draft PRs follow the
+  [draft verification protocol](references/protocol.md#draft-verification).
 - **Where new work goes**, in this order:
   1. The member that owns the stream (`who --text`, `roster`): send it the
      work. Ask the owner to start subagents for independent investigations or
