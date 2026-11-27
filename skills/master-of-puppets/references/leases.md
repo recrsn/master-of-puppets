@@ -360,8 +360,13 @@ runs `await-grant` before starting work.
 
 ### Reclaim
 
-Only the member releases its lease, and a member whose waiter died (for
-example in an app restart) never does. An expired lease then blocks its slot
+The holder releases its lease with `puppet.py release`. For its own work, a
+coordinator can acquire directly with its registered name as the first word
+of `--holder` when no current member shares that name. It releases the grant
+from its registered session. Queued member grants belong to their members.
+
+A member whose waiter died (for
+example in an app restart) may miss the release. An expired lease then blocks its slot
 and the whole queue behind it. So the server releases a lease that expired
 more than the class's `reclaimMinutes` ago (default 10) when no process runs
 in its worktree (the `left=N` count of watch's `EXPIRED` line). The helpers

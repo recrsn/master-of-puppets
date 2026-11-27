@@ -86,6 +86,31 @@ class Reclaim(unittest.TestCase):
         self.assertEqual(self.c.main(["grant", "--id", "request"]), 3)
         self.assertEqual(self.held(), [])
 
+    def test_coordinator_releases_own_direct_grant(self):
+        self.m.RUN.env = {"CODEX_THREAD_ID": "coord-session"}
+        roster = self.m.load_roster()
+        roster["coordinators"]["a"]["sessionId"] = "coord-session"
+        self.m.save_roster(roster)
+        self.assertEqual(self.c.main(["acquire", CLASS, "--id", "validation", "--holder", "a validation",
+                                      "--minutes", "5", "--worktree", self.tree]), 0)
+        # A later member with the same name cannot take over this grant.
+        roster["members"]["a"] = [{"name": "a", "sessionId": "member-session"}]
+        self.m.save_roster(roster)
+        puppet = importlib.import_module("puppet")
+        release = ["release", CLASS, "--id", "validation", "--result", "pass"]
+        self.m.RUN.env = {"CODEX_THREAD_ID": "member-session"}
+        self.assertEqual(puppet.main(release), 3)
+        self.m.RUN.env = {"CODEX_THREAD_ID": "coord-session"}
+        self.assertEqual(puppet.main(release), 0)
+        # With a member already bearing the name, the grant belongs to that member.
+        self.assertEqual(self.c.main(["acquire", CLASS, "--id", "member-run", "--holder", "a validation",
+                                      "--minutes", "5", "--worktree", self.tree]), 0)
+        member_release = ["release", CLASS, "--id", "member-run", "--result", "pass"]
+        self.assertEqual(puppet.main(member_release), 3)
+        self.m.RUN.env = {"CODEX_THREAD_ID": "member-session"}
+        self.assertEqual(puppet.main(member_release), 0)
+        self.assertEqual(self.held(), [])
+
     def inbox(self):
         if not os.path.exists(self.m.INBOX):
             return []

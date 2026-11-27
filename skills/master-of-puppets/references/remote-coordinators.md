@@ -52,7 +52,10 @@ installation as unconfirmed.
    one, send `HANDOFF — <from> to <to> — <scope> — <handoff note>`.
    For a handoff of all work, reconcile the outgoing owners’ tasks with their
    relevant worktrees, including work without a PR or stream todo. Check for
-   uncommitted or untracked files and commits absent from the remote. Keep
+   uncommitted or untracked files and commits absent from the remote. Before
+   assigning an old plan item as unstarted, check merged work for the behavior
+   it already delivers, including changes shipped under a different PR title.
+   List any outstanding or unverified requirements explicitly. Keep
    unpublished work on the sending machine and identify what still needs an
    authorized transfer until the receiver can access it.
    Include repository, pushed branches and heads, open PRs, remaining work,

@@ -376,9 +376,16 @@ def release(args, *, reclaim=None):
             if held != reclaim:  # the server checked a different or since-extended grant
                 return 3
         else:
-            coord, member = member_of_session(load_roster(), session_identity()[0])
+            roster = load_roster()
+            sid, _ = session_identity()
             owner = entry["holder"].partition(" ")[0]
-            if not member or coord != entry["coordinator"] or member["name"] != owner:
+            if held and held.get("coordinatorHeld"):
+                coordinator = roster["coordinators"].get(entry["coordinator"], {})
+                owns_entry = owner == entry["coordinator"] and coordinator.get("sessionId") == sid
+            else:
+                coord, member = member_of_session(roster, sid)
+                owns_entry = member and coord == entry["coordinator"] and member["name"] == owner
+            if not owns_entry:
                 print(f"{args.id} belongs to {owner} under {entry['coordinator']}. Only its holder can release or withdraw it.")
                 return 3
         if held is None:

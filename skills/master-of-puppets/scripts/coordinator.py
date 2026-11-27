@@ -2294,6 +2294,14 @@ def acquire_checks(args, state, machine):
     return None
 
 
+def coordinator_holds_grant(args, queued):
+    """Only an unqueued direct acquire can designate the coordinator as holder."""
+    if queued or getattr(args, "cmd", None) != "acquire" or args.holder.partition(" ")[0] != args.coordinator:
+        return False
+    members = load_roster()["members"].get(args.coordinator, [])
+    return not any(m["name"] == args.coordinator and m.get("status") != "done" for m in members)
+
+
 def acquire_cmd(args):
     """Check the queue, cap, settle and length; run the host check without the lock; then
     check again under the lock (another grant may have landed) and the memory budget.
@@ -2349,6 +2357,7 @@ def acquire_cmd(args):
         state["queue"][args.cls] = [q for q in queue if q["id"] != args.id]
         t = now()
         holders.append({
+            "coordinatorHeld": coordinator_holds_grant(args, entry),
             "coordinator": args.coordinator,
             "holder": args.holder,
             "id": args.id,
@@ -2637,6 +2646,7 @@ def pool_acquire_cmd(args):
         t = now()
         state["queue"][cls] = [q for q in state["queue"][cls] if q["id"] != args.id]
         state[cls].append({
+            "coordinatorHeld": coordinator_holds_grant(args, queued or entry),
             "coordinator": args.coordinator, "holder": args.holder, "id": args.id, "worktree": args.worktree,
             "project": key, "gib": 0, "cpus": 0, "commands": args.commands or (queued or {}).get("commands"),
             "resource": name, "resourceInfo": {**(new_info or {}), **(facts if health == "ok" else {})},
