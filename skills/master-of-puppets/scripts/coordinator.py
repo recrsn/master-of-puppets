@@ -1228,6 +1228,9 @@ def roster_cmd(args):
                 pass
         note(args.coordinator, f"{args.name} left")
         return 0
+    if args.session_id is not None and not re.fullmatch(r"\S+", args.session_id):
+        print("Give the bare session ID as one token. Record the host thread separately.")
+        return 2
     if args.parent is not None and args.parent != args.coordinator and not any(
             x["name"] == args.parent and x["name"] != args.name for x in members):
         print(f"{args.parent} is not a member of {args.coordinator}")

@@ -88,6 +88,7 @@ puppet.py scout resolve --name N --fingerprint <id:cause> [--text "<why>"]
 puppet.py scout show    --name N        # your state: never read scouts/<name>.json yourself
 puppet.py scout note    --name N --text "<line>"   # add to your state between ticks (a REGISTER, say): no tick, no jq
 puppet.py route                         # look up or refresh the coordinator route
+puppet.py tell --text "<message>"        # inbox fallback when app delivery fails; enrollment selects the coordinator
 schedule: update your one schedule by its scheduledTaskId; never make a new one each tick
 sandbox: run each puppet.py line outside the sandbox on the first try, every tick (in it, each exits 77)
 ```

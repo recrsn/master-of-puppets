@@ -51,6 +51,15 @@ class JoinWelcome(unittest.TestCase):
             self.assertIn("9 fields", str(e.exception))
             self.assertIn(want, str(e.exception))
 
+    def test_annotated_session_id_does_not_overwrite_member_identity(self):
+        line = JOIN.format(wt=self.tmp.name)
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(self.c.main(["join", "--text", line]), 0)
+            self.assertEqual(self.c.main(["join", "--text", line.replace("s1", "s1 (thread other)")]), 2)
+            self.assertEqual(self.c.main(["member", "update", "--name", "w", "--session-id", "s1 (thread other)"]), 2)
+        member = next(m for m in self.m.load_roster()["members"]["a"] if m["name"] == "w")
+        self.assertEqual(member["sessionId"], "s1")
+
     def test_join_saves_the_welcome_and_prints_its_delivery(self):
         out = io.StringIO()
         with redirect_stdout(out):
