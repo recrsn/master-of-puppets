@@ -270,8 +270,11 @@ message and prints your host's app route to send it by; send it there.
   subagent. Give it the exact criteria, target, and permitted actions. Use the
   machine or project's verifier preference for new requests. When the user asks
   to let a check finish, apply a changed preference to the next request.
-  Relay the verdict and evidence for each criterion, including failures and
-  checks the verifier could not complete. For draft PRs follow the
+  Check that the evidence establishes each requested result before relaying
+  the verdict. For example, if a request succeeded and the page rendered,
+  but the verifier could not inspect the requested response field, report
+  the successful observations and mark the field's value unverified.
+  Preserve failed checks in the report. For draft PRs follow the
   [draft verification protocol](references/protocol.md#draft-verification).
 - **Where new work goes**, in this order:
   1. The member that owns the stream (`who --text`, `roster`): send it the

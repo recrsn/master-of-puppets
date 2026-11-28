@@ -521,6 +521,9 @@ The budgets predict; the host check observes. Both must pass, and
 4. On release: the member's `puppet.py release <CLASS> --id <id> --result pass|fail|partial --note "..." [--port <n> ...]`
    writes one event line, the shared record of the release:
    `release <CLASS> <id> ran <n> min peak <g> GiB <c> cores result=<r> drained=<n> coordinator=<c> note="..."`.
+   When releasing from a shell exit trap, capture the workload's exit status
+   before cleanup and use its actual outcome for `--result`. Preserve a
+   workload failure and surface a release error even if the workload passed.
    `drained` counts what the run left in the lease's worktree. Agent session
    processes do not count: the agent programs, every process they start with
    no shell between them (MCP servers and helpers, also through a launcher
