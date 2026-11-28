@@ -13,8 +13,8 @@ including target classes, severity and routing, is in
 first tick.
 
 Below, `puppet.py` means `python3 -I "${MACHINE_LEASE_DIR:-$HOME/.local/state/machine-leases}/puppet.py"`.
-Use your host guide to reach your coordinator. In T3 Code, steer to the known
-coordinator thread first. For a missing ID or failed steer, follow the guide’s
+Use your host guide to reach your coordinator. In T3 Code, send to the known
+coordinator thread with `mode: "auto"`. For a missing ID or rejected route, follow the guide’s
 route refresh and fallback sequence.
 In a sandboxed session (Codex, Antigravity ACP), use the host’s per-command approval for
 `puppet.py` calls that need the helper server, including `host`. Explicit

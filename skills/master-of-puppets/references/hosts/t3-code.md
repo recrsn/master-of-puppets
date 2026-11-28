@@ -79,10 +79,10 @@ records. Keep the original messages available for recovery.
 ### Member to local coordinator
 
 1. Send the protocol message with `t3_thread_send`, the known coordinator
-   `threadId` and `mode: "steer"`, regardless of the coordinator's last known
+   `threadId` and `mode: "auto"`, regardless of the coordinator's last known
    run state. Include the environment ID if the route supplies one.
-2. If the ID is missing, or T3 rejects the send because the route is stale
-   or the turn cannot be steered, run `puppet.py route` to find or confirm
+2. If the ID is missing, or T3 rejects the send because the route is stale,
+   run `puppet.py route` to find or confirm
    the coordinator's thread. Follow its thread-search hint if needed.
 3. Send once to the refreshed thread with `mode: "auto"`. If T3 still
    cannot deliver or the lookup yields no T3 route, use `puppet.py tell`

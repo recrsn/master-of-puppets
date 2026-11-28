@@ -30,8 +30,8 @@ question in this thread even when the answer is “still waiting.”
 
 **Find your host first** ([hosts/README.md](../master-of-puppets/references/hosts/README.md),
 "Find your host"; run `puppet.py host`), then read only your host's guide.
-In T3 Code, send to your known coordinator thread with `steer` first. If the
-ID is missing or steering fails, refresh with `puppet.py route`, then send
+In T3 Code, send to your known coordinator thread with `mode: "auto"`. If the
+ID is missing or T3 rejects the route, refresh with `puppet.py route`, then send
 once with `auto`. Follow the host guide for inbox fallback and the
 permission-denial stop. Use the verified destination and
 failure handling in [Protocol routes](../master-of-puppets/references/protocol.md#routes)

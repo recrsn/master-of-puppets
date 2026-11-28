@@ -153,8 +153,8 @@ a file and name it with `send --file <path>`.
 The coordinator records member updates in the roster/dashboard and decisions
 in the ledger; member messages need no shared inbox copy.
 
-- **T3 members** steer to their known coordinator thread first. For a missing
-  ID or failed steer, follow the [T3 routing sequence](hosts/t3-code.md#member-to-local-coordinator).
+- **T3 members** send to their known coordinator thread with `mode: "auto"`. For a missing
+  ID or rejected route, follow the [T3 routing sequence](hosts/t3-code.md#member-to-local-coordinator).
   **On other hosts**, look up the route before sending with `puppet.py route`
   (a member: its own coordinator; anyone: `--coordinator C`). It prints the
   routes that reach the coordinator now from your host, best first. Never copy
